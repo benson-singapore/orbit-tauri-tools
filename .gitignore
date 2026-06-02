@@ -1,0 +1,23 @@
+# Dependencies
+app/node_modules/
+
+# Build outputs
+app/dist/
+app/src-tauri/target/
+app/src-tauri/binaries/orbit-runtime-*
+
+# Generated icons temp
+app/app-icon.png
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Go
+runtime/**/*.test
+
+# Logs
+*.log
