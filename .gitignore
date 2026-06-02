@@ -6,8 +6,9 @@ app/dist/
 app/src-tauri/target/
 app/src-tauri/binaries/orbit-runtime-*
 
-# Generated icons temp
+# Generated app icon source (from scripts/prepare-app-icon.sh)
 app/app-icon.png
+app/src-tauri/app-icon.png
 
 # OS
 .DS_Store

@@ -1,7 +1,9 @@
 import { useMemo, useState } from "react";
+import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
 import { ARTICLES_DATA } from "@/data/articles";
-import { INITIAL_PLUGINS, PLUGINS_STORE } from "@/data/plugins";
+import { INITIAL_PLUGINS } from "@/data/plugins";
+import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { useTitlebarDrag } from "@/hooks/useTitlebarDrag";
 import { useTitlebarEnv } from "@/hooks/useTitlebarEnv";
 import { useUiZoom } from "@/hooks/useUiZoom";
@@ -110,16 +112,64 @@ export default function App() {
 
   const handleInstallPlugin = (newPlugin: Plugin) => {
     if (!myPlugins.some(p => p.id === newPlugin.id)) {
-      setMyPlugins([...myPlugins, { ...newPlugin, active: true }]);
+      setMyPlugins(prev => [...prev, { ...newPlugin, active: true }]);
     }
-    setShowPluginStore(false);
   };
 
   const handleUninstallPlugin = (id: string) => {
     setMyPlugins(prev => prev.filter(p => p.id !== id));
     if (activePlugin === id) {
-      setActivePlugin('all');
+      setActivePlugin("all");
     }
+  };
+
+  const handleTogglePluginActive = (id: string) => {
+    setMyPlugins(prev =>
+      prev.map(p => (p.id === id ? { ...p, active: p.active === false } : p)),
+    );
+    if (activePlugin === id) {
+      const target = myPlugins.find(p => p.id === id);
+      if (target?.active !== false) {
+        setActivePlugin("all");
+      }
+    }
+  };
+
+  const handleMovePlugin = (id: string, direction: "up" | "down") => {
+    setMyPlugins(prev => {
+      const idx = prev.findIndex(p => p.id === id);
+      if (idx <= 0) return prev;
+      const swapIdx = direction === "up" ? idx - 1 : idx + 1;
+      if (swapIdx <= 0 || swapIdx >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
+      return next;
+    });
+  };
+
+  const handleImportCustomPlugin = (url: string) => {
+    const trimmed = url.trim();
+    let displayName = "自定义 RSS 源";
+    if (trimmed) {
+      try {
+        displayName = new URL(trimmed).hostname;
+      } catch {
+        displayName = "自定义 RSS 源";
+      }
+    }
+    const customId = `custom-${Math.random().toString(36).slice(2, 8)}`;
+    handleInstallPlugin({
+      id: customId,
+      name: displayName,
+      icon: "text",
+      desc: trimmed || "自定义外部 RSS 新闻数据源",
+      logoText: "R",
+      color: "bg-orange-500",
+      active: true,
+      marketCategory: "blog",
+      categoryTag: "RSS",
+      official: false,
+    });
   };
 
   return (
@@ -132,10 +182,17 @@ export default function App() {
         className={`app-titlebar app-titlebar-drag shrink-0 z-40 flex h-12 items-center justify-between border-b px-4 transition-colors duration-300 ${theme === "dark" ? "bg-[#1c1d1f] border-neutral-800" : "bg-white border-neutral-100"}`}
       >
         <div className="flex items-center gap-1.5 min-w-0 select-none pointer-events-none">
-          <div className="bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-1 rounded-lg shrink-0">
-            <Icon name="sparkles" className="w-3.5 h-3.5 text-white" />
-          </div>
-          <span className="text-sm font-bold tracking-tight bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 bg-clip-text text-transparent truncate">
+          <img
+            src={orbitLogo}
+            alt=""
+            className="h-7 w-7 shrink-0 object-contain"
+            draggable={false}
+          />
+          <span
+            className={`text-sm font-bold tracking-tight truncate ${
+              theme === "dark" ? "text-white" : "text-black"
+            }`}
+          >
             ORBIT
           </span>
         </div>
@@ -306,7 +363,9 @@ export default function App() {
                 </button>
               </div>
 
-              {myPlugins.map((plugin) => (
+              {myPlugins
+                .filter(p => p.id === "all" || p.active !== false)
+                .map(plugin => (
                 <button 
                   key={plugin.id}
                   onClick={() => {
@@ -328,8 +387,8 @@ export default function App() {
                   {!isSidebarCollapsed && (
                     <div className="flex-1 flex items-center justify-between">
                       <span className="truncate">{plugin.name}</span>
-                      {plugin.id !== 'all' && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                      {plugin.id !== "all" && plugin.active !== false && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                       )}
                     </div>
                   )}
@@ -350,12 +409,6 @@ export default function App() {
               <Icon name="puzzle" className="w-4 h-4" />
               {!isSidebarCollapsed && <span>添加/自定新插件</span>}
             </button>
-            
-            {!isSidebarCollapsed && (
-              <div className="text-center mt-3 text-[10px] text-neutral-400 dark:text-neutral-500">
-                TECHWRITE ENGINE 2.5
-              </div>
-            )}
           </div>
         </aside>
 
@@ -813,118 +866,16 @@ export default function App() {
 
       {}
       {showPluginStore && (
-        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className={`w-full max-w-lg rounded-3xl p-6 space-y-6 shadow-2xl transition-colors ${
-            theme === 'dark' ? 'bg-[#1c1d1f] text-white border border-neutral-800' : 'bg-white text-neutral-900'
-          }`}>
-            
-            <div className="flex items-center justify-between border-b dark:border-neutral-800 pb-4">
-              <div className="flex items-center gap-2">
-                <Icon name="puzzle" className="w-5 h-5 text-indigo-500" />
-                <h3 className="text-lg font-bold">自定义插件/获取端管理器</h3>
-              </div>
-              <button 
-                onClick={() => setShowPluginStore(false)}
-                className="p-1.5 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full"
-              >
-                <Icon name="close" className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Currently Installed Plugins */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">已装载获取端插件</h4>
-              <div className="space-y-2">
-                {myPlugins.filter(p => p.id !== 'all').map(plugin => (
-                  <div 
-                    key={plugin.id}
-                    className="flex items-center justify-between p-3 rounded-xl border dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm text-white ${plugin.color}`}>
-                        {plugin.logoText}
-                      </div>
-                      <div>
-                        <div className="text-sm font-semibold">{plugin.name}</div>
-                        <div className="text-xs text-neutral-400 line-clamp-1">{plugin.desc}</div>
-                      </div>
-                    </div>
-                    
-                    <button 
-                      onClick={() => handleUninstallPlugin(plugin.id)}
-                      className="text-xs text-rose-500 hover:text-rose-600 bg-rose-50 dark:bg-rose-950/40 px-2.5 py-1.5 rounded-lg font-medium transition-colors"
-                    >
-                      卸载
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Store Available Plugins */}
-            <div className="space-y-3">
-              <h4 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">推荐插件库 (一键安装)</h4>
-              <div className="space-y-2">
-                {PLUGINS_STORE.filter(p => !myPlugins.some(mp => mp.id === p.id)).length === 0 ? (
-                  <p className="text-xs text-neutral-400 text-center py-4">🎉 已安装商店内所有可用源插件！</p>
-                ) : (
-                  PLUGINS_STORE.filter(p => !myPlugins.some(mp => mp.id === p.id)).map(plugin => (
-                    <div 
-                      key={plugin.id}
-                      className="flex items-center justify-between p-3 rounded-xl border dark:border-neutral-800 hover:border-indigo-200 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm text-white ${plugin.color}`}>
-                          {plugin.logoText}
-                        </div>
-                        <div>
-                          <div className="text-sm font-semibold">{plugin.name}</div>
-                          <div className="text-xs text-neutral-400 line-clamp-1">{plugin.desc}</div>
-                        </div>
-                      </div>
-                      
-                      <button 
-                        onClick={() => handleInstallPlugin(plugin)}
-                        className="text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-3 py-1.5 rounded-lg font-semibold transition-colors flex items-center gap-1"
-                      >
-                        <span>添加</span>
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            {/* Plugin customize form input */}
-            <div className="border-t dark:border-neutral-800 pt-4">
-              <h4 className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">或手动导入自定义 RSS / 平台插件</h4>
-              <div className="flex gap-2">
-                <input 
-                  type="text" 
-                  placeholder="https://example.com/feed.xml"
-                  className="flex-1 px-3 py-1.5 rounded-xl border text-sm bg-transparent outline-none focus:border-indigo-500 dark:border-neutral-800"
-                />
-                <button 
-                  onClick={() => {
-                    const customId = `custom-${Math.random().toString(36).substr(2, 4)}`;
-                    handleInstallPlugin({
-                      id: customId,
-                      name: '自定义 RSS 源',
-                      icon: 'text',
-                      desc: '自定义外部 RSS 新闻数据源接口',
-                      logoText: 'R',
-                      color: 'bg-orange-500'
-                    });
-                  }}
-                  className="px-3 py-1.5 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 text-xs font-semibold rounded-xl"
-                >
-                  导入连接
-                </button>
-              </div>
-            </div>
-
-          </div>
-        </div>
+        <PluginManagerModal
+          theme={theme}
+          myPlugins={myPlugins}
+          onClose={() => setShowPluginStore(false)}
+          onInstall={handleInstallPlugin}
+          onUninstall={handleUninstallPlugin}
+          onToggleActive={handleTogglePluginActive}
+          onMove={handleMovePlugin}
+          onImport={handleImportCustomPlugin}
+        />
       )}
 
     </div>

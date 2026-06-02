@@ -25,14 +25,29 @@ export interface Article {
   isBookmarked: boolean;
 }
 
+export type PluginContentType = "text" | "video" | "audio" | "image";
+
+export type PluginManagerTab = "market" | "manage" | "import";
+
+export type PluginMarketCategory =
+  | "all"
+  | "news"
+  | "manga"
+  | "video"
+  | "audio"
+  | "blog";
+
 export interface Plugin {
   id: string;
   name: string;
-  icon: string;
+  icon: PluginContentType | string;
   active?: boolean;
   desc: string;
   logoText?: string;
   color: string;
+  marketCategory?: Exclude<PluginMarketCategory, "all">;
+  categoryTag?: string;
+  official?: boolean;
 }
 
 export interface RuntimeStatusResponse {
