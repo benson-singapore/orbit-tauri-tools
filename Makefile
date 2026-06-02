@@ -3,10 +3,11 @@
 
 ORBIT_PORT        ?= 17890
 ORBIT_RUNTIME_URL ?= http://127.0.0.1:$(ORBIT_PORT)
+WEB_URL           ?= http://127.0.0.1:5173
 
 .DEFAULT_GOAL := help
 
-.PHONY: help install dev dev-go dev-tauri dev-sidecar \
+.PHONY: help install dev dev-go dev-tauri dev-web open-web dev-sidecar \
         build-runtime build check-go
 
 help: ## 显示命令列表
@@ -27,6 +28,12 @@ dev-go: ## 启动 Go runtime (go run，默认端口 17890)
 
 dev-tauri: ## 启动 Tauri 并连接外部 Go (需先 dev-go)
 	cd app && ORBIT_RUNTIME_URL=$(ORBIT_RUNTIME_URL) npm run tauri:dev
+
+dev-web: ## 启动 Vite 前端开发服务（连接 Go runtime）
+	cd app && VITE_ORBIT_RUNTIME_URL=$(ORBIT_RUNTIME_URL) npm run dev
+
+open-web: ## 在浏览器打开前端页面
+	open "$(WEB_URL)"
 
 dev: ## 单终端：后台 Go + Tauri（Ctrl+C 结束两者）
 	bash scripts/dev-all.sh

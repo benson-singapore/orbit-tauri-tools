@@ -1,9 +1,16 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { PLUGIN_MARKET_GROUPS, PLUGINS_STORE } from "@/data/plugins";
-import type { Plugin, PluginManagerTab, PluginMarketCategory, ThemeMode } from "@/types";
+import type {
+  InstallRSSPluginRequest,
+  Plugin,
+  PluginContentType,
+  PluginManagerTab,
+  PluginMarketCategory,
+  ThemeMode,
+} from "@/types";
 
-const MODAL_HEIGHT = "h-[680px]";
+const MODAL_HEIGHT = "h-[660px]";
 const PRIMARY = "bg-[#5856D6] hover:bg-[#4a48c4]";
 
 interface PluginManagerModalProps {
@@ -14,13 +21,13 @@ interface PluginManagerModalProps {
   onUninstall: (id: string) => void;
   onToggleActive: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
-  onImport: (url: string) => void;
+  onImport: (payload: InstallRSSPluginRequest) => void;
+  embedded?: boolean;
 }
 
-const TABS: { id: PluginManagerTab; label: string; icon: string }[] = [
+const TABS: { id: Extract<PluginManagerTab, "market" | "manage">; label: string; icon: string }[] = [
   { id: "market", label: "插件市场", icon: "sparkles" },
-  { id: "manage", label: "已下载管理", icon: "puzzle" },
-  { id: "import", label: "导入自定义插件", icon: "puzzle" },
+  { id: "manage", label: "已安装插件", icon: "puzzle" },
 ];
 
 function filterMarketPlugins(
@@ -29,9 +36,7 @@ function filterMarketPlugins(
   query: string,
 ): Plugin[] {
   let list = plugins;
-  if (category !== "all") {
-    list = list.filter(p => p.marketCategory === category);
-  }
+  if (category !== "all") list = list.filter(p => p.marketCategory === category);
   if (query.trim()) {
     const q = query.toLowerCase();
     list = list.filter(
@@ -44,6 +49,546 @@ function filterMarketPlugins(
   return list;
 }
 
+interface PluginSectionProps {
+  plugins: Plugin[];
+  installedPlugins: Plugin[];
+  subtleBorder: string;
+  mutedBg: string;
+  customStyle: boolean;
+  onUninstall: (id: string) => void;
+  onToggleActive: (id: string) => void;
+  onMove: (id: string, direction: "up" | "down") => void;
+  onEdit?: (plugin: Plugin) => void;
+}
+
+function PluginSection(props: PluginSectionProps) {
+  const {
+    plugins,
+    installedPlugins,
+    subtleBorder,
+    mutedBg,
+    customStyle,
+    onUninstall,
+    onToggleActive,
+    onMove,
+    onEdit,
+  } = props;
+  const [draggingPluginId, setDraggingPluginId] = useState<string | null>(null);
+  const [dragOverPluginId, setDragOverPluginId] = useState<string | null>(null);
+
+  const handleDropReorder = (targetPluginId: string) => {
+    if (!draggingPluginId || draggingPluginId === targetPluginId) {
+      setDragOverPluginId(null);
+      return;
+    }
+    const fromIndex = installedPlugins.findIndex(p => p.id === draggingPluginId);
+    const toIndex = installedPlugins.findIndex(p => p.id === targetPluginId);
+    if (fromIndex < 0 || toIndex < 0) {
+      setDragOverPluginId(null);
+      return;
+    }
+
+    const direction: "up" | "down" = fromIndex < toIndex ? "down" : "up";
+    const steps = Math.abs(fromIndex - toIndex);
+    for (let i = 0; i < steps; i += 1) {
+      onMove(draggingPluginId, direction);
+    }
+    setDragOverPluginId(null);
+  };
+
+  return (
+    <div className="space-y-3">
+      {plugins.map((plugin) => {
+        const index = installedPlugins.findIndex(p => p.id === plugin.id);
+        const isEnabled = plugin.active !== false;
+        const canMoveUp = index > 0;
+        const canMoveDown = index < installedPlugins.length - 1;
+        const handleUninstall = () => {
+          onUninstall(plugin.id);
+        };
+        const cardClass = customStyle
+          ? "border border-indigo-200/70 dark:border-indigo-900/40 bg-indigo-50/30 dark:bg-indigo-950/10"
+          : `border ${subtleBorder} ${mutedBg}`;
+
+        return (
+          <article
+            key={plugin.id}
+            className={`rounded-2xl transition-colors ${cardClass} ${dragOverPluginId === plugin.id ? "ring-2 ring-[#5856D6]/35" : ""}`}
+            onDragOver={(event) => {
+              event.preventDefault();
+              setDragOverPluginId(plugin.id);
+            }}
+            onDragLeave={() => {
+              if (dragOverPluginId === plugin.id) {
+                setDragOverPluginId(null);
+              }
+            }}
+            onDrop={(event) => {
+              event.preventDefault();
+              handleDropReorder(plugin.id);
+            }}
+          >
+            <div className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:gap-5">
+              <div className="shrink-0 flex items-center gap-2 lg:pr-4 lg:mr-1 lg:border-r lg:border-neutral-200/70 dark:lg:border-neutral-800">
+                <button
+                  type="button"
+                  draggable
+                  onDragStart={() => {
+                    setDraggingPluginId(plugin.id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingPluginId(null);
+                    setDragOverPluginId(null);
+                  }}
+                  className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white cursor-grab active:cursor-grabbing dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  title="拖拽排序"
+                  aria-label="拖拽排序"
+                >
+                  <span aria-hidden className="text-[10px] leading-none">⋮⋮</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canMoveUp}
+                  onClick={() => onMove(plugin.id, "up")}
+                  className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  title="上移"
+                  aria-label="上移"
+                >
+                  <span aria-hidden className="text-[10px] leading-none">↑</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={!canMoveDown}
+                  onClick={() => onMove(plugin.id, "down")}
+                  className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                  title="下移"
+                  aria-label="下移"
+                >
+                  <span aria-hidden className="text-[10px] leading-none">↓</span>
+                </button>
+              </div>
+              <div className="flex flex-1 min-w-0 items-start gap-3">
+                <div className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center font-bold text-white text-xs ${plugin.color}`}>
+                  {plugin.logoText}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-xs font-bold">{plugin.name}</span>
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${customStyle ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-300" : "bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500"}`}>
+                      {customStyle ? "自定义" : "官方"}
+                    </span>
+                    {customStyle && (
+                      <button
+                        type="button"
+                        onClick={() => onEdit?.(plugin)}
+                        className="px-2 py-0.5 text-[10px] font-medium rounded text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30"
+                      >
+                        编辑配置
+                      </button>
+                    )}
+                  </div>
+                  <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
+                    {plugin.desc}
+                  </p>
+                </div>
+              </div>
+
+              <div className="lg:pl-4 lg:border-l lg:border-neutral-200/70 dark:lg:border-neutral-800">
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isEnabled}
+                    onClick={() => onToggleActive(plugin.id)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${
+                      isEnabled ? "bg-emerald-500" : "bg-neutral-300 dark:bg-neutral-600"
+                    }`}
+                    title={isEnabled ? "点击停用" : "点击启用"}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                        isEnabled ? "translate-x-5" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                  <span className={`text-[11px] font-medium ${isEnabled ? "text-emerald-600" : "text-neutral-500"}`}>
+                    {isEnabled ? "已启用" : "已停用"}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleUninstall}
+                    className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30"
+                  >
+                    卸载插件
+                  </button>
+                </div>
+              </div>
+            </div>
+          </article>
+        );
+      })}
+    </div>
+  );
+}
+
+function ImportPluginModal({
+  onClose,
+  onImport,
+  initialPlugin,
+}: {
+  onClose: () => void;
+  onImport: (payload: InstallRSSPluginRequest) => void;
+  initialPlugin?: Plugin | null;
+}) {
+  const [pluginId, setPluginId] = useState("");
+  const [pluginName, setPluginName] = useState("");
+  const [marketCategory, setMarketCategory] = useState<Exclude<PluginMarketCategory, "all">>("blog");
+  const [icon, setIcon] = useState<PluginContentType>("text");
+  const [mediaType, setMediaType] = useState<NonNullable<InstallRSSPluginRequest["mediaType"]>>("article");
+  const [feedUrl, setFeedUrl] = useState("");
+  const [refreshInterval, setRefreshInterval] = useState("3600");
+  const [userAgent, setUserAgent] = useState("");
+  const [categoryTag, setCategoryTag] = useState("NEWS");
+  const [description, setDescription] = useState("");
+  const [color, setColor] = useState("bg-violet-500");
+  const [logoText, setLogoText] = useState("R");
+  const [jsonText, setJsonText] = useState("");
+  const [isEditingJson, setIsEditingJson] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!initialPlugin) return;
+    setPluginId(initialPlugin.id);
+    setPluginName(initialPlugin.name);
+    setMarketCategory(initialPlugin.marketCategory ?? "blog");
+    if (
+      initialPlugin.icon === "text" ||
+      initialPlugin.icon === "image" ||
+      initialPlugin.icon === "video" ||
+      initialPlugin.icon === "audio"
+    ) {
+      setIcon(initialPlugin.icon);
+    }
+    setColor(initialPlugin.color);
+    setLogoText((initialPlugin.logoText ?? "R").slice(0, 1) || "R");
+    setCategoryTag(initialPlugin.categoryTag ?? "NEWS");
+    setDescription(initialPlugin.desc);
+  }, [initialPlugin]);
+
+  const buildPayloadFromForm = (): InstallRSSPluginRequest => {
+    const parsedRefresh = Number.parseInt(refreshInterval.trim(), 10);
+    return {
+      source: "rss",
+      feedUrl: feedUrl.trim(),
+      id: pluginId.trim() || undefined,
+      name: pluginName.trim() || undefined,
+      icon,
+      mediaType,
+      refreshInterval: Number.isFinite(parsedRefresh) && parsedRefresh > 0 ? parsedRefresh : 3600,
+      userAgent: userAgent.trim() || undefined,
+      marketCategory,
+      color,
+      logoText: logoText.trim().slice(0, 1) || "R",
+      categoryTag: categoryTag.trim() || "NEWS",
+      description: description.trim() || (pluginName.trim() ? `${pluginName.trim()} RSS 插件` : "自定义 RSS 插件"),
+    };
+  };
+
+  const buildManifestJsonText = () => {
+    const payload = buildPayloadFromForm();
+    const manifest = {
+      id: payload.id || "custom-rss",
+      name: payload.name || "自定义 RSS",
+      version: "1.0.0",
+      mediaType: payload.mediaType || "article",
+      source: "rss",
+      capabilities: ["feed"],
+      config: {
+        feedUrl: payload.feedUrl,
+        refreshInterval: payload.refreshInterval ?? 3600,
+        userAgent: payload.userAgent || "",
+      },
+      meta: {
+        description: payload.description || "",
+        color: payload.color || "bg-violet-500",
+        logoText: payload.logoText || "R",
+        marketCategory: payload.marketCategory || "blog",
+        categoryTag: payload.categoryTag || "NEWS",
+        official: false,
+        icon: payload.icon || "text",
+      },
+    };
+    return JSON.stringify(manifest, null, 2);
+  };
+
+  const applyJsonToForm = (input: string): boolean => {
+    if (!input.trim()) return true;
+    try {
+      const raw = JSON.parse(input) as Record<string, unknown>;
+      const config = (raw.config ?? {}) as Record<string, unknown>;
+      const meta = (raw.meta ?? {}) as Record<string, unknown>;
+
+      const nextId = typeof raw.id === "string" ? raw.id : "";
+      const nextName = typeof raw.name === "string" ? raw.name : "";
+      const nextMediaType = typeof raw.mediaType === "string" ? raw.mediaType : undefined;
+      const nextFeedUrl = typeof raw.feedUrl === "string"
+        ? raw.feedUrl
+        : typeof config.feedUrl === "string"
+          ? config.feedUrl
+          : "";
+      const nextRefreshIntervalRaw = typeof raw.refreshInterval === "number"
+        ? raw.refreshInterval
+        : typeof config.refreshInterval === "number"
+          ? config.refreshInterval
+          : 3600;
+      const nextUserAgent = typeof raw.userAgent === "string"
+        ? raw.userAgent
+        : typeof config.userAgent === "string"
+          ? config.userAgent
+          : "";
+
+      setPluginId(nextId);
+      setPluginName(nextName);
+      if (nextMediaType === "article" || nextMediaType === "manga" || nextMediaType === "video" || nextMediaType === "audio") {
+        setMediaType(nextMediaType);
+      }
+      setFeedUrl(nextFeedUrl);
+      setRefreshInterval(String(nextRefreshIntervalRaw));
+      setUserAgent(nextUserAgent);
+
+      const nextColor = typeof raw.color === "string"
+        ? raw.color
+        : typeof meta.color === "string"
+          ? meta.color
+          : color;
+      const nextLogoText = typeof raw.logoText === "string"
+        ? raw.logoText
+        : typeof meta.logoText === "string"
+          ? meta.logoText
+          : logoText;
+      const nextCategoryTag = typeof raw.categoryTag === "string"
+        ? raw.categoryTag
+        : typeof meta.categoryTag === "string"
+          ? meta.categoryTag
+          : categoryTag;
+      const nextDescription = typeof raw.description === "string"
+        ? raw.description
+        : typeof meta.description === "string"
+          ? meta.description
+          : "";
+      const nextMarketCategory = typeof raw.marketCategory === "string"
+        ? raw.marketCategory
+        : typeof meta.marketCategory === "string"
+          ? meta.marketCategory
+          : marketCategory;
+      const nextIcon = typeof raw.icon === "string"
+        ? raw.icon
+        : typeof meta.icon === "string"
+          ? meta.icon
+          : icon;
+
+      if (nextMarketCategory === "blog" || nextMarketCategory === "news" || nextMarketCategory === "manga" || nextMarketCategory === "video" || nextMarketCategory === "audio") {
+        setMarketCategory(nextMarketCategory);
+      }
+      if (nextIcon === "text" || nextIcon === "image" || nextIcon === "video" || nextIcon === "audio") {
+        setIcon(nextIcon);
+      }
+      setColor(nextColor);
+      setLogoText(nextLogoText.slice(0, 1) || "R");
+      setCategoryTag(nextCategoryTag);
+      setDescription(nextDescription);
+      setError(null);
+      return true;
+    } catch {
+      setError("RSS JSON 格式错误，请检查右侧配置");
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    if (isEditingJson) return;
+    setJsonText(buildManifestJsonText());
+  }, [isEditingJson, pluginId, pluginName, marketCategory, icon, mediaType, feedUrl, refreshInterval, userAgent, categoryTag, description, color, logoText]);
+
+  const handleSubmit = () => {
+    const trimmedFeedUrl = feedUrl.trim();
+    const trimmedId = pluginId.trim();
+    const trimmedRefresh = refreshInterval.trim();
+    const parsedRefresh = Number.parseInt(trimmedRefresh, 10);
+
+    if (trimmedId && !/^[a-z0-9_-]{2,64}$/.test(trimmedId)) {
+      setError("插件 ID 需为 2-64 位小写字母/数字/-/_");
+      return;
+    }
+    if (!trimmedFeedUrl) {
+      setError("请填写 RSS FEED 地址");
+      return;
+    }
+    if (trimmedRefresh && (!Number.isFinite(parsedRefresh) || parsedRefresh <= 0)) {
+      setError("刷新间隔需为正整数（秒）");
+      return;
+    }
+    if (!applyJsonToForm(jsonText)) {
+      return;
+    }
+
+    const payload: InstallRSSPluginRequest = buildPayloadFromForm();
+    payload.source = "rss";
+    payload.feedUrl = trimmedFeedUrl;
+    onImport(payload);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
+      <div className="w-full max-w-6xl h-[680px] rounded-[28px] overflow-hidden bg-white border border-neutral-200 shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="h-[72px] border-b border-neutral-200 px-6 flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-neutral-900">
+              {initialPlugin ? "编辑 RSS 插件" : "导入 RSS 插件"}
+            </h3>
+            <p className="text-[11px] text-neutral-500 mt-1">按 manifest 结构配置 source/config/meta（Phase 1 仅支持 RSS）</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-neutral-200 text-neutral-600 hover:bg-neutral-50">
+              关闭
+            </button>
+          </div>
+        </div>
+        <div className="h-[calc(100%-140px)] grid grid-cols-1 lg:grid-cols-[1fr_1fr]">
+          <div className="h-full overflow-y-auto p-6 space-y-5">
+            <h4 className="text-sm font-semibold text-neutral-700">订阅源类型</h4>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="px-3 py-3 rounded-xl border border-[#5856D6]/30 bg-[#5856D6]/5">
+                <p className="text-xs font-semibold text-[#5856D6]">RSS（已启用）</p>
+                <p className="text-[11px] text-neutral-600 mt-1">source 固定为 `rss`，使用 `config.feedUrl` 拉取数据。</p>
+              </div>
+              <div className="px-3 py-3 rounded-xl border border-neutral-200 bg-neutral-50">
+                <p className="text-xs font-semibold text-neutral-500">Script / Scraper（待支持）</p>
+                <p className="text-[11px] text-neutral-400 mt-1">文档约束：Phase 1 暂不开放。</p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">插件 ID（可选）</label>
+                <input value={pluginId} onChange={e => setPluginId(e.target.value)} placeholder="verge-rss" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">插件名称</label>
+                <input value={pluginName} onChange={e => setPluginName(e.target.value)} placeholder="e.g. 极客周报 RSS" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">媒体类型 mediaType</label>
+                <select value={mediaType} onChange={e => setMediaType(e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200">
+                  <option value="article">article</option>
+                  <option value="manga">manga</option>
+                  <option value="video">video</option>
+                  <option value="audio">audio</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">排版分类大区</label>
+                <select value={marketCategory} onChange={e => setMarketCategory(e.target.value as Exclude<PluginMarketCategory, "all">)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200">
+                  <option value="blog">个人博客</option>
+                  <option value="news">新闻资讯</option>
+                  <option value="manga">二次元漫画</option>
+                  <option value="video">流媒体/视频</option>
+                  <option value="audio">有声播客</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">刷新间隔 refreshInterval（秒）</label>
+                <input value={refreshInterval} onChange={e => setRefreshInterval(e.target.value)} placeholder="3600" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">User-Agent（可选）</label>
+                <input value={userAgent} onChange={e => setUserAgent(e.target.value)} placeholder="OrbitReader/0.1" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-3">
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">图标类型</label>
+                <select value={icon} onChange={e => setIcon(e.target.value as PluginContentType)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200">
+                  <option value="text">文章适应排版</option>
+                  <option value="image">漫画/图片</option>
+                  <option value="video">视频</option>
+                  <option value="audio">音频</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">颜色</label>
+                <input value={color} onChange={e => setColor(e.target.value)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">Logo 字母</label>
+                <input value={logoText} onChange={e => setLogoText(e.target.value.slice(0, 1))} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[11px] text-neutral-500">分类标签</label>
+                <input value={categoryTag} onChange={e => setCategoryTag(e.target.value)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] text-neutral-500">标准 RSS FEED 地址</label>
+              <input value={feedUrl} onChange={e => setFeedUrl(e.target.value)} placeholder="https://example.com/feed.xml" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] text-neutral-500">描述 description（可选）</label>
+              <input value={description} onChange={e => setDescription(e.target.value)} placeholder="科技评论与前沿快讯" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] text-neutral-500">说明</label>
+              <p className="text-[11px] text-neutral-400">右侧 JSON 会随左侧字段实时更新；你直接改 JSON 后，左侧也会自动回填。</p>
+            </div>
+            {error && <p className="text-xs text-rose-500">{error}</p>}
+          </div>
+
+          <div className="h-full bg-[#0b0f12] text-[#58f5d3] border-l border-neutral-800 flex flex-col">
+            <div className="px-5 py-3 border-b border-neutral-800 text-xs text-neutral-400 flex items-center justify-between">
+              <span>manifest.json</span>
+              <span className="text-emerald-400">● RSS 配置</span>
+            </div>
+            <textarea
+              value={jsonText}
+              onFocus={() => setIsEditingJson(true)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setJsonText(next);
+                applyJsonToForm(next);
+              }}
+              onBlur={() => {
+                setIsEditingJson(false);
+                if (applyJsonToForm(jsonText)) {
+                  setJsonText(buildManifestJsonText());
+                }
+              }}
+              spellCheck={false}
+              className="flex-1 w-full bg-[#0b0f12] p-5 text-[12px] leading-6 font-mono text-[#58f5d3] resize-none outline-none"
+            />
+            <div className="px-5 py-3 border-t border-neutral-800 text-[11px] text-neutral-500">
+              可直接编辑 JSON（支持 config/meta 结构）
+            </div>
+          </div>
+        </div>
+        <div className="h-[68px] border-t border-neutral-200 px-8 flex items-center justify-end">
+          <button type="button" onClick={handleSubmit} className="px-5 py-2 rounded-xl text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4]">保存并同步</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PluginManagerModal({
   theme,
   myPlugins,
@@ -53,21 +598,23 @@ export function PluginManagerModal({
   onToggleActive,
   onMove,
   onImport,
+  embedded = false,
 }: PluginManagerModalProps) {
-  const [activeTab, setActiveTab] = useState<PluginManagerTab>("market");
-  const [marketCategory, setMarketCategory] =
-    useState<PluginMarketCategory>("all");
+  const [activeTab, setActiveTab] = useState<Extract<PluginManagerTab, "market" | "manage">>("market");
+  const [marketCategory, setMarketCategory] = useState<PluginMarketCategory>("all");
   const [marketSearch, setMarketSearch] = useState("");
-  const [importFeedUrl, setImportFeedUrl] = useState("");
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [editingPlugin, setEditingPlugin] = useState<Plugin | null>(null);
 
   const installedPlugins = myPlugins.filter(p => p.id !== "all");
+  const officialInstalledPlugins = installedPlugins.filter(p => p.official);
+  const customInstalledPlugins = installedPlugins.filter(p => !p.official);
   const runningCount = installedPlugins.filter(p => p.active !== false).length;
 
   const availableStorePlugins = useMemo(
     () => PLUGINS_STORE.filter(p => !myPlugins.some(mp => mp.id === p.id)),
     [myPlugins],
   );
-
   const filteredMarketPlugins = useMemo(
     () => filterMarketPlugins(availableStorePlugins, marketCategory, marketSearch),
     [availableStorePlugins, marketCategory, marketSearch],
@@ -77,63 +624,25 @@ export function PluginManagerModal({
   const panelBg = isDark ? "bg-[#1c1d1f] text-white" : "bg-white text-neutral-900";
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-100";
   const mutedBg = isDark ? "bg-neutral-900/40" : "bg-neutral-50";
-
-  const handleImportSubmit = () => {
-    onImport(importFeedUrl);
-    setImportFeedUrl("");
-    setActiveTab("manage");
-  };
+  const wrapperClass = embedded
+    ? "w-full h-full min-h-0"
+    : "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-6 md:p-10";
+  const panelClass = embedded
+    ? `w-full h-full min-h-0 flex flex-col overflow-hidden ${panelBg} border-l border-r ${subtleBorder}`
+    : `w-full max-w-6xl ${MODAL_HEIGHT} flex flex-col rounded-[28px] shadow-2xl overflow-hidden ${panelBg} border ${subtleBorder}`;
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-6 md:p-10"
-      onClick={onClose}
-    >
-      <div
-        className={`w-full max-w-6xl ${MODAL_HEIGHT} flex flex-col rounded-[28px] shadow-2xl overflow-hidden ${panelBg} border ${subtleBorder}`}
-        onClick={e => e.stopPropagation()}
-      >
-        {/* Header */}
-        <header
-          className={`shrink-0 flex items-start justify-between gap-6 px-8 pt-7 pb-5 border-b ${subtleBorder}`}
-        >
-          <div className="flex items-start gap-4 min-w-0">
-            <div
-              className={`w-12 h-12 shrink-0 rounded-full ${PRIMARY} flex items-center justify-center text-white shadow-lg shadow-indigo-500/25`}
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2.5"
-                className="w-6 h-6"
-              >
-                <path d="M12 5v14M5 12h14" strokeLinecap="round" />
-              </svg>
-            </div>
-            <div className="min-w-0">
-              <h2 className="text-xl font-bold tracking-tight">
-                插件获取与超级控制中心
-              </h2>
-              <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1 max-w-xl">
-                在此集中下载、排版、排序、启用或注入自定义流媒体爬虫脚本
-              </p>
-            </div>
-          </div>
-
-          <div
-            className={`shrink-0 flex items-center gap-1 p-1 rounded-2xl ${mutedBg}`}
-          >
+    <div className={wrapperClass} onClick={embedded ? undefined : onClose}>
+      <div className={panelClass} onClick={embedded ? undefined : e => e.stopPropagation()}>
+        <header className={`shrink-0 flex items-center justify-between gap-5 px-7 pt-4 pb-3 border-b ${subtleBorder}`}>
+          <div className={`shrink-0 flex items-center gap-1 p-1 rounded-2xl ${mutedBg}`}>
             {TABS.map(tab => (
               <button
                 key={tab.id}
                 type="button"
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-                  activeTab === tab.id
-                    ? "bg-white dark:bg-neutral-800 text-[#5856D6] shadow-sm"
-                    : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                className={`flex items-center gap-2 px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                  activeTab === tab.id ? "bg-white dark:bg-neutral-800 text-[#5856D6] shadow-sm" : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
                 }`}
               >
                 <Icon name={tab.icon} className="w-4 h-4" />
@@ -141,18 +650,14 @@ export function PluginManagerModal({
               </button>
             ))}
           </div>
+          <div className="w-8 h-8 shrink-0" />
         </header>
 
-        {/* Body */}
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           {activeTab === "market" && (
             <div className="flex-1 min-h-0 flex">
-              <aside
-                className={`w-52 shrink-0 border-r ${subtleBorder} px-4 py-5 overflow-y-auto`}
-              >
-                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-3 mb-3">
-                  插件分组
-                </p>
+              <aside className={`w-52 shrink-0 border-r ${subtleBorder} px-4 py-5 overflow-y-auto`}>
+                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-3 mb-3">插件分组</p>
                 <nav className="space-y-0.5">
                   {PLUGIN_MARKET_GROUPS.map(group => (
                     <button
@@ -160,9 +665,7 @@ export function PluginManagerModal({
                       type="button"
                       onClick={() => setMarketCategory(group.id)}
                       className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-colors ${
-                        marketCategory === group.id
-                          ? "bg-[#5856D6]/10 text-[#5856D6] font-medium"
-                          : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+                        marketCategory === group.id ? "bg-[#5856D6]/10 text-[#5856D6] font-medium" : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
                       }`}
                     >
                       <Icon name={group.icon} className="w-4 h-4 shrink-0" />
@@ -173,70 +676,39 @@ export function PluginManagerModal({
               </aside>
 
               <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-                <div className={`shrink-0 px-6 py-4 border-b ${subtleBorder}`}>
+                <div className={`shrink-0 px-6 py-4 border-b ${subtleBorder} ${isDark ? "bg-neutral-900/40" : "bg-neutral-50/80"}`}>
                   <div className="flex items-center gap-4">
                     <div className="flex-1 relative">
-                      <Icon
-                        name="search"
-                        className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400"
-                      />
+                      <Icon name="search" className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
                       <input
                         type="search"
                         value={marketSearch}
                         onChange={e => setMarketSearch(e.target.value)}
                         placeholder="搜索官方应用、漫库、RSS或剧集频道..."
-                        className={`w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none border ${subtleBorder} ${mutedBg} focus:border-[#5856D6]/50`}
+                        className={`w-full pl-10 pr-4 py-2 rounded-xl text-xs outline-none border ${subtleBorder} ${mutedBg} focus:border-[#5856D6]/50`}
                       />
                     </div>
-                    <span className="text-xs text-neutral-400 whitespace-nowrap shrink-0">
-                      发现 {filteredMarketPlugins.length} 个获取接口
-                    </span>
+                    <span className="text-[11px] text-neutral-400 whitespace-nowrap shrink-0">发现 {filteredMarketPlugins.length} 个获取接口</span>
                   </div>
                 </div>
-
-                <div className="flex-1 overflow-y-auto px-6 py-5">
+                <div className={`flex-1 overflow-y-auto px-6 py-5 ${isDark ? "bg-neutral-950/30" : "bg-neutral-100/80"}`}>
                   {filteredMarketPlugins.length === 0 ? (
-                    <p className="text-sm text-neutral-400 text-center py-16">
-                      {availableStorePlugins.length === 0
-                        ? "市场插件已全部安装，可在「已下载管理」中调整。"
-                        : "当前分组下暂无匹配插件，试试其他分组或搜索词。"}
-                    </p>
+                    <p className="text-sm text-neutral-400 text-center py-16">暂无匹配插件</p>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                       {filteredMarketPlugins.map(plugin => (
-                        <article
-                          key={plugin.id}
-                          className={`relative flex flex-col p-4 rounded-2xl border ${subtleBorder} hover:border-[#5856D6]/30 transition-colors`}
-                        >
-                          {plugin.official && (
-                            <span className="absolute top-3 right-3 text-[10px] font-medium px-2 py-0.5 rounded-md bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-400">
-                              官方推荐
-                            </span>
-                          )}
+                        <article key={plugin.id} className={`relative flex flex-col p-4 rounded-2xl border ${subtleBorder} bg-white dark:bg-neutral-900 shadow-sm hover:shadow-md hover:border-[#5856D6]/30 transition-colors`}>
+                          {plugin.official && <span className="absolute top-3 right-3 text-[10px] font-medium px-2 py-0.5 rounded-md bg-amber-50 text-amber-600">官方推荐</span>}
                           <div className="flex items-start gap-3 mb-3 pr-16">
-                            <div
-                              className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center font-bold text-white text-sm ${plugin.color}`}
-                            >
-                              {plugin.logoText}
-                            </div>
+                            <div className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center font-bold text-white text-sm ${plugin.color}`}>{plugin.logoText}</div>
                             <div className="min-w-0 pt-0.5">
-                              <h3 className="text-sm font-bold leading-snug">
-                                {plugin.name}
-                              </h3>
-                              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1 line-clamp-2 leading-relaxed">
-                                {plugin.desc}
-                              </p>
+                              <h3 className="text-xs font-bold leading-snug">{plugin.name}</h3>
+                              <p className="text-[11px] text-neutral-500 mt-1 line-clamp-2 leading-relaxed">{plugin.desc}</p>
                             </div>
                           </div>
-                          <div className="mt-auto flex items-center justify-between pt-3 border-t border-dashed border-neutral-100 dark:border-neutral-800">
-                            <span className="text-[10px] font-semibold text-neutral-400 tracking-wider">
-                              {plugin.categoryTag ?? "FEED"}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => onInstall(plugin)}
-                              className={`text-xs font-semibold text-white px-3 py-1.5 rounded-lg ${PRIMARY} transition-colors`}
-                            >
+                          <div className="mt-auto flex items-center justify-between pt-3 border-t border-dashed border-neutral-100">
+                            <span className="text-[10px] font-semibold text-neutral-400 tracking-wider">{plugin.categoryTag ?? "FEED"}</span>
+                            <button type="button" onClick={() => onInstall(plugin)} className={`text-[11px] font-semibold text-white px-3 py-1.5 rounded-lg ${PRIMARY}`}>
                               下载安装
                             </button>
                           </div>
@@ -251,177 +723,74 @@ export function PluginManagerModal({
 
           {activeTab === "manage" && (
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-              <div
-                className={`shrink-0 flex items-start justify-between gap-4 px-8 py-5 border-b ${subtleBorder}`}
-              >
+              <div className={`shrink-0 flex items-start justify-between gap-4 px-8 py-5 border-b ${subtleBorder}`}>
                 <div>
-                  <h3 className="text-base font-bold">
-                    已下载的内容插件重塑管理
-                  </h3>
-                  <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
-                    调整侧边栏的排版顺序、临时关闭或彻底卸载数据通道
-                  </p>
+                  <h3 className="text-base font-bold">已安装插件</h3>
+                  <p className="text-sm text-neutral-500 mt-1">调整顺序、启用状态，或管理自定义插件</p>
                 </div>
-                <span
-                  className={`text-xs font-medium px-3 py-1.5 rounded-lg shrink-0 ${mutedBg} text-neutral-500`}
-                >
-                  运行中：{runningCount} 个
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-medium px-3 py-1.5 rounded-lg shrink-0 ${mutedBg} text-neutral-500`}>运行中：{runningCount} 个</span>
+                  <button type="button" onClick={() => setShowImportModal(true)} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4]">
+                    导入插件
+                  </button>
+                </div>
               </div>
-
-              <div className="flex-1 overflow-y-auto px-8 py-4 space-y-3">
+              <div className="flex-1 overflow-y-auto px-8 py-4 space-y-4">
                 {installedPlugins.length === 0 ? (
-                  <p className="text-sm text-neutral-400 text-center py-16">
-                    暂无已下载插件，请前往「插件市场」安装。
-                  </p>
+                  <p className="text-sm text-neutral-400 text-center py-16">暂无已安装插件，请先导入。</p>
                 ) : (
-                  installedPlugins.map((plugin, index) => {
-                    const isEnabled = plugin.active !== false;
-                    const canMoveUp = index > 0;
-                    const canMoveDown = index < installedPlugins.length - 1;
-                    return (
-                      <div
-                        key={plugin.id}
-                        className={`flex items-center gap-4 p-4 rounded-2xl border ${subtleBorder} ${mutedBg}`}
-                      >
-                        <div
-                          className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center font-bold text-white text-sm ${plugin.color}`}
-                        >
-                          {plugin.logoText}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-sm font-bold">{plugin.name}</span>
-                            {plugin.official && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500">
-                                官方
-                              </span>
-                            )}
-                            {!isEnabled && (
-                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-500">
-                                已停用
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 line-clamp-1">
-                            {plugin.desc}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => onUninstall(plugin.id)}
-                            className="text-[11px] text-rose-500 hover:text-rose-600 mt-1"
-                          >
-                            卸载此通道
-                          </button>
-                        </div>
-                        <div className="flex items-center gap-3 shrink-0">
-                          <div className="flex flex-col gap-0.5">
-                            <button
-                              type="button"
-                              disabled={!canMoveUp}
-                              onClick={() => onMove(plugin.id, "up")}
-                              className="p-1.5 text-neutral-400 hover:text-neutral-600 disabled:opacity-25 rounded-lg hover:bg-white dark:hover:bg-neutral-800"
-                              title="上移"
-                            >
-                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M18 15l-6-6-6 6" />
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!canMoveDown}
-                              onClick={() => onMove(plugin.id, "down")}
-                              className="p-1.5 text-neutral-400 hover:text-neutral-600 disabled:opacity-25 rounded-lg hover:bg-white dark:hover:bg-neutral-800"
-                              title="下移"
-                            >
-                              <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M6 9l6 6 6-6" />
-                              </svg>
-                            </button>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => onToggleActive(plugin.id)}
-                            className={`text-xs font-semibold px-4 py-2 rounded-xl border transition-colors ${
-                              isEnabled
-                                ? "border-emerald-200 text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-900"
-                                : "border-neutral-200 text-neutral-500 bg-white dark:bg-neutral-800 dark:border-neutral-700"
-                            }`}
-                          >
-                            {isEnabled ? "已启用" : "已停用"}
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })
+                  <>
+                    {officialInstalledPlugins.length > 0 && (
+                      <PluginSection
+                        plugins={officialInstalledPlugins}
+                        installedPlugins={installedPlugins}
+                        subtleBorder={subtleBorder}
+                        mutedBg={mutedBg}
+                        onMove={onMove}
+                        onToggleActive={onToggleActive}
+                        onUninstall={onUninstall}
+                        customStyle={false}
+                      />
+                    )}
+                    {customInstalledPlugins.length > 0 && (
+                      <PluginSection
+                        plugins={customInstalledPlugins}
+                        installedPlugins={installedPlugins}
+                        subtleBorder={subtleBorder}
+                        mutedBg={mutedBg}
+                        onMove={onMove}
+                        onToggleActive={onToggleActive}
+                        onUninstall={onUninstall}
+                        onEdit={(plugin) => {
+                          setEditingPlugin(plugin);
+                          setShowImportModal(true);
+                        }}
+                        customStyle
+                      />
+                    )}
+                  </>
                 )}
               </div>
             </div>
           )}
-
-          {activeTab === "import" && (
-            <div className="flex-1 overflow-y-auto px-8 py-8">
-              <div className="max-w-xl mx-auto space-y-6">
-                <div>
-                  <h3 className="text-base font-bold">导入自定义插件</h3>
-                  <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">
-                    粘贴 RSS / Atom 订阅地址，或上传本地插件配置包
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-xs font-medium text-neutral-500">
-                    订阅地址
-                  </label>
-                  <input
-                    type="url"
-                    value={importFeedUrl}
-                    onChange={e => setImportFeedUrl(e.target.value)}
-                    placeholder="https://example.com/feed.xml"
-                    className={`w-full px-4 py-3 rounded-xl text-sm outline-none border ${subtleBorder} ${mutedBg} focus:border-[#5856D6]/50`}
-                  />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleImportSubmit}
-                  className={`w-full py-3 rounded-xl text-sm font-semibold text-white ${PRIMARY}`}
-                >
-                  导入并安装
-                </button>
-                <div
-                  className={`rounded-2xl border border-dashed ${subtleBorder} p-10 text-center`}
-                >
-                  <p className="text-sm text-neutral-400">
-                    拖拽 .json / .orbit-plugin 到此处
-                  </p>
-                  <p className="text-xs text-neutral-400 mt-2">
-                    本地配置文件导入将在后续版本开放
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
-
-        {/* Footer */}
-        <footer
-          className={`shrink-0 flex items-center justify-end gap-3 px-8 py-4 border-t ${subtleBorder}`}
-        >
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2.5 text-sm font-medium text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
-          >
-            关闭并返回
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className={`px-5 py-2.5 text-sm font-semibold text-white rounded-xl ${PRIMARY} shadow-lg shadow-indigo-500/20 transition-colors`}
-          >
-            完成保存并同步大盘
-          </button>
-        </footer>
       </div>
+
+      {showImportModal && (
+        <ImportPluginModal
+          onClose={() => {
+            setShowImportModal(false);
+            setEditingPlugin(null);
+          }}
+          onImport={(payload) => {
+            onImport(payload);
+            setShowImportModal(false);
+            setEditingPlugin(null);
+            setActiveTab("manage");
+          }}
+          initialPlugin={editingPlugin}
+        />
+      )}
     </div>
   );
 }

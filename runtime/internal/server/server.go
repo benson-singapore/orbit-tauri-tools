@@ -5,18 +5,20 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/orbit-tauri-tools/runtime/internal/plugin"
 	"github.com/orbit-tauri-tools/runtime/internal/store"
 )
 
 const Version = "0.1.0"
 
 type Server struct {
-	store *store.Store
-	mux   *http.ServeMux
+	store    *store.Store
+	registry *plugin.Registry
+	mux      *http.ServeMux
 }
 
-func New(st *store.Store) *Server {
-	s := &Server{store: st, mux: http.NewServeMux()}
+func New(st *store.Store, reg *plugin.Registry) *Server {
+	s := &Server{store: st, registry: reg, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -24,8 +26,8 @@ func New(st *store.Store) *Server {
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -37,6 +39,21 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/v1/status", s.handleStatus)
+	s.mux.HandleFunc("/v1/plugins", s.handlePlugins)
+	s.mux.HandleFunc("/v1/plugins/", s.handlePluginByID)
+	s.mux.HandleFunc("/v1/feed", s.handleFeed)
+	s.mux.HandleFunc("/v1/feed/refresh", s.handleRefreshFeed)
+}
+
+func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.handleListPlugins(w, r)
+	case http.MethodPost:
+		s.handleInstallPlugin(w, r)
+	default:
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+	}
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, _ *http.Request) {

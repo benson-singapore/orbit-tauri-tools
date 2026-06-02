@@ -2,7 +2,7 @@ import type { Article } from "@/types";
 
 export const ARTICLES_DATA: Article[] = [
   {
-    id: 1,
+    id: '1',
     title: 'React 19 中的 Actions 异步状态与 Form 处理详解',
     summary: '深入探讨 React 19 引入的 Actions API。传统的表单在处理异步数据提交时，面临繁琐的 isPending 状态维护。通过全新的 action 属性，React 能无缝自动管理并简化底层渲染周期。',
     content: `
@@ -43,7 +43,7 @@ export const ARTICLES_DATA: Article[] = [
     isBookmarked: false
   },
   {
-    id: 2,
+    id: '2',
     title: 'Forza Horizon 6 is the first racing game to stand a chance in 2026',
     summary: '随着拟真光线追踪与动态实时天气引擎加入，Forza Horizon 6 在画质与开放世界物理层级上完成了不可思议的飞跃。本篇带你领略无边界赛车体验。',
     content: `
@@ -61,7 +61,7 @@ export const ARTICLES_DATA: Article[] = [
     isBookmarked: false
   },
   {
-    id: 3,
+    id: '3',
     title: '【4K 测评】Apple Vision Pro 2 终极长期体验报告：等待终获回报？',
     summary: '深度解析 Vision Pro 第二代。在佩戴体验、电池功耗、超逼真虚拟协作空间等核心痛点中，这一代给出了几乎完美的答卷，带你第一视角体验空间计算的成熟期。',
     content: ``,
@@ -77,7 +77,7 @@ export const ARTICLES_DATA: Article[] = [
     isBookmarked: false
   },
   {
-    id: 4,
+    id: '4',
     title: '硅谷独家对谈：Sam Altman 预测 2026 年通用人工智能的下一级变局',
     summary: '在最新的专访播客中，OpenAI 创始人分享了对于自主式 AI Agents、多模态感官连接以及全自动化软件编写在各垂直领域大规模落地的路线展望。',
     content: ``,
@@ -94,7 +94,7 @@ export const ARTICLES_DATA: Article[] = [
     isBookmarked: false
   },
   {
-    id: 5,
+    id: '5',
     title: '赛博朋克极简美学：全球未来建筑设计巡礼',
     summary: '在霓虹闪烁的夜空、垂直延伸的空中花园与混凝土雕塑美学交错中，探索全球建筑大奖最前沿的设计成果。',
     content: ``,
@@ -114,7 +114,7 @@ export const ARTICLES_DATA: Article[] = [
     isBookmarked: false
   },
   {
-    id: 6,
+    id: '6',
     title: '理解高速数据引擎底层：从 B-Tree 演进至现代 LSM-Tree',
     summary: '为什么在极速写入的写入密集型场景（如 ClickHouse，RocksDB）中，大名鼎鼎的 B-Tree 会逊色于 LSM-Tree？深入理解合并排序与写前日志机制。',
     content: `

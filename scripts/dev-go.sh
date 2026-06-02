@@ -6,6 +6,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 PORT="${ORBIT_PORT:-17890}"
 
 export ORBIT_PORT="$PORT"
+export ORBIT_PLUGINS_DIR="$ROOT/plugins"
 
 echo "Starting Go runtime (dev) on http://127.0.0.1:${PORT}"
 echo "In another terminal:"

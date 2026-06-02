@@ -6,7 +6,7 @@ export type ActiveTab = "today" | "bookmarks" | "trending" | "all";
 export type CategoryFilter = "all" | ContentType;
 
 export interface Article {
-  id: number;
+  id: string;
   title: string;
   summary: string;
   content: string;
@@ -21,6 +21,7 @@ export interface Article {
   audioUrl?: string;
   audioDuration?: string;
   galleryImages?: string[];
+  sourceUrl?: string;
   tags: string[];
   isBookmarked: boolean;
 }
@@ -48,6 +49,34 @@ export interface Plugin {
   marketCategory?: Exclude<PluginMarketCategory, "all">;
   categoryTag?: string;
   official?: boolean;
+  source?: string;
+  lastError?: string;
+}
+
+export interface FeedResponse {
+  ok: boolean;
+  items: Article[];
+  count: number;
+}
+
+export interface PluginsResponse {
+  plugins: Plugin[];
+}
+
+export interface InstallRSSPluginRequest {
+  source?: "rss";
+  feedUrl: string;
+  name?: string;
+  id?: string;
+  mediaType?: "article" | "manga" | "video" | "audio";
+  refreshInterval?: number;
+  userAgent?: string;
+  icon?: PluginContentType;
+  description?: string;
+  color?: string;
+  logoText?: string;
+  marketCategory?: Exclude<PluginMarketCategory, "all">;
+  categoryTag?: string;
 }
 
 export interface RuntimeStatusResponse {

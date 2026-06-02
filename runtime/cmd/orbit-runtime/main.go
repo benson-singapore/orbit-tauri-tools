@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
 
+	"github.com/orbit-tauri-tools/runtime/internal/plugin"
 	"github.com/orbit-tauri-tools/runtime/internal/server"
 	"github.com/orbit-tauri-tools/runtime/internal/store"
 )
@@ -34,7 +36,12 @@ func main() {
 	}
 	defer st.Close()
 
-	srv := server.New(st)
+	reg := plugin.NewRegistry(st)
+	if err := reg.Sync(context.Background()); err != nil {
+		log.Fatalf("plugin sync: %v", err)
+	}
+
+	srv := server.New(st, reg)
 	httpServer := &http.Server{Handler: srv.Handler()}
 
 	log.Printf("orbit-runtime %s listening on 127.0.0.1:%d", server.Version, port)

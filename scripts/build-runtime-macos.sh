@@ -24,4 +24,12 @@ export GOARCH
 cd "$RUNTIME_DIR"
 go build -ldflags="-s -w" -o "$OUT_DIR/orbit-runtime-$SUFFIX" ./cmd/orbit-runtime
 
+PLUGINS_SRC="$ROOT/plugins"
+PLUGINS_DST="$OUT_DIR/plugins"
+if [ -d "$PLUGINS_SRC" ]; then
+  rm -rf "$PLUGINS_DST"
+  cp -R "$PLUGINS_SRC" "$PLUGINS_DST"
+  echo "bundled plugins -> $PLUGINS_DST"
+fi
+
 echo "built $OUT_DIR/orbit-runtime-$SUFFIX"

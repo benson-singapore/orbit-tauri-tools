@@ -61,6 +61,32 @@ func (s *Store) migrate() error {
 			title TEXT NOT NULL,
 			read_at INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS plugins (
+			id TEXT PRIMARY KEY,
+			name TEXT NOT NULL,
+			manifest_json TEXT NOT NULL,
+			active INTEGER NOT NULL DEFAULT 1,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			installed_at INTEGER NOT NULL,
+			last_fetch_at INTEGER,
+			last_error TEXT,
+			source TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS feed_items (
+			id TEXT PRIMARY KEY,
+			plugin_id TEXT NOT NULL,
+			title TEXT NOT NULL,
+			summary TEXT,
+			cover TEXT,
+			media_type TEXT NOT NULL,
+			source_url TEXT,
+			author TEXT,
+			published_at INTEGER,
+			payload_json TEXT,
+			fetched_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_feed_items_plugin ON feed_items(plugin_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_feed_items_published ON feed_items(published_at DESC)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := s.DB.Exec(stmt); err != nil {

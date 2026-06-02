@@ -1,9 +1,8 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
-import { ARTICLES_DATA } from "@/data/articles";
-import { INITIAL_PLUGINS } from "@/data/plugins";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
+import { useOrbitData } from "@/hooks/useOrbitData";
 import { useTitlebarDrag } from "@/hooks/useTitlebarDrag";
 import { useTitlebarEnv } from "@/hooks/useTitlebarEnv";
 import { useUiZoom } from "@/hooks/useUiZoom";
@@ -11,6 +10,7 @@ import type {
   ActiveTab,
   Article,
   CategoryFilter,
+  InstallRSSPluginRequest,
   Plugin,
   ThemeMode,
 } from "@/types";
@@ -27,14 +27,43 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const [articles, setArticles] = useState<Article[]>(ARTICLES_DATA);
-  const [selectedItem, setSelectedItem] = useState<Article | null>(
-    ARTICLES_DATA[0] ?? null,
+  const {
+    plugins: myPlugins,
+    articles: feedArticles,
+    loading: feedLoading,
+    error: feedError,
+    installCustomRSS,
+    togglePluginActive: orbitTogglePluginActive,
+    removePlugin: orbitRemovePlugin,
+    movePlugin: orbitMovePlugin,
+  } = useOrbitData();
+
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
+  const articles = useMemo(
+    () =>
+      feedArticles.map(item => ({
+        ...item,
+        isBookmarked: bookmarkedIds.has(item.id),
+      })),
+    [feedArticles, bookmarkedIds],
   );
+
+  const [selectedItem, setSelectedItem] = useState<Article | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("today");
 
-  const [myPlugins, setMyPlugins] = useState<Plugin[]>(INITIAL_PLUGINS);
   const [showPluginStore, setShowPluginStore] = useState(false);
+
+  useEffect(() => {
+    if (articles.length === 0) {
+      return;
+    }
+    setSelectedItem(prev => {
+      if (prev && articles.some(a => a.id === prev.id)) {
+        return articles.find(a => a.id === prev.id) ?? prev;
+      }
+      return articles[0] ?? null;
+    });
+  }, [articles]);
 
   const [focusMode, setFocusMode] = useState(false);
   const [dimmerMode, setDimmerMode] = useState(false);
@@ -93,40 +122,37 @@ export default function App() {
     setActiveImageIndex(0);
   };
 
-  const handleBookmarkToggle = (id: number) => {
-    setArticles(prev => {
-      const updated = prev.map(item => {
-        if (item.id === id) {
-          const newItem = { ...item, isBookmarked: !item.isBookmarked };
-          // Keep selected item synchronized
-          if (selectedItem && selectedItem.id === id) {
-            setSelectedItem(newItem);
-          }
-          return newItem;
-        }
-        return item;
-      });
-      return updated;
+  const handleBookmarkToggle = (id: string) => {
+    setBookmarkedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
     });
-  };
-
-  const handleInstallPlugin = (newPlugin: Plugin) => {
-    if (!myPlugins.some(p => p.id === newPlugin.id)) {
-      setMyPlugins(prev => [...prev, { ...newPlugin, active: true }]);
+    if (selectedItem?.id === id) {
+      setSelectedItem(prev =>
+        prev ? { ...prev, isBookmarked: !prev.isBookmarked } : prev,
+      );
     }
   };
 
+  const handleInstallPlugin = (newPlugin: Plugin) => {
+    void newPlugin;
+    // 插件市场条目尚未绑定 RSS manifest，后续 Phase 2 接入
+  };
+
   const handleUninstallPlugin = (id: string) => {
-    setMyPlugins(prev => prev.filter(p => p.id !== id));
+    void orbitRemovePlugin(id).catch(console.error);
     if (activePlugin === id) {
       setActivePlugin("all");
     }
   };
 
   const handleTogglePluginActive = (id: string) => {
-    setMyPlugins(prev =>
-      prev.map(p => (p.id === id ? { ...p, active: p.active === false } : p)),
-    );
+    void orbitTogglePluginActive(id).catch(console.error);
     if (activePlugin === id) {
       const target = myPlugins.find(p => p.id === id);
       if (target?.active !== false) {
@@ -136,40 +162,15 @@ export default function App() {
   };
 
   const handleMovePlugin = (id: string, direction: "up" | "down") => {
-    setMyPlugins(prev => {
-      const idx = prev.findIndex(p => p.id === id);
-      if (idx <= 0) return prev;
-      const swapIdx = direction === "up" ? idx - 1 : idx + 1;
-      if (swapIdx <= 0 || swapIdx >= prev.length) return prev;
-      const next = [...prev];
-      [next[idx], next[swapIdx]] = [next[swapIdx], next[idx]];
-      return next;
-    });
+    orbitMovePlugin(id, direction);
   };
 
-  const handleImportCustomPlugin = (url: string) => {
-    const trimmed = url.trim();
-    let displayName = "自定义 RSS 源";
-    if (trimmed) {
-      try {
-        displayName = new URL(trimmed).hostname;
-      } catch {
-        displayName = "自定义 RSS 源";
-      }
+  const handleImportCustomPlugin = (payload: InstallRSSPluginRequest) => {
+    const trimmed = payload.feedUrl.trim();
+    if (!trimmed) {
+      return;
     }
-    const customId = `custom-${Math.random().toString(36).slice(2, 8)}`;
-    handleInstallPlugin({
-      id: customId,
-      name: displayName,
-      icon: "text",
-      desc: trimmed || "自定义外部 RSS 新闻数据源",
-      logoText: "R",
-      color: "bg-orange-500",
-      active: true,
-      marketCategory: "blog",
-      categoryTag: "RSS",
-      official: false,
-    });
+    void installCustomRSS({ ...payload, feedUrl: trimmed }).catch(console.error);
   };
 
   return (
@@ -278,7 +279,11 @@ export default function App() {
               </div>
 
               <button 
-                onClick={() => { setActiveTab('today'); setActivePlugin('all'); }}
+                onClick={() => {
+                  setShowPluginStore(false);
+                  setActiveTab('today');
+                  setActivePlugin('all');
+                }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
                   isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
                 } ${
@@ -306,7 +311,11 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setActiveTab('bookmarks'); setActivePlugin('all'); }}
+                onClick={() => {
+                  setShowPluginStore(false);
+                  setActiveTab('bookmarks');
+                  setActivePlugin('all');
+                }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
                   isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
                 } ${
@@ -328,7 +337,11 @@ export default function App() {
               </button>
 
               <button 
-                onClick={() => { setActiveTab('trending'); setActivePlugin('all'); }}
+                onClick={() => {
+                  setShowPluginStore(false);
+                  setActiveTab('trending');
+                  setActivePlugin('all');
+                }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
                   isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
                 } ${
@@ -369,6 +382,7 @@ export default function App() {
                 <button 
                   key={plugin.id}
                   onClick={() => {
+                    setShowPluginStore(false);
                     setActivePlugin(plugin.id);
                     setActiveTab('all');
                   }}
@@ -414,7 +428,20 @@ export default function App() {
 
         {/* Dynamic Inner Layout Body: Swap handles Left <-> Right positions of (Feed panel vs Reader panel) */}
         <main className={`flex-1 flex ${layoutSwap ? 'flex-row-reverse' : 'flex-row'} h-full overflow-hidden transition-all duration-300`}>
-          
+          {showPluginStore ? (
+            <PluginManagerModal
+              theme={theme}
+              myPlugins={myPlugins}
+              onClose={() => setShowPluginStore(false)}
+              onInstall={handleInstallPlugin}
+              onUninstall={handleUninstallPlugin}
+              onToggleActive={handleTogglePluginActive}
+              onMove={handleMovePlugin}
+              onImport={handleImportCustomPlugin}
+              embedded
+            />
+          ) : (
+            <>
           {}
           <section className={`w-full md:w-80 lg:w-96 h-full flex flex-col border-r border-l transition-all duration-300 ${
             theme === 'dark' ? 'bg-[#121314] border-neutral-800' : 'bg-white border-neutral-100'
@@ -481,7 +508,16 @@ export default function App() {
                 <span>共 {filteredArticles.length} 篇</span>
               </div>
 
-              {filteredArticles.length === 0 ? (
+              {feedLoading ? (
+                <div className="text-center py-12">
+                  <p className="text-sm text-neutral-400">正在拉取 RSS 订阅…</p>
+                </div>
+              ) : feedError ? (
+                <div className="text-center py-12 px-4">
+                  <p className="text-sm text-rose-500">Feed 加载失败：{feedError}</p>
+                  <p className="text-xs text-neutral-400 mt-2">请确认 Go runtime 已启动（make dev-go）</p>
+                </div>
+              ) : filteredArticles.length === 0 ? (
                 <div className="text-center py-12">
                   <div className="w-12 h-12 rounded-full bg-neutral-50 dark:bg-neutral-800 flex items-center justify-center mx-auto mb-3">
                     <Icon name="search" className="w-6 h-6 text-neutral-400" />
@@ -840,9 +876,20 @@ export default function App() {
                     <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed italic">
                       “ {selectedItem.summary} ”
                     </p>
-                    <p className="text-sm text-neutral-400">
-                      （这是一个带有交互式卡片的媒体项目资源，详情请在上方播放器/视图组件中直接点击交互并体验。）
-                    </p>
+                    {selectedItem.sourceUrl ? (
+                      <a
+                        href={selectedItem.sourceUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex text-sm text-indigo-500 hover:underline"
+                      >
+                        阅读原文 →
+                      </a>
+                    ) : (
+                      <p className="text-sm text-neutral-400">
+                        （这是一个带有交互式卡片的媒体项目资源，详情请在上方播放器/视图组件中直接点击交互并体验。）
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -859,24 +906,11 @@ export default function App() {
             )}
 
           </section>
-
+            </>
+          )}
         </main>
 
       </div>
-
-      {}
-      {showPluginStore && (
-        <PluginManagerModal
-          theme={theme}
-          myPlugins={myPlugins}
-          onClose={() => setShowPluginStore(false)}
-          onInstall={handleInstallPlugin}
-          onUninstall={handleUninstallPlugin}
-          onToggleActive={handleTogglePluginActive}
-          onMove={handleMovePlugin}
-          onImport={handleImportCustomPlugin}
-        />
-      )}
 
     </div>
   );

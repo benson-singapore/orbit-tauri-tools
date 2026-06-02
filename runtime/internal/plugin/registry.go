@@ -1,0 +1,433 @@
+package plugin
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/orbit-tauri-tools/runtime/internal/store"
+)
+
+type Registry struct {
+	store   *store.Store
+	fetcher *RSSFetcher
+	mu      sync.RWMutex
+	records map[string]*PluginRecord
+}
+
+func NewRegistry(st *store.Store) *Registry {
+	return &Registry{
+		store:   st,
+		fetcher: NewRSSFetcher(),
+		records: make(map[string]*PluginRecord),
+	}
+}
+
+// Sync scans plugin directories and reconciles with SQLite.
+func (r *Registry) Sync(ctx context.Context) error {
+	dirs, err := DiscoverDirs()
+	if err != nil {
+		return err
+	}
+
+	disk := make(map[string]manifestOnDisk)
+	for _, dir := range dirs {
+		if err := r.scanDir(dir, disk); err != nil {
+			return err
+		}
+	}
+
+	dbRows, err := r.store.ListPlugins(ctx)
+	if err != nil {
+		return err
+	}
+	dbByID := make(map[string]store.PluginRow, len(dbRows))
+	for _, row := range dbRows {
+		dbByID[row.ID] = row
+	}
+
+	now := time.Now().Unix()
+	for id, onDisk := range disk {
+		m := onDisk.manifest
+		m.Bundled = onDisk.bundled
+
+		row, exists := dbByID[id]
+		if !exists {
+			rec := &PluginRecord{
+				Manifest:  *m,
+				Active:    true,
+				SortOrder: len(dbByID) + len(r.records),
+				Installed: now,
+			}
+			if err := r.upsertPlugin(ctx, rec); err != nil {
+				return err
+			}
+			r.setRecord(rec)
+			continue
+		}
+
+		rec, err := rowToRecord(row)
+		if err != nil {
+			return err
+		}
+		// Refresh manifest fields from disk; keep runtime state.
+		rec.Manifest = *m
+		rec.Manifest.Bundled = onDisk.bundled
+		if err := r.upsertPlugin(ctx, rec); err != nil {
+			return err
+		}
+		r.setRecord(rec)
+	}
+
+	r.mu.Lock()
+	for id := range r.records {
+		if _, ok := disk[id]; !ok {
+			if row, ok := dbByID[id]; ok && row.Source == SourceRSS {
+				// Keep user plugins that only exist in DB (legacy) — skip delete.
+				continue
+			}
+		}
+	}
+	r.mu.Unlock()
+
+	return r.loadFromDB(ctx)
+}
+
+type manifestOnDisk struct {
+	manifest *Manifest
+	bundled  bool
+	dir      string
+}
+
+func (r *Registry) scanDir(root string, out map[string]manifestOnDisk) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	userDir, _ := UserPluginsDir()
+	userDir = filepath.Clean(userDir)
+
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		manifestPath := filepath.Join(root, ent.Name(), "manifest.json")
+		if _, err := os.Stat(manifestPath); err != nil {
+			continue
+		}
+		m, err := LoadManifest(manifestPath)
+		if err != nil {
+			return fmt.Errorf("%s: %w", manifestPath, err)
+		}
+		bundled := filepath.Clean(root) != userDir
+		if prev, ok := out[m.ID]; ok {
+			// Later dirs override earlier; user dir wins over bundled.
+			if prev.bundled && !bundled {
+				out[m.ID] = manifestOnDisk{manifest: m, bundled: bundled, dir: filepath.Join(root, ent.Name())}
+			}
+			continue
+		}
+		out[m.ID] = manifestOnDisk{manifest: m, bundled: bundled, dir: filepath.Join(root, ent.Name())}
+	}
+	return nil
+}
+
+func (r *Registry) loadFromDB(ctx context.Context) error {
+	rows, err := r.store.ListPlugins(ctx)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records = make(map[string]*PluginRecord, len(rows))
+	for _, row := range rows {
+		rec, err := rowToRecord(row)
+		if err != nil {
+			return err
+		}
+		r.records[row.ID] = rec
+	}
+	return nil
+}
+
+func rowToRecord(row store.PluginRow) (*PluginRecord, error) {
+	var m Manifest
+	if err := store.DecodeJSON(row.ManifestJSON, &m); err != nil {
+		return nil, err
+	}
+	return &PluginRecord{
+		Manifest:  m,
+		Active:    row.Active,
+		SortOrder: row.SortOrder,
+		Installed: row.InstalledAt,
+		LastFetch: row.LastFetchAt,
+		LastError: row.LastError,
+	}, nil
+}
+
+func (r *Registry) setRecord(rec *PluginRecord) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.records[rec.ID] = rec
+}
+
+func (r *Registry) List() []*PluginRecord {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*PluginRecord, 0, len(r.records))
+	for _, rec := range r.records {
+		out = append(out, cloneRecord(rec))
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].SortOrder != out[j].SortOrder {
+			return out[i].SortOrder < out[j].SortOrder
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
+}
+
+func (r *Registry) Get(id string) (*PluginRecord, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	rec, ok := r.records[id]
+	if !ok {
+		return nil, false
+	}
+	return cloneRecord(rec), true
+}
+
+func cloneRecord(rec *PluginRecord) *PluginRecord {
+	cp := *rec
+	cp.Capabilities = append([]string(nil), rec.Capabilities...)
+	return &cp
+}
+
+func (r *Registry) InstallRSS(ctx context.Context, opts InstallRSSOptions) (*PluginRecord, error) {
+	feedURL := strings.TrimSpace(opts.FeedURL)
+	if feedURL == "" {
+		return nil, fmt.Errorf("feedUrl is required")
+	}
+	id := strings.TrimSpace(opts.ID)
+	if id == "" {
+		sum := sha256Hex(feedURL)
+		id = "rss-" + sum[:10]
+	}
+	name := strings.TrimSpace(opts.Name)
+	if name == "" {
+		name = hostnameFromURL(feedURL)
+	}
+
+	m := NewRSSManifest(id, name, feedURL)
+	if opts.RefreshInterval > 0 {
+		m.Config.RefreshInterval = opts.RefreshInterval
+	}
+	if ua := strings.TrimSpace(opts.UserAgent); ua != "" {
+		m.Config.UserAgent = ua
+	}
+	if mt := strings.TrimSpace(opts.MediaType); mt != "" {
+		m.MediaType = mt
+	}
+	if icon := strings.TrimSpace(opts.Icon); icon != "" {
+		m.Meta.Icon = icon
+		if strings.TrimSpace(opts.MediaType) == "" {
+			m.MediaType = MediaTypeFromIcon(icon)
+		}
+	}
+	if v := strings.TrimSpace(opts.Description); v != "" {
+		m.Meta.Description = v
+	}
+	if v := strings.TrimSpace(opts.Color); v != "" {
+		m.Meta.Color = v
+	}
+	if v := strings.TrimSpace(opts.LogoText); v != "" {
+		runes := []rune(v)
+		m.Meta.LogoText = string(runes[0])
+	}
+	if v := strings.TrimSpace(opts.MarketCategory); v != "" {
+		m.Meta.MarketCategory = v
+	}
+	if v := strings.TrimSpace(opts.CategoryTag); v != "" {
+		m.Meta.CategoryTag = v
+	}
+	if err := ValidateManifest(m); err != nil {
+		return nil, err
+	}
+	userDir, err := UserPluginsDir()
+	if err != nil {
+		return nil, err
+	}
+	pluginDir := filepath.Join(userDir, id)
+	if err := SaveManifest(pluginDir, m); err != nil {
+		return nil, err
+	}
+
+	rec := &PluginRecord{
+		Manifest:  *m,
+		Active:    true,
+		SortOrder: 1000,
+		Installed: time.Now().Unix(),
+	}
+	if err := r.upsertPlugin(ctx, rec); err != nil {
+		return nil, err
+	}
+	r.setRecord(rec)
+	return cloneRecord(rec), nil
+}
+
+func (r *Registry) SetActive(ctx context.Context, id string, active bool) (*PluginRecord, error) {
+	rec, ok := r.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("plugin not found: %s", id)
+	}
+	rec.Active = active
+	if err := r.upsertPlugin(ctx, rec); err != nil {
+		return nil, err
+	}
+	r.setRecord(rec)
+	return cloneRecord(rec), nil
+}
+
+func (r *Registry) Uninstall(ctx context.Context, id string) error {
+	rec, ok := r.Get(id)
+	if !ok {
+		return fmt.Errorf("plugin not found: %s", id)
+	}
+	if rec.Bundled {
+		return fmt.Errorf("bundled plugin cannot be uninstalled: %s", id)
+	}
+	userDir, err := UserPluginsDir()
+	if err != nil {
+		return err
+	}
+	_ = os.RemoveAll(filepath.Join(userDir, id))
+	if err := r.store.DeletePlugin(ctx, id); err != nil {
+		return err
+	}
+	if err := r.store.DeleteFeedItemsByPlugin(ctx, id); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	delete(r.records, id)
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *Registry) RefreshPlugin(ctx context.Context, pluginID string) ([]FeedItem, error) {
+	rec, ok := r.Get(pluginID)
+	if !ok {
+		return nil, fmt.Errorf("plugin not found: %s", pluginID)
+	}
+	if !rec.Active {
+		return nil, fmt.Errorf("plugin is disabled: %s", pluginID)
+	}
+	if rec.Source != SourceRSS {
+		return nil, fmt.Errorf("unsupported plugin source: %s", rec.Source)
+	}
+
+	items, err := r.fetcher.FetchFeed(ctx, &rec.Manifest)
+	now := time.Now().Unix()
+	if err != nil {
+		rec.LastError = err.Error()
+		rec.LastFetch = now
+		_ = r.upsertPlugin(ctx, rec)
+		r.setRecord(rec)
+		return nil, err
+	}
+
+	if err := r.persistFeedItems(ctx, pluginID, items, now); err != nil {
+		return nil, err
+	}
+	rec.LastError = ""
+	rec.LastFetch = now
+	if err := r.upsertPlugin(ctx, rec); err != nil {
+		return nil, err
+	}
+	r.setRecord(rec)
+	return items, nil
+}
+
+func (r *Registry) Feed(ctx context.Context, pluginID string, refresh bool) ([]FeedItem, error) {
+	recs := r.List()
+	if pluginID != "" && pluginID != "all" {
+		rec, ok := r.Get(pluginID)
+		if !ok {
+			return nil, fmt.Errorf("plugin not found: %s", pluginID)
+		}
+		recs = []*PluginRecord{rec}
+	}
+
+	var all []FeedItem
+	for _, rec := range recs {
+		if !rec.Active || rec.ID == "all" {
+			continue
+		}
+		if !HasCapability(&rec.Manifest, CapFeed) {
+			continue
+		}
+
+		stale := refresh || r.isStale(rec)
+		if stale {
+			if _, err := r.RefreshPlugin(ctx, rec.ID); err != nil {
+				// Degrade to cache if refresh fails.
+				cached, cacheErr := r.loadFeedItems(ctx, rec.ID)
+				if cacheErr != nil || len(cached) == 0 {
+					if err != nil {
+						return nil, err
+					}
+					continue
+				}
+				all = append(all, cached...)
+				continue
+			}
+		}
+
+		items, err := r.loadFeedItems(ctx, rec.ID)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+	}
+
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].PublishedAt > all[j].PublishedAt
+	})
+	return all, nil
+}
+
+func (r *Registry) isStale(rec *PluginRecord) bool {
+	if rec.LastFetch == 0 {
+		return true
+	}
+	interval := DefaultRefreshInterval(rec.Config.RefreshInterval)
+	return time.Since(time.Unix(rec.LastFetch, 0)) >= interval
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func hostnameFromURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "https://")
+	raw = strings.TrimPrefix(raw, "http://")
+	if idx := strings.Index(raw, "/"); idx >= 0 {
+		raw = raw[:idx]
+	}
+	if raw == "" {
+		return "Custom RSS"
+	}
+	return raw
+}

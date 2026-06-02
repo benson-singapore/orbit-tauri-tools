@@ -72,6 +72,7 @@ cd app && npm run tauri:dev
 |------|------|
 | `ORBIT_PORT` | Go 监听端口（默认随机；`dev-go.sh` 默认 `17890`） |
 | `ORBIT_RUNTIME_URL` | Tauri 不 spawn sidecar，直连该 URL（开发推荐） |
+| `ORBIT_PLUGINS_DIR` | RSS 插件 manifest 目录（`dev-go.sh` 默认仓库 `plugins/`） |
 | `VITE_ORBIT_RUNTIME_URL` | 仅 `npm run dev` 在浏览器里调试前端时用 |
 
 ## 单独调试 Go
@@ -80,6 +81,8 @@ cd app && npm run tauri:dev
 ORBIT_PORT=17890 go run ./runtime/cmd/orbit-runtime
 curl http://127.0.0.1:17890/health
 curl http://127.0.0.1:17890/v1/status
+curl http://127.0.0.1:17890/v1/plugins
+curl "http://127.0.0.1:17890/v1/feed?refresh=1"
 ```
 
 ## 目录结构
@@ -87,7 +90,9 @@ curl http://127.0.0.1:17890/v1/status
 | 路径 | 说明 |
 |------|------|
 | `app/` | Tauri + React UI |
-| `runtime/` | Go HTTP 服务、SQLite |
+| `runtime/` | Go HTTP 服务、SQLite、RSS 插件 Host |
+| `plugins/` | 内置 RSS 插件 manifest |
+| `docs/方案/rss-plugin.md` | RSS 插件设计与 API 说明 |
 | `scripts/build-runtime-macos.sh` | 编译 sidecar（打包 / 集成模式） |
 | `scripts/dev-go.sh` | 开发用 `go run` |
 
