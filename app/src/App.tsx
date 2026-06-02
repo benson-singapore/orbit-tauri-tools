@@ -2,7 +2,9 @@ import { useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { ARTICLES_DATA } from "@/data/articles";
 import { INITIAL_PLUGINS, PLUGINS_STORE } from "@/data/plugins";
-import { useRuntimeStatus } from "@/hooks/useRuntimeStatus";
+import { useTitlebarDrag } from "@/hooks/useTitlebarDrag";
+import { useTitlebarEnv } from "@/hooks/useTitlebarEnv";
+import { useUiZoom } from "@/hooks/useUiZoom";
 import type {
   ActiveTab,
   Article,
@@ -12,13 +14,9 @@ import type {
 } from "@/types";
 
 export default function App() {
-  const {
-    state: runtimeState,
-    health,
-    status,
-    error: runtimeError,
-    refresh: refreshRuntime,
-  } = useRuntimeStatus();
+  useUiZoom();
+  useTitlebarEnv();
+  const onTitlebarMouseDown = useTitlebarDrag();
 
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
@@ -38,7 +36,6 @@ export default function App() {
 
   const [focusMode, setFocusMode] = useState(false);
   const [dimmerMode, setDimmerMode] = useState(false);
-  const [isSummarizing, setIsSummarizing] = useState(false);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
 
   // Audio Player State
@@ -125,93 +122,32 @@ export default function App() {
     }
   };
 
-  const handleAISimplify = () => {
-    setIsSummarizing(true);
-    setTimeout(() => {
-      setAiSummary(`💡 【OmniAI 智能速读纪要】：
-1. 本文聚焦于在现代框架架构下，如何剔除传统状态机（isPending）冗余，通过自动化代理彻底简化生命周期。
-2. 在异步请求与界面交互中，React 19 通过将 Form Action 直接关联底层 Transition，大大提高复杂页面的响应效率。
-3. 提供了更细粒度且无任何副作用的原生状态回调支持，使极简主义前端代码重构效率提升近 40%。`);
-      setIsSummarizing(false);
-    }, 1200);
-  };
-
   return (
-    <div className={`min-h-screen font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-[#121314] text-[#e3e3e3]' : 'bg-[#f8f9fa] text-[#1f1f1f]'}`}>
+    <div className={`h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-[#121314] text-[#e3e3e3]' : 'bg-[#f8f9fa] text-[#1f1f1f]'}`}>
       
       {}
-      <header className={`sticky top-0 z-40 flex items-center justify-between px-6 py-3 border-b transition-colors duration-300 ${theme === 'dark' ? 'bg-[#1c1d1f] border-neutral-800' : 'bg-white border-neutral-100'} shadow-sm`}>
-        
-        {/* Left Section: Logo & Collapser */}
-        <div className="flex items-center gap-4">
-          <button 
-            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-            className={`p-2 rounded-full transition-colors duration-200 ${theme === 'dark' ? 'hover:bg-neutral-800 text-neutral-400' : 'hover:bg-neutral-100 text-neutral-500'}`}
-            title={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
-          >
-            <Icon name={isSidebarCollapsed ? "expand" : "collapse"} className="w-5 h-5" />
-          </button>
-          
-          <div className="flex items-center gap-2">
-            <div className="bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-1.5 rounded-xl">
-              <Icon name="sparkles" className="w-5 h-5 text-white" />
-            </div>
-            <span className="text-lg font-bold tracking-tight bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 bg-clip-text text-transparent">
-              OmniReader <span className="text-[10px] uppercase font-semibold text-neutral-400 px-1 border border-neutral-300 dark:border-neutral-700 rounded-md">PRO</span>
-            </span>
+      <header
+        data-tauri-drag-region
+        onMouseDown={onTitlebarMouseDown}
+        className={`app-titlebar app-titlebar-drag shrink-0 z-40 flex h-12 items-center justify-between border-b px-4 transition-colors duration-300 ${theme === "dark" ? "bg-[#1c1d1f] border-neutral-800" : "bg-white border-neutral-100"}`}
+      >
+        <div className="flex items-center gap-1.5 min-w-0 select-none pointer-events-none">
+          <div className="bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 p-1 rounded-lg shrink-0">
+            <Icon name="sparkles" className="w-3.5 h-3.5 text-white" />
           </div>
+          <span className="text-sm font-bold tracking-tight bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-500 bg-clip-text text-transparent truncate">
+            ORBIT
+          </span>
         </div>
 
-        {/* Center Section: Runtime status (Go + SQLite) */}
-        <div className="hidden md:flex items-center gap-2 text-xs font-medium text-neutral-500 dark:text-neutral-400">
-          {runtimeState === "loading" && (
-            <>
-              <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
-              <span>正在连接 Runtime…</span>
-            </>
-          )}
-          {runtimeState === "ok" && health && status && (
-            <>
-              <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-              <span>
-                Runtime {health.version} · DB {status.db}
-              </span>
-            </>
-          )}
-          {runtimeState === "error" && (
-            <>
-              <span className="inline-block w-2 h-2 rounded-full bg-rose-500" />
-              <span
-                className="text-rose-600 dark:text-rose-400"
-                title={runtimeError ?? undefined}
-              >
-                Runtime 未连接
-              </span>
-              <button
-                type="button"
-                onClick={() => void refreshRuntime()}
-                className="text-indigo-600 dark:text-indigo-400 hover:underline"
-              >
-                重试
-              </button>
-            </>
-          )}
-          <span className="mx-2 text-neutral-300">|</span>
-          <button 
-            onClick={() => setShowPluginStore(true)}
-            className="text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
-          >
-            <Icon name="puzzle" className="w-3.5 h-3.5" />
-            插件市场
-          </button>
-        </div>
+        <div className="flex-1 self-stretch min-w-4" aria-hidden />
 
         {/* Right Section: Visual Layout Control Actions */}
-        <div className="flex items-center gap-2">
+        <div className="app-titlebar-no-drag flex items-center gap-1 shrink-0">
           {/* Swap Layout Button */}
           <button 
             onClick={() => setLayoutSwap(!layoutSwap)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+            className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-all ${
               layoutSwap 
                 ? 'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-400' 
                 : 'bg-transparent border-neutral-200 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800'
@@ -225,46 +161,70 @@ export default function App() {
           {/* Theme Switcher */}
           <button 
             onClick={toggleTheme}
-            className={`p-2 rounded-full transition-colors duration-200 ${theme === 'dark' ? 'hover:bg-neutral-800 text-yellow-400' : 'hover:bg-neutral-100 text-neutral-600'}`}
+            className={`p-1.5 rounded-lg transition-colors duration-200 ${theme === 'dark' ? 'hover:bg-neutral-800 text-yellow-400' : 'hover:bg-neutral-100 text-neutral-600'}`}
             title={theme === 'dark' ? "切换为白昼模式" : "切换为暗夜模式"}
           >
-            <Icon name={theme === 'dark' ? "sun" : "moon"} className="w-4 h-4" />
+            <Icon name={theme === 'dark' ? "sun" : "moon"} className="w-3.5 h-3.5" />
           </button>
 
           {/* Plugin Install Quick Button */}
           <button 
             onClick={() => setShowPluginStore(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm transition-all hover:shadow-md"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors"
           >
             <Icon name="puzzle" className="w-3.5 h-3.5 text-white" />
             <span className="hidden sm:inline">安装/管理插件</span>
           </button>
-
-          <div className="w-7 h-7 rounded-full bg-indigo-200 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 flex items-center justify-center font-bold text-xs shadow-inner">
-            U
-          </div>
         </div>
       </header>
 
       {/* Main Body */}
-      <div className="flex w-full h-[calc(100vh-57px)] overflow-hidden relative">
+      <div className="flex flex-1 min-h-0 w-full overflow-hidden relative">
         
         {}
         <aside className={`h-full flex flex-col justify-between border-r transition-all duration-300 ${
           theme === 'dark' ? 'bg-[#1c1d1f] border-neutral-800' : 'bg-white border-neutral-100'
         } ${isSidebarCollapsed ? 'w-16' : 'w-64'}`}>
           
-          <div className="flex-1 py-4 overflow-y-auto no-scrollbar">
+          <div className="flex-1 py-3 overflow-y-auto no-scrollbar">
             
+            {/* Sidebar collapse toggle */}
+            <div
+              className={`mb-1 pb-1 border-b ${theme === "dark" ? "border-neutral-800" : "border-neutral-100"} ${isSidebarCollapsed ? "px-0" : "px-3"}`}
+            >
+              <button
+                type="button"
+                onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                className={`w-full flex items-center py-1 rounded-lg text-xs transition-all duration-200 ${
+                  isSidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
+                } ${
+                  theme === "dark"
+                    ? "text-neutral-400 hover:bg-neutral-800/50"
+                    : "text-neutral-500 hover:bg-neutral-50"
+                }`}
+                title={isSidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
+              >
+                <Icon
+                  name={isSidebarCollapsed ? "expand" : "collapse"}
+                  className="w-3.5 h-3.5 shrink-0"
+                />
+                {!isSidebarCollapsed && (
+                  <span className="font-medium">收起侧栏</span>
+                )}
+              </button>
+            </div>
+
             {/* Top Navigation Items (Today, Bookmarks, Trending) */}
-            <div className="px-3 space-y-1">
+            <div className={`space-y-1 ${isSidebarCollapsed ? "px-0" : "px-3"}`}>
               <div className={`text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-2 px-3 ${isSidebarCollapsed ? 'hidden' : 'block'}`}>
                 视图大盘
               </div>
 
               <button 
                 onClick={() => { setActiveTab('today'); setActivePlugin('all'); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                  isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
+                } ${
                   activeTab === 'today' && activePlugin === 'all'
                     ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium'
                     : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
@@ -290,7 +250,9 @@ export default function App() {
 
               <button 
                 onClick={() => { setActiveTab('bookmarks'); setActivePlugin('all'); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                  isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
+                } ${
                   activeTab === 'bookmarks'
                     ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium'
                     : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
@@ -310,7 +272,9 @@ export default function App() {
 
               <button 
                 onClick={() => { setActiveTab('trending'); setActivePlugin('all'); }}
-                className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                  isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
+                } ${
                   activeTab === 'trending'
                     ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium'
                     : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
@@ -328,7 +292,7 @@ export default function App() {
             </div>
 
             {/* Plugin Section */}
-            <div className="px-3 mt-6 space-y-1">
+            <div className={`mt-6 space-y-1 ${isSidebarCollapsed ? "px-0" : "px-3"}`}>
               <div className={`flex items-center justify-between text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-2 px-3 ${
                 isSidebarCollapsed ? 'hidden' : 'block'
               }`}>
@@ -349,7 +313,9 @@ export default function App() {
                     setActivePlugin(plugin.id);
                     setActiveTab('all');
                   }}
-                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                  className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                    isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
+                  } ${
                     activePlugin === plugin.id
                       ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium'
                       : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
@@ -374,10 +340,12 @@ export default function App() {
           </div>
 
           {/* Bottom App Footer */}
-          <div className="p-3 border-t dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/20">
+          <div className={`border-t dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/20 ${isSidebarCollapsed ? "p-2" : "p-3"}`}>
             <button 
               onClick={() => setShowPluginStore(true)}
-              className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 text-xs font-semibold transition-all"
+              className={`w-full flex items-center justify-center rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 text-xs font-semibold transition-all ${
+                isSidebarCollapsed ? "p-2" : "gap-2 py-2 px-3"
+              }`}
             >
               <Icon name="puzzle" className="w-4 h-4" />
               {!isSidebarCollapsed && <span>添加/自定新插件</span>}
@@ -566,91 +534,78 @@ export default function App() {
           } ${dimmerMode ? 'brightness-[0.85] contrast-105' : ''}`}>
             
             {selectedItem ? (
-              <div className="max-w-3xl mx-auto px-6 py-8 md:py-12 space-y-6">
-                
-                {/* Reader Panel Header with Control Widgets */}
-                <div className={`flex flex-wrap items-center justify-between gap-3 p-3 rounded-2xl border transition-colors ${
-                  theme === 'dark' ? 'bg-[#1c1d1f] border-neutral-800' : 'bg-white border-neutral-100'
-                } shadow-sm`}>
-                  
-                  {/* Left Controls: Tags and Source info */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-1 rounded-lg">
-                      {selectedItem.pluginName}
-                    </span>
-                    <span className="text-xs text-neutral-400">
-                      由 {selectedItem.author} 撰写
-                    </span>
+              <div className="max-w-3xl mx-auto px-6 pb-8 md:pb-10">
+                {/* Reader toolbar — sticky near top */}
+                <div
+                  className={`sticky top-0 z-10 -mx-6 px-6 pt-2 pb-2 ${theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"}`}
+                >
+                  <div
+                    className={`rounded-xl border transition-all duration-200 ${
+                      theme === "dark"
+                        ? "bg-[#1c1d1f] border-neutral-800"
+                        : "bg-white border-neutral-100"
+                    } shadow-sm`}
+                  >
+                    <div className="flex items-center gap-2 p-2.5">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-1 rounded-lg shrink-0">
+                          {selectedItem.pluginName}
+                        </span>
+                        <span className="text-xs text-neutral-400 truncate">
+                          由 {selectedItem.author} 撰写
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-1 shrink-0 ml-auto">
+                        <button
+                          onClick={() => setFocusMode(!focusMode)}
+                          className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all ${
+                            focusMode
+                              ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
+                              : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
+                          }`}
+                          title={focusMode ? "退出专注模式" : "开启专注模式"}
+                        >
+                          <Icon name="focus" className="w-3.5 h-3.5" />
+                          <span className="hidden sm:inline">
+                            {focusMode ? "退出专注" : "专注模式"}
+                          </span>
+                        </button>
+
+                        <button
+                          onClick={() => setDimmerMode(!dimmerMode)}
+                          className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all ${
+                            dimmerMode
+                              ? "bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-400"
+                              : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
+                          }`}
+                          title="微光高亮阅读护眼模式"
+                        >
+                          <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
+                          <span className="hidden sm:inline">微光高亮</span>
+                        </button>
+
+                        <button
+                          onClick={() => handleBookmarkToggle(selectedItem.id)}
+                          className={`p-1.5 rounded-lg transition-all ${
+                            selectedItem.isBookmarked
+                              ? "bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400"
+                              : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
+                          }`}
+                          title="加入收藏"
+                        >
+                          <Icon
+                            name="bookmark"
+                            className="w-3.5 h-3.5"
+                            active={selectedItem.isBookmarked}
+                          />
+                        </button>
+                      </div>
+                    </div>
                   </div>
-
-                  {/* Right Controls Actions Panel */}
-                  <div className="flex items-center gap-1.5">
-                    {/* Focus Mode button */}
-                    <button 
-                      onClick={() => setFocusMode(!focusMode)}
-                      className={`p-2 rounded-xl text-xs flex items-center gap-1 transition-all ${
-                        focusMode 
-                          ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900' 
-                          : 'hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500'
-                      }`}
-                      title={focusMode ? "退出专注模式" : "开启专注模式"}
-                    >
-                      <Icon name="focus" className="w-4 h-4" />
-                      <span className="hidden sm:inline">{focusMode ? "退出专注" : "专注模式"}</span>
-                    </button>
-
-                    {/* Dimmer (Micro-read tint) */}
-                    <button 
-                      onClick={() => setDimmerMode(!dimmerMode)}
-                      className={`p-2 rounded-xl text-xs flex items-center gap-1 transition-all ${
-                        dimmerMode 
-                          ? 'bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-400' 
-                          : 'hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500'
-                      }`}
-                      title="微光高亮阅读护眼模式"
-                    >
-                      <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-500"></span>
-                      <span className="hidden sm:inline">微光高亮</span>
-                    </button>
-
-                    <button 
-                      onClick={() => handleBookmarkToggle(selectedItem.id)}
-                      className={`p-2 rounded-xl transition-all ${
-                        selectedItem.isBookmarked 
-                          ? 'bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400' 
-                          : 'hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500'
-                      }`}
-                      title="加入收藏"
-                    >
-                      <Icon name="bookmark" className="w-4 h-4" active={selectedItem.isBookmarked} />
-                    </button>
-
-                    <button 
-                      className="p-2 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-xl text-neutral-500"
-                      title="分享文章链接"
-                      onClick={() => {
-                        // Safe clipboard mock copy
-                        document.execCommand('copy');
-                        alert('【OmniReader提示】: 文章分享链接已成功复制到剪切板！');
-                      }}
-                    >
-                      <Icon name="share" className="w-4 h-4" />
-                    </button>
-
-                    {/* AI Prompt Summarizer Trigger */}
-                    <button 
-                      onClick={handleAISimplify}
-                      disabled={isSummarizing}
-                      className="flex items-center gap-1 px-3 py-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 hover:from-indigo-600 hover:to-purple-600 text-white text-xs font-semibold shadow-sm hover:shadow transition-all disabled:opacity-50"
-                    >
-                      <Icon name="sparkles" className="w-3.5 h-3.5 text-white" />
-                      <span>{isSummarizing ? "研读中..." : "一键一键 AI 精简总结"}</span>
-                    </button>
-                  </div>
-
                 </div>
 
-                {/* AI Summary Highlight Panel */}
+                <div className="space-y-6">
                 {aiSummary && (
                   <div className="relative p-5 rounded-2xl bg-gradient-to-br from-indigo-500/10 via-purple-500/10 to-pink-500/10 border border-indigo-100 dark:border-indigo-900/30 text-sm leading-relaxed text-indigo-900 dark:text-indigo-300">
                     <button 
@@ -838,6 +793,7 @@ export default function App() {
                   </div>
                 )}
 
+                </div>
               </div>
             ) : (
               <div className="w-full h-full flex flex-col items-center justify-center text-center p-8">

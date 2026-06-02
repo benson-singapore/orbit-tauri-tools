@@ -10,3 +10,27 @@
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
+
+/* Unified overlay titlebar (Tauri macOS) — inset clears traffic lights + vertical align */
+html.orbit-tauri-mac .app-titlebar {
+  padding-left: 6.25rem;
+  /* h-12 (48px): keeps logo row aligned with traffic lights at y≈22 */
+  min-height: 3rem;
+}
+
+html.orbit-tauri-non-mac .app-titlebar {
+  padding-right: 8rem;
+}
+
+.app-titlebar-drag {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.app-titlebar button,
+.app-titlebar a,
+.app-titlebar input,
+.app-titlebar-no-drag {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
