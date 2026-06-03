@@ -219,11 +219,15 @@ export async function uninstallPlugin(id: string): Promise<void> {
 export async function refreshPluginFeed(
   pluginId: string,
   channel?: string,
+  options?: { force?: boolean },
 ): Promise<void> {
   const base = await apiBase();
   const params = new URLSearchParams({ plugin_id: pluginId });
   if (channel) {
     params.set("channel", channel);
+  }
+  if (options?.force) {
+    params.set("force", "1");
   }
   const res = await fetch(`${base}/v1/feed/refresh?${params}`, {
     method: "POST",

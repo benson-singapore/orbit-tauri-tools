@@ -76,6 +76,7 @@ interface PluginManagerModalProps {
   onMove: (id: string, direction: "up" | "down") => void;
   onImport: (payload: InstallRSSPluginRequest, targetGroupId?: string) => void;
   onRefresh: () => void;
+  onForceRefresh: (pluginId: string) => Promise<void>;
   onAssignPluginGroup: (pluginId: string, groupId: string) => void;
   onAddPluginGroup: (label: string) => void;
   onRenamePluginGroup: (groupId: string, label: string) => void;
@@ -161,6 +162,7 @@ interface PluginSectionProps {
   onAssignGroup: (pluginId: string, groupId: string) => void;
   resolveGroupId: (pluginId: string) => string;
   onEdit?: (plugin: Plugin) => void;
+  onForceRefresh: (pluginId: string) => Promise<void>;
 }
 
 function PluginSection(props: PluginSectionProps) {
@@ -178,10 +180,12 @@ function PluginSection(props: PluginSectionProps) {
     onAssignGroup,
     resolveGroupId,
     onEdit,
+    onForceRefresh,
   } = props;
   const [draggingPluginId, setDraggingPluginId] = useState<string | null>(null);
   const [dragOverPluginId, setDragOverPluginId] = useState<string | null>(null);
   const [uninstallTarget, setUninstallTarget] = useState<Plugin | null>(null);
+  const [forceRefreshingId, setForceRefreshingId] = useState<string | null>(null);
 
   const handleDropReorder = (targetPluginId: string) => {
     if (!draggingPluginId || draggingPluginId === targetPluginId) {
@@ -350,6 +354,24 @@ function PluginSection(props: PluginSectionProps) {
                   <span className={`text-[11px] font-medium ${isEnabled ? "text-emerald-600" : "text-neutral-500"}`}>
                     {isEnabled ? "已启用" : "已停用"}
                   </span>
+                  <button
+                    type="button"
+                    disabled={!isEnabled || forceRefreshingId === plugin.id}
+                    onClick={() => {
+                      setForceRefreshingId(plugin.id);
+                      void onForceRefresh(plugin.id)
+                        .catch(console.error)
+                        .finally(() => setForceRefreshingId(null));
+                    }}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                    title="清空本地缓存并重新抓取最新内容"
+                  >
+                    <Icon
+                      name="refresh"
+                      className={`w-3 h-3 ${forceRefreshingId === plugin.id ? "animate-spin" : ""}`}
+                    />
+                    {forceRefreshingId === plugin.id ? "刷新中…" : "强制刷新"}
+                  </button>
                   <button
                     type="button"
                     onClick={() => setUninstallTarget(plugin)}
@@ -1609,6 +1631,7 @@ export function PluginManagerModal({
   onMove,
   onImport,
   onRefresh,
+  onForceRefresh,
   onAssignPluginGroup,
   onAddPluginGroup,
   onRenamePluginGroup,
@@ -1903,6 +1926,7 @@ export function PluginManagerModal({
                       onMove={onMove}
                       onToggleActive={onToggleActive}
                       onUninstall={onUninstall}
+                      onForceRefresh={onForceRefresh}
                       onAssignGroup={onAssignPluginGroup}
                       resolveGroupId={resolveGroupId}
                       onEdit={(plugin) => {

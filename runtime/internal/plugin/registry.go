@@ -481,6 +481,16 @@ func (r *Registry) Uninstall(ctx context.Context, id string) error {
 	return nil
 }
 
+func (r *Registry) ForceRefreshPlugin(ctx context.Context, pluginID, channelID string) ([]FeedItem, error) {
+	if _, ok := r.Get(pluginID); !ok {
+		return nil, fmt.Errorf("plugin not found: %s", pluginID)
+	}
+	if err := r.store.DeleteFeedItemsByPlugin(ctx, pluginID); err != nil {
+		return nil, err
+	}
+	return r.RefreshPlugin(ctx, pluginID, channelID)
+}
+
 func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string) ([]FeedItem, error) {
 	rec, ok := r.Get(pluginID)
 	if !ok {

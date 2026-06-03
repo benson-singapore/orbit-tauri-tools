@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/orbit-tauri-tools/runtime/internal/plugin"
 )
 
 func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
@@ -189,14 +191,22 @@ func (s *Server) handleRefreshFeed(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pluginID := strings.TrimSpace(r.URL.Query().Get("plugin_id"))
+	q := r.URL.Query()
+	pluginID := strings.TrimSpace(q.Get("plugin_id"))
 	if pluginID == "" {
 		writeJSON(w, http.StatusBadRequest, errorBody("plugin_id is required"))
 		return
 	}
-	channelID := strings.TrimSpace(r.URL.Query().Get("channel"))
+	channelID := strings.TrimSpace(q.Get("channel"))
+	force := q.Get("force") == "1" || strings.EqualFold(q.Get("force"), "true")
 
-	items, err := s.registry.RefreshPlugin(r.Context(), pluginID, channelID)
+	var items []plugin.FeedItem
+	var err error
+	if force {
+		items, err = s.registry.ForceRefreshPlugin(r.Context(), pluginID, channelID)
+	} else {
+		items, err = s.registry.RefreshPlugin(r.Context(), pluginID, channelID)
+	}
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
 		return

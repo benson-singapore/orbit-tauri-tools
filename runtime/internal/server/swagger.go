@@ -141,6 +141,7 @@ func buildOpenAPISpec() map[string]any {
 					"summary": "Refresh feed for a plugin",
 					"parameters": []any{
 						map[string]any{"name": "plugin_id", "in": "query", "required": true, "schema": map[string]any{"type": "string"}},
+						map[string]any{"name": "force", "in": "query", "required": false, "schema": map[string]any{"type": "boolean"}, "description": "Clear cached feed items for the plugin before fetching"},
 					},
 					"responses": responseJSON(map[string]any{"ok": true, "count": 0}),
 				},

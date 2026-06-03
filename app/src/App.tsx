@@ -78,6 +78,7 @@ export default function App() {
     removePlugin: orbitRemovePlugin,
     movePlugin: orbitMovePlugin,
     installOfficialPlugin: orbitInstallOfficialPlugin,
+    forceRefreshPlugin: orbitForceRefreshPlugin,
   } = useOrbitData(
     activePlugin,
     activeChannel,
@@ -785,6 +786,10 @@ export default function App() {
               onImport={handleImportCustomPlugin}
               onRefresh={() => {
                 void reload().catch(console.error);
+              }}
+              onForceRefresh={async (pluginId) => {
+                await orbitForceRefreshPlugin(pluginId);
+                await refreshGroupUnreadCounts();
               }}
               onAssignPluginGroup={assignPluginGroup}
               onAddPluginGroup={addPluginGroup}

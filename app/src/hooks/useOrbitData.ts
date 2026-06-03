@@ -6,6 +6,7 @@ import {
   installBundledPlugin,
   installRSSPlugin,
   markFeedItemRead,
+  refreshPluginFeed,
   setPluginActive,
   uninstallPlugin,
 } from "@/lib/feed";
@@ -33,6 +34,7 @@ interface UseOrbitDataResult {
   togglePluginActive: (id: string) => Promise<void>;
   removePlugin: (id: string) => Promise<void>;
   movePlugin: (id: string, direction: "up" | "down") => void;
+  forceRefreshPlugin: (id: string) => Promise<void>;
 }
 
 export function useOrbitData(
@@ -287,6 +289,15 @@ export function useOrbitData(
     [loadPlugins, loadFeedPage],
   );
 
+  const forceRefreshPlugin = useCallback(
+    async (id: string) => {
+      setArticles(prev => prev.filter(article => article.pluginId !== id));
+      await refreshPluginFeed(id, undefined, { force: true });
+      await loadFeedPage({ force: false, offset: 0, append: false });
+    },
+    [loadFeedPage],
+  );
+
   const movePlugin = useCallback((id: string, direction: "up" | "down") => {
     setPlugins((prev) => {
       if (prev.length <= 2) return prev;
@@ -345,5 +356,6 @@ export function useOrbitData(
     togglePluginActive,
     removePlugin,
     movePlugin,
+    forceRefreshPlugin,
   };
 }
