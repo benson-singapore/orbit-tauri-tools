@@ -111,6 +111,33 @@ func (s *Store) migrate() error {
 	if err := s.migrateFeedItemsReadAt(); err != nil {
 		return err
 	}
+	if err := s.migratePluginGroups(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) migratePluginGroups() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS plugin_groups (
+			id TEXT PRIMARY KEY,
+			label TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0
+		)`,
+		`CREATE TABLE IF NOT EXISTS plugin_group_assignments (
+			plugin_id TEXT PRIMARY KEY,
+			group_id TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS plugin_group_collapsed (
+			group_id TEXT PRIMARY KEY,
+			collapsed INTEGER NOT NULL DEFAULT 0
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.DB.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate plugin groups: %w", err)
+		}
+	}
 	return nil
 }
 

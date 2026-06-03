@@ -15,9 +15,9 @@ export interface PluginGroupsState {
   collapsed: Record<string, boolean>;
 }
 
-const STORAGE_KEY = "orbit.pluginGroups";
+const LEGACY_STORAGE_KEY = "orbit.pluginGroups";
 
-function createDefaultState(): PluginGroupsState {
+export function createDefaultState(): PluginGroupsState {
   return {
     groups: [{ id: DEFAULT_PLUGIN_GROUP_ID, label: "默认分组" }],
     assignments: {},
@@ -29,10 +29,11 @@ function newGroupId(): string {
   return `grp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-export function readPluginGroupsState(): PluginGroupsState {
+/** Read legacy localStorage state (used once for migration to SQLite). */
+export function readLegacyPluginGroupsState(): PluginGroupsState | null {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return createDefaultState();
+    const raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<PluginGroupsState>;
     const groups = Array.isArray(parsed.groups)
       ? parsed.groups.filter(
@@ -56,16 +57,25 @@ export function readPluginGroupsState(): PluginGroupsState {
         : {};
     return { groups, assignments, collapsed };
   } catch {
-    return createDefaultState();
+    return null;
   }
 }
 
-export function persistPluginGroupsState(state: PluginGroupsState): void {
+export function clearLegacyPluginGroupsState(): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
-    // ignore quota / private mode
+    // ignore
   }
+}
+
+export function isDefaultOnlyPluginGroupsState(state: PluginGroupsState): boolean {
+  return (
+    state.groups.length === 1 &&
+    state.groups[0]?.id === DEFAULT_PLUGIN_GROUP_ID &&
+    Object.keys(state.assignments).length === 0 &&
+    Object.keys(state.collapsed).length === 0
+  );
 }
 
 export function resolvePluginGroupId(

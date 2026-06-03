@@ -1,10 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   assignPluginToGroup,
+  clearLegacyPluginGroupsState,
+  createDefaultState,
   createPluginGroup,
   groupInstalledPlugins,
-  persistPluginGroupsState,
-  readPluginGroupsState,
+  isDefaultOnlyPluginGroupsState,
+  readLegacyPluginGroupsState,
   removePluginGroup,
   movePluginGroup,
   renamePluginGroup,
@@ -13,18 +15,75 @@ import {
   type PluginGroupsState,
   type PluginSidebarGroup,
 } from "@/lib/pluginGroups";
+import {
+  fetchPluginGroupsState,
+  savePluginGroupsState,
+} from "@/lib/pluginGroupsApi";
 import type { Plugin } from "@/types";
 
 export function usePluginGroups() {
-  const [state, setState] = useState<PluginGroupsState>(readPluginGroupsState);
+  const [state, setState] = useState<PluginGroupsState>(createDefaultState);
+  const [loaded, setLoaded] = useState(false);
+  const persistQueueRef = useRef(Promise.resolve());
 
-  const commit = useCallback((updater: (prev: PluginGroupsState) => PluginGroupsState) => {
-    setState(prev => {
-      const next = updater(prev);
-      persistPluginGroupsState(next);
-      return next;
-    });
+  useEffect(() => {
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        let remote = await fetchPluginGroupsState();
+        const legacy = readLegacyPluginGroupsState();
+
+        if (
+          legacy &&
+          isDefaultOnlyPluginGroupsState(remote) &&
+          !isDefaultOnlyPluginGroupsState(legacy)
+        ) {
+          remote = legacy;
+          await savePluginGroupsState(remote);
+          clearLegacyPluginGroupsState();
+        } else if (legacy) {
+          clearLegacyPluginGroupsState();
+        }
+
+        if (!cancelled) {
+          setState(remote);
+        }
+      } catch {
+        const legacy = readLegacyPluginGroupsState();
+        if (!cancelled) {
+          setState(legacy ?? createDefaultState());
+        }
+      } finally {
+        if (!cancelled) {
+          setLoaded(true);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  const enqueuePersist = useCallback((next: PluginGroupsState) => {
+    persistQueueRef.current = persistQueueRef.current
+      .then(() => savePluginGroupsState(next))
+      .catch(err => {
+        console.error("failed to persist plugin groups:", err);
+      });
+  }, []);
+
+  const commit = useCallback(
+    (updater: (prev: PluginGroupsState) => PluginGroupsState) => {
+      setState(prev => {
+        const next = updater(prev);
+        enqueuePersist(next);
+        return next;
+      });
+    },
+    [enqueuePersist],
+  );
 
   const groups: PluginSidebarGroup[] = state.groups;
 
@@ -79,6 +138,7 @@ export function usePluginGroups() {
   );
 
   return {
+    loaded,
     groups,
     addGroup,
     renameGroup,
