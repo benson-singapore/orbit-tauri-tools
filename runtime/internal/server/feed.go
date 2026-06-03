@@ -24,8 +24,9 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	refresh := q.Get("refresh") == "1" || strings.EqualFold(q.Get("refresh"), "true")
 	limit := parsePositiveInt(q.Get("limit"), 20)
 	offset := parseNonNegativeInt(q.Get("offset"), 0)
+	scopePluginIDs := parseCSVPluginIDs(q.Get("plugin_ids"))
 
-	items, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, search, refresh)
+	items, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, search, refresh, scopePluginIDs)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
 		return
@@ -58,7 +59,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if offset == 0 {
-		if count, err := s.registry.CountUnread(r.Context(), pluginID, channelID, contentType); err == nil {
+		if count, err := s.registry.CountUnread(r.Context(), pluginID, channelID, contentType, scopePluginIDs); err == nil {
 			unreadTotal = count
 		}
 	}
@@ -105,6 +106,29 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		"unreadTotal": unreadTotal,
 		"limit":       limit,
 		"offset":      offset,
+	})
+}
+
+func (s *Server) handleFeedUnread(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+		return
+	}
+
+	q := r.URL.Query()
+	pluginID := strings.TrimSpace(q.Get("plugin_id"))
+	channelID := strings.TrimSpace(q.Get("channel"))
+	contentType := strings.TrimSpace(q.Get("type"))
+	scopePluginIDs := parseCSVPluginIDs(q.Get("plugin_ids"))
+
+	count, err := s.registry.CountUnread(r.Context(), pluginID, channelID, contentType, scopePluginIDs)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":          true,
+		"unreadTotal": count,
 	})
 }
 
@@ -227,4 +251,20 @@ func parseNonNegativeInt(raw string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func parseCSVPluginIDs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" && p != "all" {
+			out = append(out, p)
+		}
+	}
+	return out
 }

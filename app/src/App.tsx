@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { useOrbitData } from "@/hooks/useOrbitData";
+import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { dedupeCoverImageFromContent } from "@/lib/articleContent";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
-import { fetchFeedItem } from "@/lib/feed";
+import { fetchFeedItem, fetchFeedUnread } from "@/lib/feed";
 import { useTitlebarDrag } from "@/hooks/useTitlebarDrag";
 import { useTitlebarEnv } from "@/hooks/useTitlebarEnv";
 import { useUiZoom } from "@/hooks/useUiZoom";
@@ -27,6 +28,7 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [layoutSwap, setLayoutSwap] = useState(false);
   const [activePlugin, setActivePlugin] = useState("all");
+  const [activePluginGroupId, setActivePluginGroupId] = useState<string | null>(null);
   const [activeChannel, setActiveChannel] = useState("all");
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
@@ -45,6 +47,20 @@ export default function App() {
       : undefined;
 
   const {
+    groups: pluginGroups,
+    addGroup: addPluginGroup,
+    renameGroup: renamePluginGroup,
+    moveGroup: movePluginGroup,
+    removeGroup: removePluginGroup,
+    assignPlugin: assignPluginGroup,
+    toggleCollapsed: togglePluginGroupCollapsed,
+    isGroupCollapsed,
+    groupedPluginsForManage,
+    groupedPluginsForSidebar,
+    getPluginGroupId,
+  } = usePluginGroups();
+
+  const {
     plugins: myPlugins,
     articles,
     unreadTotal,
@@ -61,7 +77,33 @@ export default function App() {
     togglePluginActive: orbitTogglePluginActive,
     removePlugin: orbitRemovePlugin,
     movePlugin: orbitMovePlugin,
-  } = useOrbitData(activePlugin, activeChannel, feedContentType, debouncedSearch);
+  } = useOrbitData(
+    activePlugin,
+    activeChannel,
+    feedContentType,
+    debouncedSearch,
+    activePluginGroupId,
+    getPluginGroupId,
+  );
+
+  const sidebarPluginGroups = useMemo(
+    () => groupedPluginsForSidebar(myPlugins),
+    [groupedPluginsForSidebar, myPlugins],
+  );
+
+  const managePluginGroups = useMemo(
+    () => groupedPluginsForManage(myPlugins),
+    [groupedPluginsForManage, myPlugins],
+  );
+
+  const activeGroupLabel = useMemo(() => {
+    if (!activePluginGroupId) return null;
+    return (
+      pluginGroups.find(g => g.id === activePluginGroupId)?.label
+      ?? sidebarPluginGroups.find(g => g.group.id === activePluginGroupId)?.group.label
+      ?? null
+    );
+  }, [activePluginGroupId, pluginGroups, sidebarPluginGroups]);
 
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const articlesWithBookmarks = useMemo(
@@ -80,6 +122,50 @@ export default function App() {
 
   const [showPluginStore, setShowPluginStore] = useState(false);
   const [isSidebarRefreshing, setIsSidebarRefreshing] = useState(false);
+  const [groupUnreadCounts, setGroupUnreadCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    if (activePlugin !== "all" || activePluginGroupId != null || activeTab !== "all") {
+      return;
+    }
+    const first = sidebarPluginGroups[0];
+    if (first) {
+      setActivePluginGroupId(first.group.id);
+    }
+  }, [activePlugin, activePluginGroupId, activeTab, sidebarPluginGroups]);
+
+  const refreshGroupUnreadCounts = useCallback(async () => {
+    const groups = groupedPluginsForSidebar(myPlugins);
+    const entries = await Promise.all(
+      groups.map(async ({ group, plugins }) => {
+        const ids = plugins.map(p => p.id);
+        if (ids.length === 0) {
+          return [group.id, 0] as const;
+        }
+        try {
+          const count = await fetchFeedUnread({ pluginIds: ids });
+          return [group.id, count] as const;
+        } catch {
+          return [group.id, 0] as const;
+        }
+      }),
+    );
+    setGroupUnreadCounts(Object.fromEntries(entries));
+  }, [groupedPluginsForSidebar, myPlugins]);
+
+  useEffect(() => {
+    void refreshGroupUnreadCounts();
+  }, [refreshGroupUnreadCounts]);
+
+  useEffect(() => {
+    if (activePlugin !== "all" || !activePluginGroupId) {
+      return;
+    }
+    setGroupUnreadCounts(prev => ({
+      ...prev,
+      [activePluginGroupId]: unreadTotal,
+    }));
+  }, [unreadTotal, activePlugin, activePluginGroupId]);
 
   useEffect(() => {
     if (articlesWithBookmarks.length === 0) {
@@ -150,13 +236,15 @@ export default function App() {
   const handleSidebarRefresh = () => {
     if (isSidebarRefreshing) return;
     setIsSidebarRefreshing(true);
-    void refreshFromCache().finally(() => {
-      setIsSidebarRefreshing(false);
-    });
+    void refreshFromCache()
+      .then(() => refreshGroupUnreadCounts())
+      .finally(() => {
+        setIsSidebarRefreshing(false);
+      });
   };
 
   const handleItemSelect = (item: Article) => {
-    void markArticleRead(item.id);
+    void markArticleRead(item.id).then(() => refreshGroupUnreadCounts());
     setSelectedItem(item);
     setAiSummary(null);
     setIsPlayingAudio(false);
@@ -222,7 +310,8 @@ export default function App() {
   const handleUninstallPlugin = (id: string) => {
     void orbitRemovePlugin(id).catch(console.error);
     if (activePlugin === id) {
-      selectPlugin("all");
+      const groupId = getPluginGroupId(id);
+      selectGroupAll(groupId);
     }
   };
 
@@ -231,7 +320,7 @@ export default function App() {
     if (activePlugin === id) {
       const target = myPlugins.find(p => p.id === id);
       if (target?.active !== false) {
-        selectPlugin("all");
+        selectGroupAll(getPluginGroupId(id));
       }
     }
   };
@@ -240,7 +329,10 @@ export default function App() {
     orbitMovePlugin(id, direction);
   };
 
-  const handleImportCustomPlugin = (payload: InstallRSSPluginRequest) => {
+  const handleImportCustomPlugin = (
+    payload: InstallRSSPluginRequest,
+    targetGroupId?: string,
+  ) => {
     const channels =
       payload.channels && payload.channels.length > 0
         ? payload.channels
@@ -256,12 +348,41 @@ export default function App() {
     if (channels.length === 0) {
       return;
     }
-    void installCustomRSS({ ...payload, channels }).catch(console.error);
+    void (async () => {
+      try {
+        const plugin = await installCustomRSS({ ...payload, channels });
+        if (targetGroupId) {
+          assignPluginGroup(plugin.id, targetGroupId);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    })();
   };
 
-  const selectPlugin = (pluginId: string) => {
+  const selectGroupAll = (groupId: string) => {
+    setActivePlugin("all");
+    setActiveChannel("all");
+    setActivePluginGroupId(groupId);
+    setActiveTab("all");
+    setShowPluginStore(false);
+  };
+
+  const selectPlugin = (pluginId: string, groupId?: string) => {
     setActivePlugin(pluginId);
     setActiveChannel("all");
+    if (pluginId === "all") {
+      if (groupId) {
+        setActivePluginGroupId(groupId);
+      }
+      return;
+    }
+    setActivePluginGroupId(groupId ?? getPluginGroupId(pluginId));
+    setShowPluginStore(false);
+  };
+
+  const clearGroupFeedScope = () => {
+    setActivePluginGroupId(null);
   };
 
   return (
@@ -387,12 +508,13 @@ export default function App() {
                 onClick={() => {
                   setShowPluginStore(false);
                   setActiveTab('today');
+                  clearGroupFeedScope();
                   selectPlugin('all');
                 }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
                   isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
                 } ${
-                  activeTab === 'today' && activePlugin === 'all'
+                  activeTab === 'today' && activePlugin === 'all' && activePluginGroupId == null
                     ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium'
                     : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
                 }`}
@@ -419,6 +541,7 @@ export default function App() {
                 onClick={() => {
                   setShowPluginStore(false);
                   setActiveTab('bookmarks');
+                  clearGroupFeedScope();
                   selectPlugin('all');
                 }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
@@ -445,6 +568,7 @@ export default function App() {
                 onClick={() => {
                   setShowPluginStore(false);
                   setActiveTab('trending');
+                  clearGroupFeedScope();
                   selectPlugin('all');
                 }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
@@ -486,52 +610,144 @@ export default function App() {
                 </button>
               </div>
 
-              {myPlugins
-                .filter(p => p.id === "all" || p.active !== false)
-                .map(plugin => (
-                <button 
-                  key={plugin.id}
-                  onClick={() => {
-                    setShowPluginStore(false);
-                    selectPlugin(plugin.id);
-                    setActiveTab('all');
-                  }}
-                  className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
-                    isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
-                  } ${
-                    activePlugin === plugin.id
-                      ? 'bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium'
-                      : 'text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50'
-                  }`}
-                  title={plugin.name}
-                >
-                  <div
-                    className={`w-5 h-5 rounded-md overflow-hidden flex items-center justify-center text-[10px] font-bold text-white ${
-                      plugin.color?.trim?.().startsWith("bg-") ? plugin.color : ""
+              {(() => {
+                const isGroupAllActive = (groupId: string) =>
+                  activeTab === "all" &&
+                  activePlugin === "all" &&
+                  activePluginGroupId === groupId;
+
+                const renderGroupAllButton = (group: { id: string; label: string }) => (
+                  <button
+                    key={`group-all-${group.id}`}
+                    type="button"
+                    onClick={() => selectGroupAll(group.id)}
+                    className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                      isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
+                    } ${
+                      isGroupAllActive(group.id)
+                        ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium"
+                        : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
                     }`}
-                    style={plugin.color?.trim?.().startsWith("bg-") ? undefined : { backgroundColor: plugin.color || "#7c3aed" }}
+                    title={`${group.label} · 全部平台`}
                   >
-                    {plugin.logoImageUrl ? (
-                      <img
-                        src={plugin.logoImageUrl}
-                        alt=""
-                        className="w-full h-full object-cover"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
+                    <div className="w-5 h-5 rounded-md bg-indigo-500 flex items-center justify-center text-[10px] font-bold text-white shrink-0">
+                      全
+                    </div>
+                    {!isSidebarCollapsed && (
+                      <div className="flex-1 flex items-center justify-between min-w-0">
+                        <span className="truncate">全部平台</span>
+                        <span className="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400 px-1.5 py-0.5 rounded-md font-semibold shrink-0">
+                          未读 {groupUnreadCounts[group.id] ?? 0}
+                        </span>
+                      </div>
                     )}
-                  </div>
-                  {!isSidebarCollapsed && (
-                    <div className="flex-1 flex items-center justify-between">
-                      <span className="truncate">{plugin.name}</span>
-                      {plugin.id !== "all" && plugin.active !== false && (
-                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  </button>
+                );
+
+                const renderPluginButton = (plugin: Plugin) => (
+                  <button
+                    key={plugin.id}
+                    type="button"
+                    onClick={() => {
+                      selectPlugin(plugin.id);
+                      setActiveTab("all");
+                    }}
+                    className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
+                      isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
+                    } ${
+                      activePlugin === plugin.id
+                        ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium"
+                        : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
+                    }`}
+                    title={plugin.name}
+                  >
+                    <div
+                      className={`w-5 h-5 rounded-md overflow-hidden flex items-center justify-center text-[10px] font-bold text-white ${
+                        plugin.color?.trim?.().startsWith("bg-") ? plugin.color : ""
+                      }`}
+                      style={
+                        plugin.color?.trim?.().startsWith("bg-")
+                          ? undefined
+                          : { backgroundColor: plugin.color || "#7c3aed" }
+                      }
+                    >
+                      {plugin.logoImageUrl ? (
+                        <img
+                          src={plugin.logoImageUrl}
+                          alt=""
+                          className="w-full h-full object-cover"
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
                       )}
                     </div>
-                  )}
-                </button>
-              ))}
+                    {!isSidebarCollapsed && (
+                      <div className="flex-1 flex items-center justify-between min-w-0">
+                        <span className="truncate">{plugin.name}</span>
+                        {plugin.id !== "all" && plugin.active !== false && (
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" />
+                        )}
+                      </div>
+                    )}
+                  </button>
+                );
+
+                const visibleGroups = sidebarPluginGroups.filter(
+                  ({ group }) => !isGroupCollapsed(group.id),
+                );
+                const hiddenGroups = sidebarPluginGroups.filter(({ group }) =>
+                  isGroupCollapsed(group.id),
+                );
+
+                if (isSidebarCollapsed) {
+                  return visibleGroups.flatMap(({ group, plugins }) => [
+                    renderGroupAllButton(group),
+                    ...plugins.map(renderPluginButton),
+                  ]);
+                }
+
+                return (
+                  <>
+                    {visibleGroups.map(({ group, plugins }) => (
+                      <div key={group.id} className="space-y-0.5">
+                        <button
+                          type="button"
+                          onClick={() => togglePluginGroupCollapsed(group.id)}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-semibold text-neutral-400 uppercase tracking-wider hover:text-indigo-600 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+                          title="收起分组（从侧栏隐藏）"
+                        >
+                          <Icon
+                            name="expand"
+                            className="w-3 h-3 shrink-0 transition-transform rotate-90"
+                          />
+                          <span className="flex-1 text-left truncate">{group.label}</span>
+                          <span className="text-neutral-400 font-normal normal-case">
+                            {plugins.length}
+                          </span>
+                        </button>
+                        {renderGroupAllButton(group)}
+                        {plugins.map(renderPluginButton)}
+                      </div>
+                    ))}
+                    {hiddenGroups.length > 0 && (
+                      <div className="pt-1 space-y-0.5">
+                        {hiddenGroups.map(({ group }) => (
+                          <button
+                            key={group.id}
+                            type="button"
+                            onClick={() => togglePluginGroupCollapsed(group.id)}
+                            className="w-full px-3 py-1.5 rounded-lg text-[10px] text-neutral-400 hover:text-indigo-600 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors text-left truncate"
+                            title="显示分组"
+                          >
+                            显示「{group.label}」
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </div>
 
           </div>
@@ -556,6 +772,9 @@ export default function App() {
             <PluginManagerModal
               theme={theme}
               myPlugins={myPlugins}
+              pluginGroups={pluginGroups}
+              groupedPluginsForManage={managePluginGroups}
+              getPluginGroupId={getPluginGroupId}
               onClose={() => setShowPluginStore(false)}
               onInstall={handleInstallPlugin}
               onUninstall={handleUninstallPlugin}
@@ -565,6 +784,11 @@ export default function App() {
               onRefresh={() => {
                 void reload().catch(console.error);
               }}
+              onAssignPluginGroup={assignPluginGroup}
+              onAddPluginGroup={addPluginGroup}
+              onRenamePluginGroup={renamePluginGroup}
+              onMovePluginGroup={movePluginGroup}
+              onRemovePluginGroup={removePluginGroup}
               embedded
             />
           ) : (
@@ -664,7 +888,17 @@ export default function App() {
             {/* Scrollable list of feeds */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
               <div className="flex items-center justify-between text-xs text-neutral-400 mb-2">
-                <span>{activeTab === 'bookmarks' ? '收藏的文章' : 'Today 全部文章'}</span>
+                <span>
+                  {activeTab === "bookmarks"
+                    ? "收藏的文章"
+                    : activeTab === "trending"
+                      ? "Trending 爆款"
+                      : activePlugin === "all" && activeGroupLabel
+                        ? `${activeGroupLabel} · 全部平台`
+                        : activePlugin === "all"
+                          ? "Today 全部文章"
+                          : pluginById.get(activePlugin)?.name ?? "文章列表"}
+                </span>
                 <span>共 {debouncedSearch ? feedTotal : filteredArticles.length} 篇</span>
               </div>
 

@@ -63,6 +63,7 @@ export async function fetchPlugins(): Promise<Plugin[]> {
 
 export async function fetchFeed(options?: {
   pluginId?: string;
+  pluginIds?: string[];
   channel?: string;
   type?: ContentType;
   search?: string;
@@ -72,7 +73,10 @@ export async function fetchFeed(options?: {
 }): Promise<FeedResponse> {
   const base = await apiBase();
   const params = new URLSearchParams();
-  if (options?.pluginId && options.pluginId !== "all") {
+  const scopeIds = (options?.pluginIds ?? []).filter(id => id && id !== "all");
+  if (scopeIds.length > 0) {
+    params.set("plugin_ids", scopeIds.join(","));
+  } else if (options?.pluginId && options.pluginId !== "all") {
     params.set("plugin_id", options.pluginId);
   }
   if (options?.channel) {
@@ -103,6 +107,35 @@ export async function fetchFeed(options?: {
     ...data,
     items: (data.items ?? []).map(normalizeArticle),
   };
+}
+
+export async function fetchFeedUnread(options?: {
+  pluginId?: string;
+  pluginIds?: string[];
+  channel?: string;
+  type?: ContentType;
+}): Promise<number> {
+  const base = await apiBase();
+  const params = new URLSearchParams();
+  const scopeIds = (options?.pluginIds ?? []).filter(id => id && id !== "all");
+  if (scopeIds.length > 0) {
+    params.set("plugin_ids", scopeIds.join(","));
+  } else if (options?.pluginId && options.pluginId !== "all") {
+    params.set("plugin_id", options.pluginId);
+  }
+  if (options?.channel && options.channel !== "all") {
+    params.set("channel", options.channel);
+  }
+  if (options?.type) {
+    params.set("type", options.type);
+  }
+  const qs = params.toString();
+  const res = await fetchGetWithDedupe(`${base}/v1/feed/unread${qs ? `?${qs}` : ""}`);
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const data = (await res.json()) as { unreadTotal?: number };
+  return data.unreadTotal ?? 0;
 }
 
 export async function fetchFeedItem(id: string): Promise<Article> {

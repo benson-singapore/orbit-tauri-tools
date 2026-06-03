@@ -3,6 +3,8 @@ import { Icon } from "@/components/Icon";
 import { PLUGIN_MARKET_GROUPS, PLUGINS_STORE } from "@/data/plugins";
 import { slugifyChannelId } from "@/lib/channelId";
 import { waitForRuntimeReady } from "@/lib/runtime";
+import type { PluginSidebarGroup } from "@/lib/pluginGroups";
+import { DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import type {
   InstallRSSPluginRequest,
   Plugin,
@@ -64,13 +66,21 @@ function isChannelIdSyncedWithLabel(row: ChannelFormRow): boolean {
 interface PluginManagerModalProps {
   theme: ThemeMode;
   myPlugins: Plugin[];
+  pluginGroups: PluginSidebarGroup[];
+  groupedPluginsForManage: { group: PluginSidebarGroup; plugins: Plugin[] }[];
   onClose: () => void;
   onInstall: (plugin: Plugin) => void;
   onUninstall: (id: string) => void;
   onToggleActive: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
-  onImport: (payload: InstallRSSPluginRequest) => void;
+  onImport: (payload: InstallRSSPluginRequest, targetGroupId?: string) => void;
   onRefresh: () => void;
+  onAssignPluginGroup: (pluginId: string, groupId: string) => void;
+  onAddPluginGroup: (label: string) => void;
+  onRenamePluginGroup: (groupId: string, label: string) => void;
+  onMovePluginGroup: (groupId: string, direction: "up" | "down") => void;
+  onRemovePluginGroup: (groupId: string) => void;
+  getPluginGroupId: (pluginId: string) => string;
   embedded?: boolean;
 }
 
@@ -141,10 +151,14 @@ interface PluginSectionProps {
   installedPlugins: Plugin[];
   subtleBorder: string;
   mutedBg: string;
-  customStyle: boolean;
+  inputBg: string;
+  inputBorder: string;
+  pluginGroups: PluginSidebarGroup[];
   onUninstall: (id: string) => void;
   onToggleActive: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
+  onAssignGroup: (pluginId: string, groupId: string) => void;
+  resolveGroupId: (pluginId: string) => string;
   onEdit?: (plugin: Plugin) => void;
 }
 
@@ -154,10 +168,14 @@ function PluginSection(props: PluginSectionProps) {
     installedPlugins,
     subtleBorder,
     mutedBg,
-    customStyle,
+    inputBg,
+    inputBorder,
+    pluginGroups,
     onUninstall,
     onToggleActive,
     onMove,
+    onAssignGroup,
+    resolveGroupId,
     onEdit,
   } = props;
   const [draggingPluginId, setDraggingPluginId] = useState<string | null>(null);
@@ -191,9 +209,11 @@ function PluginSection(props: PluginSectionProps) {
         const isEnabled = plugin.active !== false;
         const canMoveUp = index > 0;
         const canMoveDown = index < installedPlugins.length - 1;
-        const cardClass = customStyle
+        const isCustom = !plugin.official;
+        const cardClass = isCustom
           ? "border border-indigo-200/70 dark:border-indigo-900/40 bg-indigo-50/30 dark:bg-indigo-950/10"
           : `border ${subtleBorder} ${mutedBg}`;
+        const currentGroupId = resolveGroupId(plugin.id);
 
         return (
           <article
@@ -273,10 +293,26 @@ function PluginSection(props: PluginSectionProps) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold">{plugin.name}</span>
-                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${customStyle ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-300" : "bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500"}`}>
-                      {customStyle ? "自定义" : "官方"}
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded ${isCustom ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-300" : "bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500"}`}>
+                      {isCustom ? "自定义" : "官方"}
                     </span>
-                    {customStyle && (
+                    {pluginGroups.length > 0 && (
+                      <label className="flex items-center gap-1">
+                        <span className="text-[10px] text-neutral-400">分组</span>
+                        <select
+                          value={currentGroupId}
+                          onChange={e => onAssignGroup(plugin.id, e.target.value)}
+                          className={`orbit-select text-[10px] py-0.5 pl-1.5 pr-6 rounded-md border ${inputBorder} ${inputBg}`}
+                        >
+                          {pluginGroups.map(g => (
+                            <option key={g.id} value={g.id}>
+                              {g.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    {isCustom && (
                       <button
                         type="button"
                         onClick={() => onEdit?.(plugin)}
@@ -1310,9 +1346,261 @@ function ImportPluginModal({
   );
 }
 
+function PluginGroupManagerModal({
+  groups,
+  panelBg,
+  subtleBorder,
+  mutedBg,
+  inputBg,
+  inputBorder,
+  isDark,
+  onClose,
+  onAdd,
+  onRename,
+  onMove,
+  onRemove,
+}: {
+  groups: PluginSidebarGroup[];
+  panelBg: string;
+  subtleBorder: string;
+  mutedBg: string;
+  inputBg: string;
+  inputBorder: string;
+  isDark: boolean;
+  onClose: () => void;
+  onAdd: (label: string) => void;
+  onRename: (groupId: string, label: string) => void;
+  onMove: (groupId: string, direction: "up" | "down") => void;
+  onRemove: (groupId: string) => void;
+}) {
+  const [newLabel, setNewLabel] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editLabel, setEditLabel] = useState("");
+  const [draggingGroupId, setDraggingGroupId] = useState<string | null>(null);
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
+
+  const handleDropReorder = (targetGroupId: string) => {
+    if (!draggingGroupId || draggingGroupId === targetGroupId) {
+      setDragOverGroupId(null);
+      return;
+    }
+    const fromIndex = groups.findIndex(g => g.id === draggingGroupId);
+    const toIndex = groups.findIndex(g => g.id === targetGroupId);
+    if (fromIndex < 0 || toIndex < 0) {
+      setDragOverGroupId(null);
+      return;
+    }
+    const direction: "up" | "down" = fromIndex < toIndex ? "down" : "up";
+    const steps = Math.abs(fromIndex - toIndex);
+    for (let i = 0; i < steps; i += 1) {
+      onMove(draggingGroupId, direction);
+    }
+    setDragOverGroupId(null);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-6"
+      onClick={onClose}
+    >
+      <div
+        className={`w-full max-w-lg max-h-[min(640px,90vh)] flex flex-col rounded-[24px] border shadow-2xl overflow-hidden ${panelBg} ${subtleBorder}`}
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="plugin-group-manager-title"
+      >
+        <div className={`shrink-0 flex items-center justify-between gap-4 px-6 py-4 border-b ${subtleBorder}`}>
+          <div>
+            <h4 id="plugin-group-manager-title" className="text-sm font-bold">
+              分组管理
+            </h4>
+            <p className={`text-[11px] mt-1 leading-relaxed ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+              创建、重命名与排序分组；侧栏将按此顺序展示。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className={`shrink-0 px-3 py-1.5 text-xs rounded-lg border ${subtleBorder} ${
+              isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+            }`}
+          >
+            关闭
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-6 py-4 space-y-4">
+          <div className="flex gap-2">
+            <input
+              value={newLabel}
+              onChange={e => setNewLabel(e.target.value)}
+              placeholder="新分组名称"
+              className={`flex-1 px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder}`}
+              onKeyDown={e => {
+                if (e.key === "Enter" && newLabel.trim()) {
+                  onAdd(newLabel);
+                  setNewLabel("");
+                }
+              }}
+            />
+            <button
+              type="button"
+              disabled={!newLabel.trim()}
+              onClick={() => {
+                onAdd(newLabel);
+                setNewLabel("");
+              }}
+              className="px-3 py-2 rounded-xl text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4] disabled:opacity-40"
+            >
+              添加
+            </button>
+          </div>
+
+          <ul className="space-y-2">
+            {groups.map((group, index) => {
+              const canMoveUp = index > 0;
+              const canMoveDown = index < groups.length - 1;
+
+              return (
+                <li
+                  key={group.id}
+                  className={`flex items-center gap-2 rounded-xl border px-3 py-2 transition-colors ${subtleBorder} ${inputBg} ${
+                    dragOverGroupId === group.id ? "ring-2 ring-[#5856D6]/35" : ""
+                  }`}
+                  onDragOver={event => {
+                    event.preventDefault();
+                    setDragOverGroupId(group.id);
+                  }}
+                  onDragLeave={() => {
+                    if (dragOverGroupId === group.id) {
+                      setDragOverGroupId(null);
+                    }
+                  }}
+                  onDrop={event => {
+                    event.preventDefault();
+                    handleDropReorder(group.id);
+                  }}
+                >
+                  <div className="shrink-0 flex items-center gap-1.5 pr-2 border-r border-neutral-200/70 dark:border-neutral-800">
+                    <button
+                      type="button"
+                      draggable
+                      onDragStart={() => setDraggingGroupId(group.id)}
+                      onDragEnd={() => {
+                        setDraggingGroupId(null);
+                        setDragOverGroupId(null);
+                      }}
+                      className="px-2 py-1 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white cursor-grab active:cursor-grabbing dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      title="拖拽排序"
+                      aria-label="拖拽排序"
+                    >
+                      <span aria-hidden className="text-[10px] leading-none">⋮⋮</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canMoveUp}
+                      onClick={() => onMove(group.id, "up")}
+                      className="px-2 py-1 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      title="上移"
+                      aria-label="上移"
+                    >
+                      <span aria-hidden className="text-[10px] leading-none">↑</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canMoveDown}
+                      onClick={() => onMove(group.id, "down")}
+                      className="px-2 py-1 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white disabled:opacity-30 disabled:cursor-not-allowed dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      title="下移"
+                      aria-label="下移"
+                    >
+                      <span aria-hidden className="text-[10px] leading-none">↓</span>
+                    </button>
+                  </div>
+
+                  {editingId === group.id ? (
+                    <>
+                      <input
+                        value={editLabel}
+                        onChange={e => setEditLabel(e.target.value)}
+                        className={`flex-1 min-w-0 px-2 py-1 text-xs rounded-lg border ${inputBorder} ${inputBg}`}
+                        autoFocus
+                        onKeyDown={e => {
+                          if (e.key === "Enter" && editLabel.trim()) {
+                            onRename(group.id, editLabel);
+                            setEditingId(null);
+                          }
+                          if (e.key === "Escape") setEditingId(null);
+                        }}
+                      />
+                      <button
+                        type="button"
+                        className="text-[11px] font-medium text-[#5856D6] shrink-0"
+                        onClick={() => {
+                          if (editLabel.trim()) {
+                            onRename(group.id, editLabel);
+                          }
+                          setEditingId(null);
+                        }}
+                      >
+                        保存
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="flex-1 min-w-0 text-xs font-medium truncate">{group.label}</span>
+                      {group.id === DEFAULT_PLUGIN_GROUP_ID && (
+                        <span className={`text-[10px] shrink-0 px-1.5 py-0.5 rounded ${mutedBg} text-neutral-500`}>
+                          系统
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        className="text-[11px] text-neutral-500 hover:text-[#5856D6] shrink-0"
+                        onClick={() => {
+                          setEditingId(group.id);
+                          setEditLabel(group.label);
+                        }}
+                      >
+                        重命名
+                      </button>
+                      {group.id !== DEFAULT_PLUGIN_GROUP_ID && (
+                        <button
+                          type="button"
+                          className="text-[11px] text-rose-500 hover:underline shrink-0"
+                          onClick={() => onRemove(group.id)}
+                        >
+                          删除
+                        </button>
+                      )}
+                    </>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        <div className={`shrink-0 px-6 py-4 border-t flex justify-end ${subtleBorder}`}>
+          <button
+            type="button"
+            onClick={onClose}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY}`}
+          >
+            完成
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PluginManagerModal({
   theme,
   myPlugins,
+  pluginGroups,
+  groupedPluginsForManage,
   onClose,
   onInstall,
   onUninstall,
@@ -1320,6 +1608,12 @@ export function PluginManagerModal({
   onMove,
   onImport,
   onRefresh,
+  onAssignPluginGroup,
+  onAddPluginGroup,
+  onRenamePluginGroup,
+  onMovePluginGroup,
+  onRemovePluginGroup,
+  getPluginGroupId,
   embedded = false,
 }: PluginManagerModalProps) {
   const [activeTab, setActiveTab] = useState<Extract<PluginManagerTab, "market" | "manage">>("market");
@@ -1327,10 +1621,35 @@ export function PluginManagerModal({
   const [marketSearch, setMarketSearch] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [editingPlugin, setEditingPlugin] = useState<Plugin | null>(null);
+  const [importTargetGroupId, setImportTargetGroupId] = useState<string | null>(null);
+  const [showGroupManager, setShowGroupManager] = useState(false);
+  const [activeManageGroupId, setActiveManageGroupId] = useState<string>(
+    () => groupedPluginsForManage[0]?.group.id ?? DEFAULT_PLUGIN_GROUP_ID,
+  );
+
+  const activeManageGroup = useMemo(
+    () =>
+      groupedPluginsForManage.find(entry => entry.group.id === activeManageGroupId)
+      ?? groupedPluginsForManage[0],
+    [groupedPluginsForManage, activeManageGroupId],
+  );
+
+  useEffect(() => {
+    if (
+      groupedPluginsForManage.length > 0
+      && !groupedPluginsForManage.some(entry => entry.group.id === activeManageGroupId)
+    ) {
+      setActiveManageGroupId(groupedPluginsForManage[0].group.id);
+    }
+  }, [groupedPluginsForManage, activeManageGroupId]);
+
+  const openImportForGroup = (groupId: string) => {
+    setEditingPlugin(null);
+    setImportTargetGroupId(groupId);
+    setShowImportModal(true);
+  };
 
   const installedPlugins = myPlugins.filter(p => p.id !== "all");
-  const officialInstalledPlugins = installedPlugins.filter(p => p.official);
-  const customInstalledPlugins = installedPlugins.filter(p => !p.official);
   const runningCount = installedPlugins.filter(p => p.active !== false).length;
 
   const availableStorePlugins = useMemo(
@@ -1346,6 +1665,10 @@ export function PluginManagerModal({
   const panelBg = isDark ? "bg-[#1c1d1f] text-white" : "bg-white text-neutral-900";
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-100";
   const mutedBg = isDark ? "bg-neutral-900/40" : "bg-neutral-50";
+  const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
+  const inputBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+
+  const resolveGroupId = getPluginGroupId;
   const wrapperClass = embedded
     ? "w-full h-full min-h-0"
     : "fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-6 md:p-10";
@@ -1477,45 +1800,94 @@ export function PluginManagerModal({
                   >
                     刷新
                   </button>
-                  <button type="button" onClick={() => setShowImportModal(true)} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4]">
-                    导入插件
+                  <button
+                    type="button"
+                    onClick={() => setShowGroupManager(true)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${subtleBorder} ${
+                      isDark
+                        ? "text-neutral-300 hover:bg-neutral-900/50"
+                        : "text-neutral-600 hover:bg-neutral-50"
+                    }`}
+                  >
+                    分组管理
                   </button>
                 </div>
               </div>
-              <div className="flex-1 overflow-y-auto px-8 py-4 space-y-4">
-                {installedPlugins.length === 0 ? (
-                  <p className="text-sm text-neutral-400 text-center py-16">暂无已安装插件，请先导入。</p>
+
+              <div className={`shrink-0 px-8 py-3 border-b ${subtleBorder}`}>
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`flex-1 min-w-0 flex items-center gap-1 p-1 rounded-2xl overflow-x-auto ${mutedBg}`}
+                    role="tablist"
+                    aria-label="插件分组"
+                  >
+                    {groupedPluginsForManage.map(({ group, plugins }) => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeManageGroupId === group.id}
+                        onClick={() => setActiveManageGroupId(group.id)}
+                        className={`shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                          activeManageGroupId === group.id
+                            ? "bg-white dark:bg-neutral-800 text-[#5856D6] shadow-sm"
+                            : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                        }`}
+                      >
+                        <span className="truncate max-w-[8rem]">{group.label}</span>
+                        <span
+                          className={`text-[10px] px-1.5 py-0.5 rounded-md ${
+                            activeManageGroupId === group.id
+                              ? "bg-[#5856D6]/10 text-[#5856D6]"
+                              : "bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500"
+                          }`}
+                        >
+                          {plugins.length}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  {activeManageGroup && (
+                    <button
+                      type="button"
+                      onClick={() => openImportForGroup(activeManageGroup.group.id)}
+                      className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4]"
+                    >
+                      导入插件
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto px-8 py-4">
+                {activeManageGroup ? (
+                  activeManageGroup.plugins.length > 0 ? (
+                    <PluginSection
+                      plugins={activeManageGroup.plugins}
+                      installedPlugins={installedPlugins}
+                      subtleBorder={subtleBorder}
+                      mutedBg={mutedBg}
+                      inputBg={inputBg}
+                      inputBorder={inputBorder}
+                      pluginGroups={pluginGroups}
+                      onMove={onMove}
+                      onToggleActive={onToggleActive}
+                      onUninstall={onUninstall}
+                      onAssignGroup={onAssignPluginGroup}
+                      resolveGroupId={resolveGroupId}
+                      onEdit={(plugin) => {
+                        setEditingPlugin(plugin);
+                        setImportTargetGroupId(null);
+                        setShowImportModal(true);
+                      }}
+                    />
+                  ) : (
+                    <p className="text-sm text-neutral-400 text-center py-16">
+                      「{activeManageGroup.group.label}」暂无插件，点击「导入插件」将自动添加到此分组。
+                    </p>
+                  )
                 ) : (
-                  <>
-                    {officialInstalledPlugins.length > 0 && (
-                      <PluginSection
-                        plugins={officialInstalledPlugins}
-                        installedPlugins={installedPlugins}
-                        subtleBorder={subtleBorder}
-                        mutedBg={mutedBg}
-                        onMove={onMove}
-                        onToggleActive={onToggleActive}
-                        onUninstall={onUninstall}
-                        customStyle={false}
-                      />
-                    )}
-                    {customInstalledPlugins.length > 0 && (
-                      <PluginSection
-                        plugins={customInstalledPlugins}
-                        installedPlugins={installedPlugins}
-                        subtleBorder={subtleBorder}
-                        mutedBg={mutedBg}
-                        onMove={onMove}
-                        onToggleActive={onToggleActive}
-                        onUninstall={onUninstall}
-                        onEdit={(plugin) => {
-                          setEditingPlugin(plugin);
-                          setShowImportModal(true);
-                        }}
-                        customStyle
-                      />
-                    )}
-                  </>
+                  <p className="text-sm text-neutral-400 text-center py-16">暂无分组，请先在「分组管理」中创建。</p>
                 )}
               </div>
             </div>
@@ -1523,17 +1895,36 @@ export function PluginManagerModal({
         </div>
       </div>
 
+      {showGroupManager && (
+        <PluginGroupManagerModal
+          groups={pluginGroups}
+          panelBg={panelBg}
+          subtleBorder={subtleBorder}
+          mutedBg={mutedBg}
+          inputBg={inputBg}
+          inputBorder={inputBorder}
+          isDark={isDark}
+          onClose={() => setShowGroupManager(false)}
+          onAdd={onAddPluginGroup}
+          onRename={onRenamePluginGroup}
+          onMove={onMovePluginGroup}
+          onRemove={onRemovePluginGroup}
+        />
+      )}
+
       {showImportModal && (
         <ImportPluginModal
           theme={theme}
           onClose={() => {
             setShowImportModal(false);
             setEditingPlugin(null);
+            setImportTargetGroupId(null);
           }}
           onImport={(payload) => {
-            onImport(payload);
+            onImport(payload, importTargetGroupId ?? undefined);
             setShowImportModal(false);
             setEditingPlugin(null);
+            setImportTargetGroupId(null);
             setActiveTab("manage");
           }}
           initialPlugin={editingPlugin}

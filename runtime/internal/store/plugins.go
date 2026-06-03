@@ -354,6 +354,41 @@ func (s *Store) MarkFeedItemRead(ctx context.Context, id string, readAt int64) e
 	return nil
 }
 
+func (s *Store) CountUnreadFeedItemsForPlugins(
+	ctx context.Context,
+	pluginIDs []string,
+	channelID, contentType string,
+) (int, error) {
+	if len(pluginIDs) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, len(pluginIDs))
+	args := make([]any, 0, len(pluginIDs)+2)
+	for i, id := range pluginIDs {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	query := `SELECT COUNT(*) FROM feed_items WHERE read_at IS NULL AND plugin_id IN (` +
+		strings.Join(placeholders, ",") + `)`
+	where := make([]string, 0, 2)
+	if channelID != "" {
+		where = append(where, `channel_id = ?`)
+		args = append(args, channelID)
+	}
+	if contentType != "" {
+		where = append(where, `media_type = ?`)
+		args = append(args, contentType)
+	}
+	if len(where) > 0 {
+		query += ` AND ` + strings.Join(where, ` AND `)
+	}
+	var count int
+	if err := s.DB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (s *Store) CountUnreadFeedItems(
 	ctx context.Context,
 	pluginID, channelID, contentType string,

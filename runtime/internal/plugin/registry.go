@@ -461,9 +461,26 @@ func (r *Registry) Feed(
 	ctx context.Context,
 	pluginID, channelID, contentType, search string,
 	refresh bool,
+	scopePluginIDs []string,
 ) ([]FeedItem, error) {
 	recs := r.List()
-	if pluginID != "" && pluginID != "all" {
+	if len(scopePluginIDs) > 0 {
+		allowed := make(map[string]struct{}, len(scopePluginIDs))
+		for _, id := range scopePluginIDs {
+			id = strings.TrimSpace(id)
+			if id == "" || id == "all" {
+				continue
+			}
+			allowed[id] = struct{}{}
+		}
+		filtered := make([]*PluginRecord, 0, len(allowed))
+		for _, rec := range recs {
+			if _, ok := allowed[rec.ID]; ok {
+				filtered = append(filtered, rec)
+			}
+		}
+		recs = filtered
+	} else if pluginID != "" && pluginID != "all" {
 		rec, ok := r.Get(pluginID)
 		if !ok {
 			return nil, fmt.Errorf("plugin not found: %s", pluginID)
@@ -532,7 +549,14 @@ func (r *Registry) MarkFeedItemRead(ctx context.Context, id string) error {
 func (r *Registry) CountUnread(
 	ctx context.Context,
 	pluginID, channelID, contentType string,
+	scopePluginIDs []string,
 ) (int, error) {
+	if len(scopePluginIDs) > 0 {
+		if channelID == "all" {
+			channelID = ""
+		}
+		return r.store.CountUnreadFeedItemsForPlugins(ctx, scopePluginIDs, channelID, contentType)
+	}
 	if pluginID == "all" {
 		pluginID = ""
 	}

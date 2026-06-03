@@ -48,6 +48,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/plugins", s.handlePlugins)
 	s.mux.HandleFunc("/v1/plugins/", s.handlePluginByID)
 	s.mux.HandleFunc("/v1/feed", s.handleFeed)
+	s.mux.HandleFunc("/v1/feed/unread", s.handleFeedUnread)
 	s.mux.HandleFunc("/v1/feed/item", s.handleFeedItem)
 	s.mux.HandleFunc("/v1/feed/refresh", s.handleRefreshFeed)
 	s.mux.HandleFunc("/v1/feed/read", s.handleMarkFeedRead)

@@ -1,5 +1,6 @@
 # Dependencies
 app/node_modules/
+orbit-resource/RSSHub-master
 
 # Build outputs
 app/dist/
