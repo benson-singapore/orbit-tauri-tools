@@ -100,6 +100,90 @@ func (s *Store) DeletePlugin(ctx context.Context, id string) error {
 	return err
 }
 
+func (s *Store) UpsertFeedItemsForChannel(
+	ctx context.Context,
+	pluginID, channelID string,
+	items []FeedItemRow,
+	fetchedAt int64,
+) error {
+	if len(items) == 0 {
+		return nil
+	}
+
+	tx, err := s.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO feed_items (
+			id, plugin_id, channel_id, title, summary, cover, media_type, source_url,
+			author, published_at, payload_json, fetched_at, read_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			title = excluded.title,
+			summary = excluded.summary,
+			cover = excluded.cover,
+			media_type = excluded.media_type,
+			source_url = excluded.source_url,
+			author = excluded.author,
+			published_at = excluded.published_at,
+			payload_json = excluded.payload_json,
+			fetched_at = excluded.fetched_at,
+			read_at = COALESCE(feed_items.read_at, excluded.read_at)
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, item := range items {
+		chID := item.ChannelID
+		if chID == "" {
+			chID = channelID
+		}
+		if _, err := stmt.ExecContext(ctx,
+			item.ID, pluginID, chID, item.Title, item.Summary, item.Cover, item.MediaType,
+			item.SourceURL, item.Author, item.PublishedAt, item.PayloadJSON, fetchedAt, nil,
+		); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
+func (s *Store) TrimFeedItemsForChannel(
+	ctx context.Context,
+	pluginID, channelID string,
+	limit int,
+) error {
+	if limit <= 0 {
+		return nil
+	}
+	var count int
+	if err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM feed_items WHERE plugin_id = ? AND channel_id = ?`,
+		pluginID, channelID,
+	).Scan(&count); err != nil {
+		return err
+	}
+	if count <= limit {
+		return nil
+	}
+	excess := count - limit
+	_, err := s.DB.ExecContext(ctx, `
+		DELETE FROM feed_items WHERE id IN (
+			SELECT id FROM feed_items
+			WHERE plugin_id = ? AND channel_id = ?
+			ORDER BY published_at ASC, id ASC
+			LIMIT ?
+		)
+	`, pluginID, channelID, excess)
+	return err
+}
+
 func (s *Store) ReplaceFeedItemsForChannel(
 	ctx context.Context,
 	pluginID, channelID string,
@@ -175,14 +259,14 @@ func (s *Store) ReplaceFeedItemsForChannel(
 	return tx.Commit()
 }
 
-func (s *Store) ListFeedItems(ctx context.Context, pluginID, channelID string) ([]FeedItemRow, error) {
+func (s *Store) ListFeedItems(ctx context.Context, pluginID, channelID, search string) ([]FeedItemRow, error) {
 	query := `
 		SELECT id, plugin_id, channel_id, title, summary, cover, media_type, source_url,
 		       author, published_at, payload_json, read_at
 		FROM feed_items
 	`
 	args := []any{}
-	where := make([]string, 0, 2)
+	where := make([]string, 0, 3)
 	if pluginID != "" {
 		where = append(where, `plugin_id = ?`)
 		args = append(args, pluginID)
@@ -190,6 +274,12 @@ func (s *Store) ListFeedItems(ctx context.Context, pluginID, channelID string) (
 	if channelID != "" {
 		where = append(where, `channel_id = ?`)
 		args = append(args, channelID)
+	}
+	search = strings.TrimSpace(search)
+	if search != "" {
+		pattern := "%" + sanitizeLikePattern(search) + "%"
+		where = append(where, `(LOWER(title) LIKE LOWER(?) OR LOWER(summary) LIKE LOWER(?) OR LOWER(author) LIKE LOWER(?) OR LOWER(payload_json) LIKE LOWER(?))`)
+		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	if len(where) > 0 {
 		query += ` WHERE ` + strings.Join(where, ` AND `)
@@ -300,6 +390,12 @@ func (s *Store) DeleteFeedItemsByPlugin(ctx context.Context, pluginID string) er
 
 func DecodeJSON(raw string, v any) error {
 	return json.Unmarshal([]byte(raw), v)
+}
+
+func sanitizeLikePattern(raw string) string {
+	raw = strings.ReplaceAll(raw, `%`, "")
+	raw = strings.ReplaceAll(raw, `_`, "")
+	return raw
 }
 
 func FormatRelativeTime(unix int64) string {

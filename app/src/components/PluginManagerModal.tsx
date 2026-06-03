@@ -29,12 +29,13 @@ type ChannelFormRow = {
   id: string;
   label: string;
   feedUrl: string;
+  itemLimit: string;
   /** 为 true 时，修改名称会自动更新 id */
   idAuto: boolean;
 };
 
 function createChannelRow(
-  partial: Partial<Pick<ChannelFormRow, "id" | "label" | "feedUrl">> = {},
+  partial: Partial<Pick<ChannelFormRow, "id" | "label" | "feedUrl" | "itemLimit">> = {},
   options?: { idAuto?: boolean },
 ): ChannelFormRow {
   const label = partial.label ?? "全部";
@@ -47,8 +48,17 @@ function createChannelRow(
     id,
     label,
     feedUrl: partial.feedUrl ?? "",
+    itemLimit: partial.itemLimit ?? "100",
     idAuto,
   };
+}
+
+/** id 仍随名称自动同步（含默认 main / 全部，或 id 与当前名称 slug 一致） */
+function isChannelIdSyncedWithLabel(row: ChannelFormRow): boolean {
+  if (row.idAuto) return true;
+  const slug = slugifyChannelId(row.label);
+  if (slug && row.id === slug) return true;
+  return row.id === "main" && row.label === "全部";
 }
 
 interface PluginManagerModalProps {
@@ -386,7 +396,7 @@ function ImportPluginModal({
   const [icon, setIcon] = useState<PluginContentType>("text");
   const [mediaType, setMediaType] = useState<NonNullable<InstallRSSPluginRequest["mediaType"]>>("article");
   const [channels, setChannels] = useState<ChannelFormRow[]>([
-    createChannelRow({ id: "main", label: "全部" }, { idAuto: false }),
+    createChannelRow({ label: "全部" }, { idAuto: true }),
   ]);
   const [refreshInterval, setRefreshInterval] = useState("3600");
   const [userAgent, setUserAgent] = useState("");
@@ -430,13 +440,14 @@ function ImportPluginModal({
               id: ch.id,
               label: ch.label,
               feedUrl: ch.feedUrl ?? "",
+              itemLimit: String(ch.itemLimit ?? 100),
             },
             { idAuto: false },
           ),
         ),
       );
     } else {
-      setChannels([createChannelRow({ id: "main", label: "全部" }, { idAuto: false })]);
+      setChannels([createChannelRow({ label: "全部" }, { idAuto: true })]);
     }
     setRefreshInterval(String(initialPlugin.refreshInterval ?? 3600));
     setUserAgent(initialPlugin.userAgent ?? "");
@@ -456,11 +467,15 @@ function ImportPluginModal({
     const parsedRefresh = Number.parseInt(refreshInterval.trim(), 10);
     return {
       source: "rss",
-      channels: channels.map(ch => ({
-        id: ch.id.trim(),
-        label: ch.label.trim(),
-        feedUrl: ch.feedUrl.trim(),
-      })),
+      channels: channels.map(ch => {
+        const parsedLimit = Number.parseInt(ch.itemLimit.trim(), 10);
+        return {
+          id: ch.id.trim(),
+          label: ch.label.trim(),
+          feedUrl: ch.feedUrl.trim(),
+          itemLimit: Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 100,
+        };
+      }),
       id: pluginId.trim() || undefined,
       name: pluginName.trim() || undefined,
       icon,
@@ -515,7 +530,7 @@ function ImportPluginModal({
       const nextName = typeof raw.name === "string" ? raw.name : "";
       const nextMediaType = typeof raw.mediaType === "string" ? raw.mediaType : undefined;
       const rawChannels = Array.isArray(config.channels)
-        ? (config.channels as { id?: string; label?: string; feedUrl?: string }[])
+        ? (config.channels as { id?: string; label?: string; feedUrl?: string; itemLimit?: number }[])
         : [];
       const legacyFeedUrl =
         typeof config.feedUrl === "string" ? config.feedUrl.trim() : "";
@@ -527,13 +542,16 @@ function ImportPluginModal({
                   id: String(ch.id ?? `channel-${i + 1}`).trim(),
                   label: String(ch.label ?? ch.id ?? `频道 ${i + 1}`).trim(),
                   feedUrl: String(ch.feedUrl ?? "").trim(),
+                  itemLimit: String(
+                    typeof ch.itemLimit === "number" && ch.itemLimit > 0 ? ch.itemLimit : 100,
+                  ),
                 },
                 { idAuto: false },
               ),
             )
           : legacyFeedUrl
-            ? [createChannelRow({ id: "main", label: "全部", feedUrl: legacyFeedUrl }, { idAuto: false })]
-            : [createChannelRow({ id: "main", label: "全部" }, { idAuto: false })];
+            ? [createChannelRow({ label: "全部", feedUrl: legacyFeedUrl }, { idAuto: true })]
+            : [createChannelRow({ label: "全部" }, { idAuto: true })];
       const nextRefreshIntervalRaw = typeof raw.refreshInterval === "number"
         ? raw.refreshInterval
         : typeof config.refreshInterval === "number"
@@ -887,12 +905,15 @@ function ImportPluginModal({
                                   setChannels(prev =>
                                     prev.map((row, i) => {
                                       if (i !== index) return row;
-                                      const next: ChannelFormRow = { ...row, label: v };
-                                      if (row.idAuto) {
-                                        const slug = slugifyChannelId(v);
-                                        if (slug) next.id = slug;
-                                      }
-                                      return next;
+                                      const slug = slugifyChannelId(v);
+                                      const synced = isChannelIdSyncedWithLabel(row);
+                                      return {
+                                        ...row,
+                                        label: v,
+                                        ...(synced && slug
+                                          ? { id: slug, idAuto: true }
+                                          : {}),
+                                      };
                                     }),
                                   );
                                 }}
@@ -930,6 +951,26 @@ function ImportPluginModal({
                               placeholder="https://example.com/feed.xml"
                               className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
                             />
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                                抓取数量上限 itemLimit（默认 100）
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={ch.itemLimit}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  setChannels(prev =>
+                                    prev.map((row, i) =>
+                                      i === index ? { ...row, itemLimit: v } : row,
+                                    ),
+                                  );
+                                }}
+                                placeholder="100"
+                                className={`w-full sm:w-40 px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
                           </div>
                         ))}
                       </div>

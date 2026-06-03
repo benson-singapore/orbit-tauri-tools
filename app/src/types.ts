@@ -9,13 +9,14 @@ export interface PluginChannel {
   id: string;
   label: string;
   feedUrl?: string;
+  itemLimit?: number;
 }
 
 export interface Article {
   id: string;
   title: string;
   summary: string;
-  content: string;
+  content?: string;
   type: ContentType;
   pluginId: string;
   pluginName: string;
@@ -75,6 +76,11 @@ export interface FeedResponse {
   unreadTotal?: number;
   limit?: number;
   offset?: number;
+}
+
+export interface FeedItemResponse {
+  ok: boolean;
+  item: Article;
 }
 
 export interface PluginsResponse {

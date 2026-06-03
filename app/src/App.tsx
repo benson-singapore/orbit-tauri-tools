@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { useOrbitData } from "@/hooks/useOrbitData";
+import { dedupeCoverImageFromContent } from "@/lib/articleContent";
+import { highlightArticleCode } from "@/lib/highlightArticleCode";
+import { fetchFeedItem } from "@/lib/feed";
 import { useTitlebarDrag } from "@/hooks/useTitlebarDrag";
 import { useTitlebarEnv } from "@/hooks/useTitlebarEnv";
 import { useUiZoom } from "@/hooks/useUiZoom";
@@ -27,6 +30,14 @@ export default function App() {
   const [activeChannel, setActiveChannel] = useState("all");
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [searchQuery]);
 
   const feedContentType =
     activePlugin === "all" && activeCategory !== "all"
@@ -37,18 +48,20 @@ export default function App() {
     plugins: myPlugins,
     articles,
     unreadTotal,
+    feedTotal,
     loading: feedLoading,
     loadingMore: feedLoadingMore,
     hasMore: feedHasMore,
     error: feedError,
     reload,
+    refreshFromCache,
     loadMore,
     markArticleRead,
     installCustomRSS,
     togglePluginActive: orbitTogglePluginActive,
     removePlugin: orbitRemovePlugin,
     movePlugin: orbitMovePlugin,
-  } = useOrbitData(activePlugin, activeChannel, feedContentType);
+  } = useOrbitData(activePlugin, activeChannel, feedContentType, debouncedSearch);
 
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const articlesWithBookmarks = useMemo(
@@ -61,9 +74,12 @@ export default function App() {
   );
 
   const [selectedItem, setSelectedItem] = useState<Article | null>(null);
+  const [contentLoading, setContentLoading] = useState(false);
+  const articleContentRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("today");
 
   const [showPluginStore, setShowPluginStore] = useState(false);
+  const [isSidebarRefreshing, setIsSidebarRefreshing] = useState(false);
 
   useEffect(() => {
     if (articlesWithBookmarks.length === 0) {
@@ -88,6 +104,18 @@ export default function App() {
   // Image Slider Index
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
+  const selectedItemDisplayContent = useMemo(() => {
+    if (!selectedItem?.content?.trim()) return "";
+    if (selectedItem.type !== "text" || !selectedItem.image) {
+      return selectedItem.content;
+    }
+    return dedupeCoverImageFromContent(selectedItem.image, selectedItem.content);
+  }, [selectedItem?.content, selectedItem?.image, selectedItem?.type]);
+
+  useEffect(() => {
+    highlightArticleCode(articleContentRef.current);
+  }, [selectedItemDisplayContent, theme]);
+
   const filteredArticles = useMemo(() => {
     return articlesWithBookmarks.filter(item => {
       // Filter by custom left-side tabs
@@ -99,19 +127,9 @@ export default function App() {
         if (!item.reads.includes('k')) return false;
       }
 
-      // Filter by Search Query
-      if (searchQuery.trim() !== '') {
-        const query = searchQuery.toLowerCase();
-        return (
-          item.title.toLowerCase().includes(query) ||
-          item.summary.toLowerCase().includes(query) ||
-          (item.tags ?? []).some(t => t.toLowerCase().includes(query))
-        );
-      }
-
       return true;
     });
-  }, [articlesWithBookmarks, activeTab, searchQuery]);
+  }, [articlesWithBookmarks, activeTab]);
 
   const pluginById = useMemo(
     () => new Map(myPlugins.map(plugin => [plugin.id, plugin] as const)),
@@ -129,13 +147,55 @@ export default function App() {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
+  const handleSidebarRefresh = () => {
+    if (isSidebarRefreshing) return;
+    setIsSidebarRefreshing(true);
+    void refreshFromCache().finally(() => {
+      setIsSidebarRefreshing(false);
+    });
+  };
+
   const handleItemSelect = (item: Article) => {
     void markArticleRead(item.id);
     setSelectedItem(item);
-    setAiSummary(null); // Clear previous AI summarizes
+    setAiSummary(null);
     setIsPlayingAudio(false);
     setActiveImageIndex(0);
   };
+
+  useEffect(() => {
+    const itemId = selectedItem?.id;
+    if (!itemId) {
+      setContentLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setContentLoading(true);
+    void (async () => {
+      try {
+        const detail = await fetchFeedItem(itemId);
+        if (cancelled) {
+          return;
+        }
+        setSelectedItem(prev =>
+          prev?.id === itemId ? { ...prev, ...detail } : prev,
+        );
+      } catch (err) {
+        if (!cancelled) {
+          console.error("load article content failed", err);
+        }
+      } finally {
+        if (!cancelled) {
+          setContentLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedItem?.id]);
 
   const handleBookmarkToggle = (id: string) => {
     setBookmarkedIds(prev => {
@@ -305,8 +365,22 @@ export default function App() {
 
             {/* Top Navigation Items (Today, Bookmarks, Trending) */}
             <div className={`space-y-1 ${isSidebarCollapsed ? "px-0" : "px-3"}`}>
-              <div className={`text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-2 px-3 ${isSidebarCollapsed ? 'hidden' : 'block'}`}>
-                视图大盘
+              <div className={`flex items-center justify-between text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-2 px-3 ${
+                isSidebarCollapsed ? 'hidden' : 'block'
+              }`}>
+                <span>视图大盘</span>
+                <button
+                  type="button"
+                  onClick={handleSidebarRefresh}
+                  disabled={isSidebarRefreshing}
+                  className="hover:text-indigo-600 transition-colors disabled:opacity-50"
+                  title="刷新资讯（使用缓存）"
+                >
+                  <Icon
+                    name="refresh"
+                    className={`w-3 h-3 ${isSidebarRefreshing ? "animate-spin" : ""}`}
+                  />
+                </button>
               </div>
 
               <button 
@@ -398,12 +472,17 @@ export default function App() {
                 isSidebarCollapsed ? 'hidden' : 'block'
               }`}>
                 <span>已启用的获取插件</span>
-                <button 
-                  onClick={() => setShowPluginStore(true)}
-                  className="hover:text-indigo-600 transition-colors"
-                  title="安装新插件"
+                <button
+                  type="button"
+                  onClick={handleSidebarRefresh}
+                  disabled={isSidebarRefreshing}
+                  className="hover:text-indigo-600 transition-colors disabled:opacity-50"
+                  title="刷新插件与资讯（使用缓存）"
                 >
-                  <Icon name="puzzle" className="w-3 h-3" />
+                  <Icon
+                    name="refresh"
+                    className={`w-3 h-3 ${isSidebarRefreshing ? "animate-spin" : ""}`}
+                  />
                 </button>
               </div>
 
@@ -507,7 +586,7 @@ export default function App() {
                   type="text" 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="搜索当前列表的文章..."
+                  placeholder="搜索文章标题、摘要、标签…"
                   className="w-full py-1.5 bg-transparent text-sm outline-none placeholder-neutral-400 dark:placeholder-neutral-500"
                 />
                 {searchQuery && (
@@ -586,12 +665,14 @@ export default function App() {
             <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
               <div className="flex items-center justify-between text-xs text-neutral-400 mb-2">
                 <span>{activeTab === 'bookmarks' ? '收藏的文章' : 'Today 全部文章'}</span>
-                <span>共 {filteredArticles.length} 篇</span>
+                <span>共 {debouncedSearch ? feedTotal : filteredArticles.length} 篇</span>
               </div>
 
               {feedLoading ? (
                 <div className="text-center py-12">
-                  <p className="text-sm text-neutral-400">正在拉取 RSS 订阅…</p>
+                  <p className="text-sm text-neutral-400">
+                    {debouncedSearch ? "正在搜索…" : "正在拉取 RSS 订阅…"}
+                  </p>
                 </div>
               ) : feedError ? (
                 <div className="text-center py-12 px-4">
@@ -793,6 +874,19 @@ export default function App() {
                           <span className="hidden sm:inline">微光高亮</span>
                         </button>
 
+                        {selectedItem.sourceUrl ? (
+                          <a
+                            href={selectedItem.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-indigo-500 dark:text-indigo-400"
+                            title="阅读原文"
+                          >
+                            <Icon name="share" className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">阅读原文</span>
+                          </a>
+                        ) : null}
+
                         <button
                           onClick={() => handleBookmarkToggle(selectedItem.id)}
                           className={`p-1.5 rounded-lg transition-all ${
@@ -985,11 +1079,32 @@ export default function App() {
                 </div>
 
                 {/* Content body */}
-                {selectedItem.content ? (
-                  <div 
-                    className="prose prose-neutral dark:prose-invert max-w-none text-neutral-700 dark:text-neutral-300 mt-6"
-                    dangerouslySetInnerHTML={{ __html: selectedItem.content }}
-                  />
+                {contentLoading ? (
+                  <div className="mt-6 flex items-center gap-2 text-sm text-neutral-400">
+                    <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
+                    加载正文中…
+                  </div>
+                ) : selectedItemDisplayContent ? (
+                  <>
+                    <div
+                      ref={articleContentRef}
+                      data-theme={theme}
+                      className="article-content mt-6"
+                      dangerouslySetInnerHTML={{ __html: selectedItemDisplayContent }}
+                    />
+                    {selectedItem.sourceUrl ? (
+                      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
+                        <a
+                          href={selectedItem.sourceUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 text-sm text-indigo-500 hover:underline dark:text-indigo-400"
+                        >
+                          阅读原文 →
+                        </a>
+                      </div>
+                    ) : null}
+                  </>
                 ) : (
                   <div className="mt-6 border-t border-dashed dark:border-neutral-800 pt-6 space-y-4">
                     <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed italic">

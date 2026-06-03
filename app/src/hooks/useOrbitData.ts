@@ -18,11 +18,13 @@ interface UseOrbitDataResult {
   plugins: Plugin[];
   articles: Article[];
   unreadTotal: number;
+  feedTotal: number;
   loading: boolean;
   loadingMore: boolean;
   hasMore: boolean;
   error: string | null;
-  reload: () => Promise<void>;
+  reload: (options?: { force?: boolean }) => Promise<void>;
+  refreshFromCache: () => Promise<void>;
   loadMore: () => Promise<void>;
   markArticleRead: (id: string) => Promise<void>;
   installCustomRSS: (payload: InstallRSSPluginRequest) => Promise<void>;
@@ -35,10 +37,12 @@ export function useOrbitData(
   pluginFilter = "all",
   channelFilter = "all",
   contentTypeFilter?: string,
+  searchFilter = "",
 ): UseOrbitDataResult {
   const [plugins, setPlugins] = useState<Plugin[]>(INITIAL_PLUGINS);
   const [articles, setArticles] = useState<Article[]>([]);
   const [unreadTotal, setUnreadTotal] = useState(0);
+  const [feedTotal, setFeedTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -47,9 +51,11 @@ export function useOrbitData(
   const pluginFilterRef = useRef(pluginFilter);
   const channelFilterRef = useRef(channelFilter);
   const contentTypeFilterRef = useRef(contentTypeFilter);
+  const searchFilterRef = useRef(searchFilter);
   pluginFilterRef.current = pluginFilter;
   channelFilterRef.current = channelFilter;
   contentTypeFilterRef.current = contentTypeFilter;
+  searchFilterRef.current = searchFilter;
 
   const loadPlugins = useCallback(async () => {
     const remote = await fetchPlugins();
@@ -67,6 +73,7 @@ export function useOrbitData(
     const pluginId = pluginFilterRef.current;
     const channel = channelFilterRef.current;
     const contentType = contentTypeFilterRef.current;
+    const search = searchFilterRef.current.trim();
     const data = await fetchFeed({
       pluginId,
       channel:
@@ -75,6 +82,7 @@ export function useOrbitData(
         pluginId === "all" && contentType && contentType !== "all"
           ? (contentType as import("@/types").ContentType)
           : undefined,
+      search: search || undefined,
       refresh: options?.force ?? false,
       limit: FEED_PAGE_SIZE,
       offset,
@@ -84,6 +92,7 @@ export function useOrbitData(
     }
     const items = data.items ?? [];
     const total = data.total ?? (offset + items.length);
+    setFeedTotal(total);
     setHasMore(offset + items.length < total);
     setArticles(prev => (append ? [...prev, ...items] : items));
     if (!append) {
@@ -93,12 +102,16 @@ export function useOrbitData(
     }
   }, []);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (options?: { force?: boolean }) => {
     setLoading(true);
     setError(null);
     try {
       await loadPlugins();
-      await loadFeedPage({ force: false, offset: 0, append: false });
+      await loadFeedPage({
+        force: options?.force ?? true,
+        offset: 0,
+        append: false,
+      });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -143,6 +156,17 @@ export function useOrbitData(
     }
   }, [loadFeedPage]);
 
+  const refreshFromCache = useCallback(async () => {
+    setError(null);
+    try {
+      await loadPlugins();
+      await loadFeedPage({ force: false, offset: 0, append: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      throw err;
+    }
+  }, [loadPlugins, loadFeedPage]);
+
   const initialMount = useRef(true);
   useEffect(() => {
     void reload();
@@ -160,13 +184,13 @@ export function useOrbitData(
       return;
     }
     void reloadFeedOnly();
-  }, [pluginFilter, channelFilter, contentTypeFilter, reloadFeedOnly]);
+  }, [pluginFilter, channelFilter, contentTypeFilter, searchFilter, reloadFeedOnly]);
 
   const installCustomRSS = useCallback(
     async (payload: InstallRSSPluginRequest) => {
       await installRSSPlugin(payload);
       await loadPlugins();
-      await loadFeedPage({ force: false, offset: 0, append: false });
+      await loadFeedPage({ force: true, offset: 0, append: false });
     },
     [loadPlugins, loadFeedPage],
   );
@@ -258,11 +282,13 @@ export function useOrbitData(
     plugins,
     articles,
     unreadTotal,
+    feedTotal,
     loading,
     loadingMore,
     hasMore,
     error,
     reload,
+    refreshFromCache,
     loadMore,
     markArticleRead,
     installCustomRSS,

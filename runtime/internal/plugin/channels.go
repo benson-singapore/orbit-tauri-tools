@@ -7,11 +7,21 @@ import (
 
 const DefaultChannelID = "main"
 
+const DefaultChannelItemLimit = 100
+
 // FeedChannel is one RSS source within a plugin.
 type FeedChannel struct {
-	ID      string `json:"id"`
-	Label   string `json:"label"`
-	FeedURL string `json:"feedUrl"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	FeedURL   string `json:"feedUrl"`
+	ItemLimit int    `json:"itemLimit,omitempty"`
+}
+
+func ChannelItemLimit(ch *FeedChannel) int {
+	if ch == nil || ch.ItemLimit <= 0 {
+		return DefaultChannelItemLimit
+	}
+	return ch.ItemLimit
 }
 
 // MigrateManifestConfig converts legacy config.feedUrl into a single channel.

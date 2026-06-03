@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/orbit-tauri-tools/runtime/internal/store"
 )
@@ -35,6 +36,7 @@ func feedItemToRow(item FeedItem, channelID string) (store.FeedItemRow, error) {
 		"pluginName": item.PluginName,
 		"type":       item.Type,
 		"channelId":  channelID,
+		"content":    item.Content,
 	})
 	if err != nil {
 		return store.FeedItemRow{}, err
@@ -54,7 +56,7 @@ func feedItemToRow(item FeedItem, channelID string) (store.FeedItemRow, error) {
 	}, nil
 }
 
-func rowToFeedItem(row store.FeedItemRow) FeedItem {
+func rowToFeedItem(row store.FeedItemRow, includeContent bool) FeedItem {
 	item := FeedItem{
 		ID:          row.ID,
 		PluginID:    row.PluginID,
@@ -77,6 +79,7 @@ func rowToFeedItem(row store.FeedItemRow) FeedItem {
 			PluginName string   `json:"pluginName"`
 			Type       string   `json:"type"`
 			ChannelID  string   `json:"channelId"`
+			Content    string   `json:"content"`
 		}
 		_ = json.Unmarshal([]byte(row.PayloadJSON), &payload)
 		if payload.ChannelID != "" {
@@ -93,8 +96,32 @@ func rowToFeedItem(row store.FeedItemRow) FeedItem {
 		if payload.Type != "" {
 			item.Type = payload.Type
 		}
+		if includeContent && payload.Content != "" {
+			item.Content = payload.Content
+		}
 	}
 	return item
+}
+
+func rowsNeedContentBackfill(rows []store.FeedItemRow) bool {
+	for _, row := range rows {
+		if strings.TrimSpace(row.Summary) == "" {
+			continue
+		}
+		if row.PayloadJSON == "" {
+			return true
+		}
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
+			return true
+		}
+		if strings.TrimSpace(payload.Content) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Registry) persistFeedItemsForChannel(
@@ -102,6 +129,7 @@ func (r *Registry) persistFeedItemsForChannel(
 	pluginID, channelID string,
 	items []FeedItem,
 	fetchedAt int64,
+	itemLimit int,
 ) error {
 	rows := make([]store.FeedItemRow, 0, len(items))
 	for _, item := range items {
@@ -111,17 +139,34 @@ func (r *Registry) persistFeedItemsForChannel(
 		}
 		rows = append(rows, row)
 	}
-	return r.store.ReplaceFeedItemsForChannel(ctx, pluginID, channelID, rows, fetchedAt)
+	if err := r.store.UpsertFeedItemsForChannel(ctx, pluginID, channelID, rows, fetchedAt); err != nil {
+		return err
+	}
+	return r.store.TrimFeedItemsForChannel(ctx, pluginID, channelID, itemLimit)
 }
 
-func (r *Registry) loadFeedItems(ctx context.Context, pluginID, channelID string) ([]FeedItem, error) {
-	rows, err := r.store.ListFeedItems(ctx, pluginID, channelID)
+func (r *Registry) loadFeedItems(ctx context.Context, pluginID, channelID, search string) ([]FeedItem, bool, error) {
+	rows, err := r.store.ListFeedItems(ctx, pluginID, channelID, search)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out := make([]FeedItem, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, rowToFeedItem(row))
+		out = append(out, rowToFeedItem(row, false))
 	}
-	return out, nil
+	return out, rowsNeedContentBackfill(rows), nil
+}
+
+func (r *Registry) GetFeedItem(ctx context.Context, id string) (*FeedItem, error) {
+	row, err := r.store.GetFeedItem(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	item := rowToFeedItem(*row, true)
+	if item.PluginName == "" {
+		if rec, ok := r.Get(item.PluginID); ok {
+			item.PluginName = rec.Name
+		}
+	}
+	return &item, nil
 }

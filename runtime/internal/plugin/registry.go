@@ -60,6 +60,10 @@ func (r *Registry) Sync(ctx context.Context) error {
 
 		row, exists := dbByID[id]
 		if !exists {
+			// Bundled plugins are opt-in only; do not auto-install on startup.
+			if onDisk.bundled {
+				continue
+			}
 			rec := &PluginRecord{
 				Manifest:  *m,
 				Active:    true,
@@ -84,6 +88,26 @@ func (r *Registry) Sync(ctx context.Context) error {
 			return err
 		}
 		r.setRecord(rec)
+	}
+
+	// Drop bundled plugins that were removed from disk (e.g. retired defaults).
+	for id, row := range dbByID {
+		if _, ok := disk[id]; ok {
+			continue
+		}
+		rec, err := rowToRecord(row)
+		if err != nil {
+			return err
+		}
+		if !rec.Bundled {
+			continue
+		}
+		if err := r.store.DeletePlugin(ctx, id); err != nil {
+			return err
+		}
+		if err := r.store.DeleteFeedItemsByPlugin(ctx, id); err != nil {
+			return err
+		}
 	}
 
 	r.mu.Lock()
@@ -321,14 +345,13 @@ func (r *Registry) Uninstall(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("plugin not found: %s", id)
 	}
-	if rec.Bundled {
-		return fmt.Errorf("bundled plugin cannot be uninstalled: %s", id)
+	if !rec.Bundled {
+		userDir, err := UserPluginsDir()
+		if err != nil {
+			return err
+		}
+		_ = os.RemoveAll(filepath.Join(userDir, id))
 	}
-	userDir, err := UserPluginsDir()
-	if err != nil {
-		return err
-	}
-	_ = os.RemoveAll(filepath.Join(userDir, id))
 	if err := r.store.DeletePlugin(ctx, id); err != nil {
 		return err
 	}
@@ -405,34 +428,38 @@ func (r *Registry) refreshChannel(ctx context.Context, rec *PluginRecord, ch *Fe
 	for i := range items {
 		items[i].ChannelID = ch.ID
 	}
-	if err := r.persistFeedItemsForChannel(ctx, rec.ID, ch.ID, items, now); err != nil {
+	if err := r.persistFeedItemsForChannel(ctx, rec.ID, ch.ID, items, now, ChannelItemLimit(ch)); err != nil {
 		return nil, err
 	}
 	return items, nil
 }
 
-func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord, channelID string) ([]FeedItem, error) {
+func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord, channelID, search string) ([]FeedItem, bool, error) {
 	channelID = ResolveChannelID(&rec.Config, channelID)
 	if channelID != "" {
-		return r.loadFeedItems(ctx, rec.ID, channelID)
+		return r.loadFeedItems(ctx, rec.ID, channelID, search)
 	}
 	var all []FeedItem
+	needsBackfill := false
 	for _, ch := range rec.Config.Channels {
-		items, err := r.loadFeedItems(ctx, rec.ID, ch.ID)
+		items, backfill, err := r.loadFeedItems(ctx, rec.ID, ch.ID, search)
 		if err != nil {
-			return nil, err
+			return nil, false, err
+		}
+		if backfill {
+			needsBackfill = true
 		}
 		all = append(all, items...)
 	}
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].PublishedAt > all[j].PublishedAt
 	})
-	return all, nil
+	return all, needsBackfill, nil
 }
 
 func (r *Registry) Feed(
 	ctx context.Context,
-	pluginID, channelID, contentType string,
+	pluginID, channelID, contentType, search string,
 	refresh bool,
 ) ([]FeedItem, error) {
 	recs := r.List()
@@ -460,24 +487,24 @@ func (r *Registry) Feed(
 			effectiveChannel = ""
 		}
 
-		stale := refresh || r.isStale(rec)
-		if stale {
-			if _, err := r.RefreshPlugin(ctx, rec.ID, effectiveChannel); err != nil {
-				cached, cacheErr := r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel)
-				if cacheErr != nil || len(cached) == 0 {
-					if err != nil {
-						return nil, err
-					}
-					continue
-				}
-				all = append(all, cached...)
-				continue
-			}
-		}
-
-		items, err := r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel)
+		items, needsBackfill, err := r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel, search)
 		if err != nil {
 			return nil, err
+		}
+
+		stale := refresh || (search == "" && (r.isStale(rec) || needsBackfill))
+		if stale {
+			if _, err := r.RefreshPlugin(ctx, rec.ID, effectiveChannel); err != nil {
+				if len(items) == 0 {
+					return nil, err
+				}
+				all = append(all, items...)
+				continue
+			}
+			items, _, err = r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel, search)
+			if err != nil {
+				return nil, err
+			}
 		}
 		all = append(all, items...)
 	}

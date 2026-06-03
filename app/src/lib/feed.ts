@@ -1,6 +1,7 @@
 import type {
   Article,
   ContentType,
+  FeedItemResponse,
   FeedResponse,
   InstallRSSPluginRequest,
   Plugin,
@@ -64,6 +65,7 @@ export async function fetchFeed(options?: {
   pluginId?: string;
   channel?: string;
   type?: ContentType;
+  search?: string;
   refresh?: boolean;
   limit?: number;
   offset?: number;
@@ -78,6 +80,9 @@ export async function fetchFeed(options?: {
   }
   if (options?.type) {
     params.set("type", options.type);
+  }
+  if (options?.search?.trim()) {
+    params.set("q", options.search.trim());
   }
   if (options?.refresh) {
     params.set("refresh", "1");
@@ -98,6 +103,18 @@ export async function fetchFeed(options?: {
     ...data,
     items: (data.items ?? []).map(normalizeArticle),
   };
+}
+
+export async function fetchFeedItem(id: string): Promise<Article> {
+  const base = await apiBase();
+  const res = await fetchGetWithDedupe(
+    `${base}/v1/feed/item?id=${encodeURIComponent(id)}`,
+  );
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const data = (await res.json()) as FeedItemResponse;
+  return normalizeArticle(data.item);
 }
 
 export async function installRSSPlugin(
@@ -135,6 +152,23 @@ export async function uninstallPlugin(id: string): Promise<void> {
   const base = await apiBase();
   const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
     method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+}
+
+export async function refreshPluginFeed(
+  pluginId: string,
+  channel?: string,
+): Promise<void> {
+  const base = await apiBase();
+  const params = new URLSearchParams({ plugin_id: pluginId });
+  if (channel) {
+    params.set("channel", channel);
+  }
+  const res = await fetch(`${base}/v1/feed/refresh?${params}`, {
+    method: "POST",
   });
   if (!res.ok) {
     throw new Error(await parseError(res));

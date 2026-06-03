@@ -1,7 +1,9 @@
 package server
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strconv"
@@ -18,11 +20,12 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	pluginID := strings.TrimSpace(q.Get("plugin_id"))
 	channelID := strings.TrimSpace(q.Get("channel"))
 	contentType := strings.TrimSpace(q.Get("type"))
+	search := strings.TrimSpace(q.Get("q"))
 	refresh := q.Get("refresh") == "1" || strings.EqualFold(q.Get("refresh"), "true")
 	limit := parsePositiveInt(q.Get("limit"), 20)
 	offset := parseNonNegativeInt(q.Get("offset"), 0)
 
-	items, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, refresh)
+	items, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, search, refresh)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
 		return
@@ -32,7 +35,6 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		ID           string   `json:"id"`
 		Title        string   `json:"title"`
 		Summary      string   `json:"summary"`
-		Content      string   `json:"content"`
 		Type         string   `json:"type"`
 		PluginID     string   `json:"pluginId"`
 		PluginName   string   `json:"pluginName"`
@@ -79,7 +81,6 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			ID:           item.ID,
 			Title:        item.Title,
 			Summary:      item.Summary,
-			Content:      item.Content,
 			Type:         item.Type,
 			PluginID:     item.PluginID,
 			PluginName:   item.PluginName,
@@ -104,6 +105,57 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		"unreadTotal": unreadTotal,
 		"limit":       limit,
 		"offset":      offset,
+	})
+}
+
+func (s *Server) handleFeedItem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+		return
+	}
+
+	id := strings.TrimSpace(r.URL.Query().Get("id"))
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("id is required"))
+		return
+	}
+
+	item, err := s.registry.GetFeedItem(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSON(w, http.StatusNotFound, errorBody("feed item not found"))
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, errorBody(err.Error()))
+		return
+	}
+
+	tags := item.Tags
+	if tags == nil {
+		tags = []string{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"item": map[string]any{
+			"id":           item.ID,
+			"title":        item.Title,
+			"summary":      item.Summary,
+			"content":      item.Content,
+			"type":         item.Type,
+			"pluginId":     item.PluginID,
+			"pluginName":   item.PluginName,
+			"channelId":    item.ChannelID,
+			"author":       item.Author,
+			"time":         item.Time,
+			"publishedAt":  item.PublishedAt,
+			"reads":        item.Reads,
+			"image":        item.Image,
+			"sourceUrl":    item.SourceURL,
+			"tags":         tags,
+			"isBookmarked": false,
+			"isRead":       item.IsRead,
+		},
 	})
 }
 
