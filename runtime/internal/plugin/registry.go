@@ -67,9 +67,11 @@ func (r *Registry) Sync(ctx context.Context) error {
 
 		row, exists := dbByID[id]
 		if !exists {
-			// Bundled plugins are opt-in only; do not auto-install on startup.
+			// Bundled plugins are opt-in in production; dev mode can auto-install official ones.
 			if onDisk.bundled {
-				continue
+				if !devAutoInstallBundled(m) {
+					continue
+				}
 			}
 			rec := &PluginRecord{
 				Manifest:  *m,
@@ -120,6 +122,13 @@ func (r *Registry) Sync(ctx context.Context) error {
 	r.syncPluginDirs(disk)
 
 	return r.loadFromDB(ctx)
+}
+
+func devAutoInstallBundled(m *Manifest) bool {
+	if os.Getenv("ORBIT_DEV_AUTO_INSTALL") != "1" {
+		return false
+	}
+	return m.Meta.Official
 }
 
 type manifestOnDisk struct {

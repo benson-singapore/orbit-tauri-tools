@@ -90,7 +90,85 @@ make build PLUGIN=juejin,bilibili
 
 插件 id 由 `plugins/*/Makefile` 自动发现；新增插件后无需修改根 `Makefile`。
 
-## 本地调试（不编译 WASM）
+## 开发测试（不必每次安装到系统）
+
+日常开发推荐 **三层测试**，由快到慢，按需选用：
+
+| 层级 | 命令 | 需要 Runtime | 需要安装 | 适用场景 |
+|------|------|:------------:|:--------:|----------|
+| 1 最快 | `make try-juejin` | 否 | 否 | 改抓取/解析逻辑，秒级反馈 |
+| 2 WASM | `make try-wasm-juejin` | 否 | 否 | 验证 wasmimport / WASI 行为 |
+| 3 联调 | `make dev-juejin` | 是 | 否* | 走完整 Runtime + SQLite 缓存 |
+
+\* `make dev-go` 已开启 `ORBIT_DEV_AUTO_INSTALL=1`，官方插件从 `orbit-plugins/dist/` **自动注册**，无需在插件市场点安装。
+
+### 层级 1：Native 快速测试（推荐日常用）
+
+不编译 WASM、不启动 App、不写 SQLite：
+
+```bash
+make try-juejin
+# 或
+./scripts/try.sh juejin native
+```
+
+指定频道 / 路由：
+
+```bash
+CHANNEL=category-frontend ROUTE=/juejin/category/:category PARAMS='{"category":"frontend"}' \
+  make try-juejin
+```
+
+保存文件后反复跑（简易 watch）：
+
+```bash
+./scripts/dev-loop.sh juejin
+```
+
+### 层级 2：WASM 本地测试
+
+验证编译产物与 host 函数（需 [wasmtime](https://wasmtime.dev/)）：
+
+```bash
+brew install wasmtime   # 一次性
+make try-wasm-juejin
+```
+
+### 层级 3：对接 Dev Runtime（完整链路）
+
+**终端 1** — 启动 Runtime（已自动扫描 `orbit-plugins/dist/`，无需 `make sync`）：
+
+```bash
+cd .. && make dev-go
+```
+
+**终端 2** — 改代码后：
+
+```bash
+make dev-juejin    # package + 刷新 feed + 打印前 3 条
+```
+
+开发循环：
+
+1. 编辑 `plugins/juejin/main.go`
+2. `make try-juejin` 确认逻辑
+3. 需要 UI / 缓存时：`make dev-juejin`，在 App 里刷新即可
+
+WASM 文件更新后 **不必重启 Runtime**（每次 refresh 会重新读取 `plugin.wasm`）。若改了 `manifest.json`，执行：
+
+```bash
+curl -X POST http://127.0.0.1:17890/v1/plugins/resync
+```
+
+### 什么时候才需要 `make sync`？
+
+| 场景 | 是否需要 sync |
+|------|----------------|
+| 日常插件逻辑开发 | 否，用 `dist/` + `make dev-go` |
+| 验证 Tauri 打包内置插件 | 是，`make sync-juejin` |
+| 发布 / CI 产物 | 是，`make sync-all` |
+
+## 本地调试（详细命令）
 
 在插件目录内用 JSON stdin/stdout 快速验证逻辑：
 
@@ -113,22 +191,23 @@ echo '{"action":"fetch","data":{"channelId":"trending","route":"/juejin/trending
   | wasmtime dist/juejin/plugin.wasm
 ```
 
-## 与主仓库联调
+## 与主仓库联调（完整 App）
 
-1. 同步插件到主仓库：
+日常开发优先用上文 **层级 1–3**，只有要验证 Tauri 打包时才需要 sync：
+
+1. 同步到主仓库 `plugins/`（可选）：
 
    ```bash
    make sync-juejin
    ```
 
-2. 启动 Runtime（需指向 `plugins/` 目录）：
+2. 启动 Runtime：
 
    ```bash
-   cd ..
-   ORBIT_PLUGINS_DIR=$PWD/plugins make dev-go
+   cd .. && make dev-go
    ```
 
-3. 在应用插件市场安装，或调用 API：
+3. 打开 App（`make dev-tauri`），官方插件已自动注册；或手动：
 
    ```bash
    curl -X POST http://127.0.0.1:17890/v1/plugins/juejin/install

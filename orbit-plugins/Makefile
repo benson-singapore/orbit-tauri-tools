@@ -40,6 +40,10 @@ help:
 	@echo "  make package PLUGIN=juejin     # same as make package-juejin"
 	@echo "  make sync-juejin"
 	@echo "  make test-native-juejin"
+	@echo "  make try-juejin              # same as test-native, via try.sh"
+	@echo "  make try-wasm-juejin         # wasmtime (needs: brew install wasmtime)"
+	@echo "  make dev-juejin              # package + hit dev runtime feed API"
+	@echo "  bash scripts/dev-loop.sh juejin   # watch + re-test on save"
 	@echo ""
 	@echo "  make list                      # print plugin ids"
 
@@ -77,6 +81,15 @@ clean-$(1):
 test-native-$(1):
 	@echo "→ $(1): test-native"
 	@$(MAKE) -C plugins/$(1) test-native
+
+try-$(1):
+	@bash scripts/try.sh $(1) native
+
+try-wasm-$(1):
+	@bash scripts/try.sh $(1) wasm
+
+dev-$(1):
+	@bash scripts/try.sh $(1) runtime
 endef
 
 $(foreach p,$(PLUGINS),$(eval $(call PLUGIN_RULES,$(p))))

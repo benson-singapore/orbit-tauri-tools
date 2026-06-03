@@ -17,4 +17,8 @@ clean:
 	rm -rf $(DIST_DIR)
 
 test-native:
-	echo '{"action":"fetch","data":{"channelId":"trending","route":"/juejin/trending","params":{}}}' | go run .
+	echo '{"action":"fetch","data":{"channelId":"$(CHANNEL)","route":"$(ROUTE)","params":$(PARAMS)}}' | go run .
+
+CHANNEL ?= trending
+ROUTE ?= /juejin/trending
+PARAMS ?= {}
