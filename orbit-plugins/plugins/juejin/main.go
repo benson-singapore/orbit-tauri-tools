@@ -72,6 +72,7 @@ func doFetch(url, title, desc string) (*sdk.FeedResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	items = enrichFeedItems(items)
 
 	return &sdk.FeedResult{Title: title, Description: desc, Items: items}, nil
 }
@@ -116,7 +117,7 @@ func parseJuejinFeed(body []byte) ([]sdk.FeedItem, error) {
 				URL:         "https://juejin.cn/post/" + id,
 				Summary:     row.Content.Brief,
 				Author:      row.Author.Name,
-				PublishedAt: time.Unix(ts, 0).Format(time.RFC3339),
+				PublishedAt: publishedAtRFC3339(ts),
 			})
 		}
 		if len(items) > 0 {
@@ -136,6 +137,9 @@ func parseJuejinFeed(body []byte) ([]sdk.FeedItem, error) {
 		AuthorUserInfo struct {
 			Username string `json:"user_name"`
 		} `json:"author_user_info"`
+		Tags []struct {
+			TagName string `json:"tag_name"`
+		} `json:"tags"`
 	}
 	if err := json.Unmarshal(envelope.Data, &legacy); err != nil {
 		return nil, fmt.Errorf("parse feed items: %w", err)
@@ -146,18 +150,32 @@ func parseJuejinFeed(body []byte) ([]sdk.FeedItem, error) {
 		if ts == 0 {
 			ts = host.NowUnix()
 		}
-		items = append(items, sdk.FeedItem{
+		item := sdk.FeedItem{
 			ID:          d.ArticleID,
 			Title:       d.ArticleInfo.Title,
 			URL:         "https://juejin.cn/post/" + d.ArticleID,
 			Summary:     d.ArticleInfo.BriefContent,
 			Cover:       d.ArticleInfo.CoverImage,
+			Image:       d.ArticleInfo.CoverImage,
 			Author:      d.AuthorUserInfo.Username,
-			PublishedAt: time.Unix(ts, 0).Format(time.RFC3339),
-		})
+			PublishedAt: publishedAtRFC3339(ts),
+		}
+		for _, t := range d.Tags {
+			if name := strings.TrimSpace(t.TagName); name != "" {
+				item.Tags = append(item.Tags, name)
+			}
+		}
+		items = append(items, item)
 	}
 	if len(items) == 0 {
 		return nil, fmt.Errorf("no items in feed")
 	}
 	return items, nil
+}
+
+func publishedAtRFC3339(ts int64) string {
+	if ts <= 0 {
+		ts = host.NowUnix()
+	}
+	return time.Unix(ts, 0).Format(time.RFC3339)
 }

@@ -25,7 +25,7 @@
     ],
     "wasm": {
       "entry": "plugin.wasm",
-      "timeoutMs": 30000,
+      "timeoutMs": 120000,
       "maxMemoryMB": 64
     }
   },
