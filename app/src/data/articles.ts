@@ -40,7 +40,8 @@ export const ARTICLES_DATA: Article[] = [
     reads: '35k 阅览',
     image: 'https://images.unsplash.com/photo-1633356122544-f134324a6cee?auto=format&fit=crop&w=800&q=80',
     tags: ['React 19', 'Actions API', '前端前沿'],
-    isBookmarked: false
+    isBookmarked: false,
+    isRead: false
   },
   {
     id: '2',
@@ -58,7 +59,8 @@ export const ARTICLES_DATA: Article[] = [
     reads: '12k 阅览',
     image: 'https://images.unsplash.com/photo-1511919884226-fd3cad34687c?auto=format&fit=crop&w=800&q=80',
     tags: ['Forza 6', 'Xbox', '光线追踪'],
-    isBookmarked: false
+    isBookmarked: false,
+    isRead: false
   },
   {
     id: '3',
@@ -74,7 +76,8 @@ export const ARTICLES_DATA: Article[] = [
     image: 'https://images.unsplash.com/photo-1622979135225-d2ba269cf1ac?auto=format&fit=crop&w=800&q=80',
     videoUrl: 'https://www.w3schools.com/html/mov_bbb.mp4', // Demo video file
     tags: ['Apple Vision', '空间计算', '硬件测评'],
-    isBookmarked: false
+    isBookmarked: false,
+    isRead: false
   },
   {
     id: '4',
@@ -91,7 +94,8 @@ export const ARTICLES_DATA: Article[] = [
     audioUrl: 'https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3', // Demo audio
     audioDuration: '54:21',
     tags: ['AGI', 'Sam Altman', '深度访谈'],
-    isBookmarked: false
+    isBookmarked: false,
+    isRead: false
   },
   {
     id: '5',
@@ -111,7 +115,8 @@ export const ARTICLES_DATA: Article[] = [
       'https://images.unsplash.com/photo-1449034446853-66c86144b0ad?auto=format&fit=crop&w=800&q=80'
     ],
     tags: ['视觉探索', '建筑设计', '艺术美感'],
-    isBookmarked: false
+    isBookmarked: false,
+    isRead: false
   },
   {
     id: '6',
@@ -131,6 +136,7 @@ export const ARTICLES_DATA: Article[] = [
     reads: '9.5k 阅览',
     image: 'https://images.unsplash.com/photo-1558494949-ef010cbdcc31?auto=format&fit=crop&w=800&q=80',
     tags: ['数据库底层', 'LSM-Tree', '存储引擎'],
-    isBookmarked: false
+    isBookmarked: false,
+    isRead: false
   }
 ];

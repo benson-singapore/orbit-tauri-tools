@@ -7,9 +7,25 @@ import type {
 } from "@/types";
 import { getRuntimeBaseUrl, waitForRuntimeReady } from "@/lib/runtime";
 
+const inFlightGetRequests = new Map<string, Promise<Response>>();
+
 async function apiBase(): Promise<string> {
   const base = await waitForRuntimeReady();
   return base.replace(/\/$/, "");
+}
+
+function fetchGetWithDedupe(url: string): Promise<Response> {
+  const existing = inFlightGetRequests.get(url);
+  if (existing) {
+    return existing.then((res) => res.clone());
+  }
+  const req = fetch(url)
+    .then((res) => res.clone())
+    .finally(() => {
+      inFlightGetRequests.delete(url);
+    });
+  inFlightGetRequests.set(url, req);
+  return req.then((res) => res.clone());
 }
 
 async function parseError(res: Response): Promise<string> {
@@ -21,9 +37,18 @@ async function parseError(res: Response): Promise<string> {
   }
 }
 
+function normalizeArticle(article: Article): Article {
+  return {
+    ...article,
+    tags: Array.isArray(article.tags) ? article.tags : [],
+    isBookmarked: Boolean(article.isBookmarked),
+    isRead: Boolean(article.isRead),
+  };
+}
+
 export async function fetchPlugins(): Promise<Plugin[]> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins`);
+  const res = await fetchGetWithDedupe(`${base}/v1/plugins`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -34,7 +59,9 @@ export async function fetchPlugins(): Promise<Plugin[]> {
 export async function fetchFeed(options?: {
   pluginId?: string;
   refresh?: boolean;
-}): Promise<Article[]> {
+  limit?: number;
+  offset?: number;
+}): Promise<FeedResponse> {
   const base = await apiBase();
   const params = new URLSearchParams();
   if (options?.pluginId && options.pluginId !== "all") {
@@ -43,13 +70,22 @@ export async function fetchFeed(options?: {
   if (options?.refresh) {
     params.set("refresh", "1");
   }
+  if (options?.limit && options.limit > 0) {
+    params.set("limit", String(options.limit));
+  }
+  if (typeof options?.offset === "number" && options.offset >= 0) {
+    params.set("offset", String(options.offset));
+  }
   const qs = params.toString();
-  const res = await fetch(`${base}/v1/feed${qs ? `?${qs}` : ""}`);
+  const res = await fetchGetWithDedupe(`${base}/v1/feed${qs ? `?${qs}` : ""}`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
   const data = (await res.json()) as FeedResponse;
-  return data.items ?? [];
+  return {
+    ...data,
+    items: (data.items ?? []).map(normalizeArticle),
+  };
 }
 
 export async function installRSSPlugin(

@@ -41,6 +41,7 @@ type ManifestMeta struct {
 	Icon           string `json:"icon"`
 	Color          string `json:"color"`
 	LogoText       string `json:"logoText"`
+	LogoImageURL   string `json:"logoImageUrl"`
 	MarketCategory string `json:"marketCategory"`
 	CategoryTag    string `json:"categoryTag"`
 	Official       bool   `json:"official"`
@@ -57,6 +58,7 @@ type InstallRSSOptions struct {
 	Description     string
 	Color           string
 	LogoText        string
+	LogoImageURL    string
 	MarketCategory  string
 	CategoryTag     string
 }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { PLUGIN_MARKET_GROUPS, PLUGINS_STORE } from "@/data/plugins";
+import { waitForRuntimeReady } from "@/lib/runtime";
 import type {
   InstallRSSPluginRequest,
   Plugin,
@@ -22,6 +23,7 @@ interface PluginManagerModalProps {
   onToggleActive: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onImport: (payload: InstallRSSPluginRequest) => void;
+  onRefresh: () => void;
   embedded?: boolean;
 }
 
@@ -168,8 +170,22 @@ function PluginSection(props: PluginSectionProps) {
                 </button>
               </div>
               <div className="flex flex-1 min-w-0 items-start gap-3">
-                <div className={`w-10 h-10 shrink-0 rounded-xl flex items-center justify-center font-bold text-white text-xs ${plugin.color}`}>
-                  {plugin.logoText}
+                <div
+                  className={`w-10 h-10 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-white text-xs ${
+                    plugin.color?.trim?.().startsWith("bg-") ? plugin.color : ""
+                  }`}
+                  style={plugin.color?.trim?.().startsWith("bg-") ? undefined : { backgroundColor: plugin.color || "#7c3aed" }}
+                >
+                  {plugin.logoImageUrl ? (
+                    <img
+                      src={plugin.logoImageUrl}
+                      alt=""
+                      className="w-full h-full object-cover"
+                      referrerPolicy="no-referrer"
+                    />
+                  ) : (
+                    <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
+                  )}
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -232,14 +248,24 @@ function PluginSection(props: PluginSectionProps) {
 }
 
 function ImportPluginModal({
+  theme,
   onClose,
   onImport,
   initialPlugin,
 }: {
+  theme: ThemeMode;
   onClose: () => void;
   onImport: (payload: InstallRSSPluginRequest) => void;
   initialPlugin?: Plugin | null;
 }) {
+  const isDark = theme === "dark";
+  const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+  const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
+  const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
+  const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
+  const inputBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+  const inputText = isDark ? "text-neutral-100 placeholder:text-neutral-500" : "text-neutral-900 placeholder:text-neutral-400";
+
   const [pluginId, setPluginId] = useState("");
   const [pluginName, setPluginName] = useState("");
   const [marketCategory, setMarketCategory] = useState<Exclude<PluginMarketCategory, "all">>("blog");
@@ -250,11 +276,17 @@ function ImportPluginModal({
   const [userAgent, setUserAgent] = useState("");
   const [categoryTag, setCategoryTag] = useState("NEWS");
   const [description, setDescription] = useState("");
-  const [color, setColor] = useState("bg-violet-500");
-  const [logoText, setLogoText] = useState("R");
+  const [color, setColor] = useState("#7c3aed");
+  const [logoImageUrl, setLogoImageUrl] = useState("");
+  const [logoSourceUrl, setLogoSourceUrl] = useState("");
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
   const [jsonText, setJsonText] = useState("");
   const [isEditingJson, setIsEditingJson] = useState(false);
+  const [viewMode, setViewMode] = useState<"form" | "json">("form");
   const [error, setError] = useState<string | null>(null);
+
+  const logoLetter = pluginName.trim().slice(0, 1) || "R";
+  const isTailwindBg = color.trim().startsWith("bg-");
 
   useEffect(() => {
     if (!initialPlugin) return;
@@ -270,7 +302,19 @@ function ImportPluginModal({
       setIcon(initialPlugin.icon);
     }
     setColor(initialPlugin.color);
-    setLogoText((initialPlugin.logoText ?? "R").slice(0, 1) || "R");
+    setLogoImageUrl(initialPlugin.logoImageUrl ?? "");
+    setLogoSourceUrl(initialPlugin.logoImageUrl ?? "");
+    setFeedUrl(initialPlugin.feedUrl ?? "");
+    setRefreshInterval(String(initialPlugin.refreshInterval ?? 3600));
+    setUserAgent(initialPlugin.userAgent ?? "");
+    if (
+      initialPlugin.mediaType === "article" ||
+      initialPlugin.mediaType === "manga" ||
+      initialPlugin.mediaType === "video" ||
+      initialPlugin.mediaType === "audio"
+    ) {
+      setMediaType(initialPlugin.mediaType);
+    }
     setCategoryTag(initialPlugin.categoryTag ?? "NEWS");
     setDescription(initialPlugin.desc);
   }, [initialPlugin]);
@@ -288,7 +332,8 @@ function ImportPluginModal({
       userAgent: userAgent.trim() || undefined,
       marketCategory,
       color,
-      logoText: logoText.trim().slice(0, 1) || "R",
+      logoText: logoLetter,
+      logoImageUrl: logoImageUrl.trim() || undefined,
       categoryTag: categoryTag.trim() || "NEWS",
       description: description.trim() || (pluginName.trim() ? `${pluginName.trim()} RSS 插件` : "自定义 RSS 插件"),
     };
@@ -310,8 +355,9 @@ function ImportPluginModal({
       },
       meta: {
         description: payload.description || "",
-        color: payload.color || "bg-violet-500",
-        logoText: payload.logoText || "R",
+        color: payload.color || "#7c3aed",
+        logoText: payload.logoText || logoLetter,
+        logoImageUrl: payload.logoImageUrl || "",
         marketCategory: payload.marketCategory || "blog",
         categoryTag: payload.categoryTag || "NEWS",
         official: false,
@@ -361,11 +407,11 @@ function ImportPluginModal({
         : typeof meta.color === "string"
           ? meta.color
           : color;
-      const nextLogoText = typeof raw.logoText === "string"
-        ? raw.logoText
-        : typeof meta.logoText === "string"
-          ? meta.logoText
-          : logoText;
+      const nextLogoImageUrl = typeof raw.logoImageUrl === "string"
+        ? raw.logoImageUrl
+        : typeof meta.logoImageUrl === "string"
+          ? meta.logoImageUrl
+          : logoImageUrl;
       const nextCategoryTag = typeof raw.categoryTag === "string"
         ? raw.categoryTag
         : typeof meta.categoryTag === "string"
@@ -394,13 +440,16 @@ function ImportPluginModal({
         setIcon(nextIcon);
       }
       setColor(nextColor);
-      setLogoText(nextLogoText.slice(0, 1) || "R");
+      setLogoImageUrl(nextLogoImageUrl.trim());
+      if (!logoSourceUrl.trim()) {
+        setLogoSourceUrl(nextLogoImageUrl.trim());
+      }
       setCategoryTag(nextCategoryTag);
       setDescription(nextDescription);
       setError(null);
       return true;
     } catch {
-      setError("RSS JSON 格式错误，请检查右侧配置");
+      setError("RSS JSON 格式错误，请检查配置内容");
       return false;
     }
   };
@@ -408,13 +457,72 @@ function ImportPluginModal({
   useEffect(() => {
     if (isEditingJson) return;
     setJsonText(buildManifestJsonText());
-  }, [isEditingJson, pluginId, pluginName, marketCategory, icon, mediaType, feedUrl, refreshInterval, userAgent, categoryTag, description, color, logoText]);
+  }, [isEditingJson, pluginId, pluginName, marketCategory, icon, mediaType, feedUrl, refreshInterval, userAgent, categoryTag, description, color, logoLetter, logoImageUrl]);
+
+  const uploadLogoFile = async (file: File) => {
+    setIsUploadingLogo(true);
+    setError(null);
+    try {
+      const base = (await waitForRuntimeReady()).replace(/\/$/, "");
+      const fd = new FormData();
+      fd.append("file", file, file.name);
+      const res = await fetch(`${base}/v1/images/upload`, { method: "POST", body: fd });
+      const body = (await res.json()) as any;
+      if (!res.ok || !body?.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+      const url = String(body?.data?.image?.url ?? "").trim();
+      if (!url) throw new Error("upload succeeded but url missing");
+      setLogoImageUrl(url);
+      setLogoSourceUrl(url);
+    } catch (e) {
+      setError(`图标上传失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  const uploadLogoByURL = async () => {
+    const sourceURL = logoSourceUrl.trim();
+    if (!sourceURL) {
+      setError("请先填写图片 URL");
+      return;
+    }
+    setIsUploadingLogo(true);
+    setError(null);
+    try {
+      const base = (await waitForRuntimeReady()).replace(/\/$/, "");
+      const res = await fetch(`${base}/v1/images/upload-url`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: sourceURL }),
+      });
+      const body = (await res.json()) as any;
+      if (!res.ok || !body?.ok) {
+        throw new Error(body?.error || `HTTP ${res.status}`);
+      }
+      const url = String(body?.data?.image?.url ?? "").trim();
+      if (!url) throw new Error("upload succeeded but url missing");
+      setLogoImageUrl(url);
+      setLogoSourceUrl(url);
+    } catch (e) {
+      setError(`图标上传失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
 
   const handleSubmit = () => {
-    const trimmedFeedUrl = feedUrl.trim();
-    const trimmedId = pluginId.trim();
-    const trimmedRefresh = refreshInterval.trim();
-    const parsedRefresh = Number.parseInt(trimmedRefresh, 10);
+    if (viewMode === "json") {
+      if (!applyJsonToForm(jsonText)) {
+        return;
+      }
+    }
+
+    const payload: InstallRSSPluginRequest = buildPayloadFromForm();
+    const trimmedFeedUrl = payload.feedUrl.trim();
+    const trimmedId = (payload.id ?? "").trim();
+    const parsedRefresh = payload.refreshInterval ?? 3600;
 
     if (trimmedId && !/^[a-z0-9_-]{2,64}$/.test(trimmedId)) {
       setError("插件 ID 需为 2-64 位小写字母/数字/-/_");
@@ -424,15 +532,10 @@ function ImportPluginModal({
       setError("请填写 RSS FEED 地址");
       return;
     }
-    if (trimmedRefresh && (!Number.isFinite(parsedRefresh) || parsedRefresh <= 0)) {
+    if (!Number.isFinite(parsedRefresh) || parsedRefresh <= 0) {
       setError("刷新间隔需为正整数（秒）");
       return;
     }
-    if (!applyJsonToForm(jsonText)) {
-      return;
-    }
-
-    const payload: InstallRSSPluginRequest = buildPayloadFromForm();
     payload.source = "rss";
     payload.feedUrl = trimmedFeedUrl;
     onImport(payload);
@@ -441,148 +544,396 @@ function ImportPluginModal({
 
   return (
     <div className="fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
-      <div className="w-full max-w-6xl h-[680px] rounded-[28px] overflow-hidden bg-white border border-neutral-200 shadow-2xl" onClick={e => e.stopPropagation()}>
-        <div className="h-[72px] border-b border-neutral-200 px-6 flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-neutral-900">
-              {initialPlugin ? "编辑 RSS 插件" : "导入 RSS 插件"}
+      <div
+        className={`w-full max-w-6xl h-[690px] rounded-[28px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className={`h-[72px] px-6 flex items-center justify-between border-b ${subtleBorder}`}>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold truncate">
+              {initialPlugin ? "编辑 RSS 插件" : "导入插件"}
             </h3>
-            <p className="text-[11px] text-neutral-500 mt-1">按 manifest 结构配置 source/config/meta（Phase 1 仅支持 RSS）</p>
+            <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+              参考 manifest 结构配置 source/config/meta（当前仅支持 RSS）
+            </p>
           </div>
+
           <div className="flex items-center gap-2">
-            <button type="button" onClick={onClose} className="px-3 py-1.5 text-xs rounded-lg border border-neutral-200 text-neutral-600 hover:bg-neutral-50">
+            <div className={`flex items-center p-1 rounded-2xl ${mutedBg} border ${subtleBorder}`}>
+              <button
+                type="button"
+                onClick={() => setViewMode("form")}
+                className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  viewMode === "form"
+                    ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
+                    : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
+                }`}
+              >
+                可视化配置
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("json")}
+                className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  viewMode === "json"
+                    ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
+                    : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
+                }`}
+              >
+                JSON 编辑
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className={`px-3 py-1.5 text-xs rounded-lg border ${subtleBorder} ${
+                isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+              }`}
+            >
               关闭
             </button>
           </div>
         </div>
-        <div className="h-[calc(100%-140px)] grid grid-cols-1 lg:grid-cols-[1fr_1fr]">
-          <div className="h-full overflow-y-auto p-6 space-y-5">
-            <h4 className="text-sm font-semibold text-neutral-700">订阅源类型</h4>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="px-3 py-3 rounded-xl border border-[#5856D6]/30 bg-[#5856D6]/5">
-                <p className="text-xs font-semibold text-[#5856D6]">RSS（已启用）</p>
-                <p className="text-[11px] text-neutral-600 mt-1">source 固定为 `rss`，使用 `config.feedUrl` 拉取数据。</p>
-              </div>
-              <div className="px-3 py-3 rounded-xl border border-neutral-200 bg-neutral-50">
-                <p className="text-xs font-semibold text-neutral-500">Script / Scraper（待支持）</p>
-                <p className="text-[11px] text-neutral-400 mt-1">文档约束：Phase 1 暂不开放。</p>
-              </div>
-            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">插件 ID（可选）</label>
-                <input value={pluginId} onChange={e => setPluginId(e.target.value)} placeholder="verge-rss" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">插件名称</label>
-                <input value={pluginName} onChange={e => setPluginName(e.target.value)} placeholder="e.g. 极客周报 RSS" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
-              </div>
-            </div>
+        <div className="h-[calc(100%-140px)] flex min-h-0">
+          {/* Left: Source selector (Phase 1 RSS only) */}
+          <aside className={`w-72 shrink-0 border-r ${subtleBorder} p-5 flex flex-col ${isDark ? "bg-neutral-950/10" : "bg-white"}`}>
+            <nav className="space-y-2">
+              <button
+                type="button"
+                className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-colors ${
+                  isDark
+                    ? "border-[#5856D6]/25 bg-[#5856D6]/10 text-neutral-100"
+                    : "border-[#5856D6]/25 bg-[#5856D6]/5 text-neutral-900"
+                }`}
+              >
+                <div className={`p-2.5 rounded-xl ${isDark ? "bg-[#5856D6]/25" : "bg-[#5856D6]"} `}>
+                  <Icon name="rss" className={`w-4 h-4 ${isDark ? "text-[#B7B5FF]" : "text-white"}`} />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <p className="text-sm font-semibold truncate">RSS 订阅源</p>
+                  <p className={`text-[11px] mt-0.5 truncate ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>通过 `config.feedUrl` 拉取</p>
+                </div>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${isDark ? "bg-neutral-900/60 text-neutral-300" : "bg-white text-neutral-600 border border-neutral-200"}`}>
+                  已启用
+                </span>
+              </button>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">媒体类型 mediaType</label>
-                <select value={mediaType} onChange={e => setMediaType(e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200">
-                  <option value="article">article</option>
-                  <option value="manga">manga</option>
-                  <option value="video">video</option>
-                  <option value="audio">audio</option>
-                </select>
+              <div className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border ${subtleBorder} ${isDark ? "bg-neutral-900/40 text-neutral-500" : "bg-neutral-50 text-neutral-400"}`}>
+                <div className={`p-2.5 rounded-xl ${isDark ? "bg-neutral-800" : "bg-neutral-200"}`}>
+                  <Icon name="terminal" className="w-4 h-4" />
+                </div>
+                <div className="flex-1 min-w-0 text-left">
+                  <p className="text-sm font-semibold truncate">Script / Scraper</p>
+                  <p className="text-[11px] mt-0.5 truncate">Phase 1 暂不开放</p>
+                </div>
+                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${isDark ? "bg-neutral-800 text-neutral-400" : "bg-white text-neutral-500 border border-neutral-200"}`}>
+                  SOON
+                </span>
               </div>
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">排版分类大区</label>
-                <select value={marketCategory} onChange={e => setMarketCategory(e.target.value as Exclude<PluginMarketCategory, "all">)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200">
-                  <option value="blog">个人博客</option>
-                  <option value="news">新闻资讯</option>
-                  <option value="manga">二次元漫画</option>
-                  <option value="video">流媒体/视频</option>
-                  <option value="audio">有声播客</option>
-                </select>
-              </div>
-            </div>
+            </nav>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">刷新间隔 refreshInterval（秒）</label>
-                <input value={refreshInterval} onChange={e => setRefreshInterval(e.target.value)} placeholder="3600" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
+            <div className={`mt-auto p-4 rounded-2xl border ${subtleBorder} ${mutedBg}`}>
+              <div className="flex items-center gap-2 text-[#5856D6]">
+                <Icon name="info" className="w-4 h-4" />
+                <p className="text-xs font-semibold">提示</p>
               </div>
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">User-Agent（可选）</label>
-                <input value={userAgent} onChange={e => setUserAgent(e.target.value)} placeholder="OrbitReader/0.1" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
-              </div>
+              <p className={`text-[11px] mt-2 leading-relaxed ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                右侧 JSON 会随表单实时生成；你也可以切到 JSON 模式直接编辑，失焦后会自动回填并格式化。
+              </p>
             </div>
+          </aside>
 
-            <div className="grid grid-cols-4 gap-3">
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">图标类型</label>
-                <select value={icon} onChange={e => setIcon(e.target.value as PluginContentType)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200">
-                  <option value="text">文章适应排版</option>
-                  <option value="image">漫画/图片</option>
-                  <option value="video">视频</option>
-                  <option value="audio">音频</option>
-                </select>
-              </div>
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">颜色</label>
-                <input value={color} onChange={e => setColor(e.target.value)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">Logo 字母</label>
-                <input value={logoText} onChange={e => setLogoText(e.target.value.slice(0, 1))} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[11px] text-neutral-500">分类标签</label>
-                <input value={categoryTag} onChange={e => setCategoryTag(e.target.value)} className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
-              </div>
-            </div>
+          {/* Right: Main workspace */}
+          <main className="flex-1 min-w-0 min-h-0 flex flex-col">
+            {viewMode === "form" ? (
+              <div className="flex-1 min-h-0 overflow-y-auto p-7">
+                <div className="max-w-3xl">
+                  <div className="flex items-center gap-2 mb-5">
+                    <div className="w-1 h-4 rounded-full bg-[#5856D6]" />
+                    <h4 className="text-sm font-bold">核心配置</h4>
+                  </div>
 
-            <div className="space-y-1">
-              <label className="text-[11px] text-neutral-500">标准 RSS FEED 地址</label>
-              <input value={feedUrl} onChange={e => setFeedUrl(e.target.value)} placeholder="https://example.com/feed.xml" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
-            </div>
+                  <div className="space-y-5">
+                    <div className="space-y-1.5">
+                      <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>RSS 地址 (Feed URL)</label>
+                      <input
+                        value={feedUrl}
+                        onChange={e => setFeedUrl(e.target.value)}
+                        placeholder="https://example.com/feed.xml"
+                        className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                      />
+                    </div>
 
-            <div className="space-y-1">
-              <label className="text-[11px] text-neutral-500">描述 description（可选）</label>
-              <input value={description} onChange={e => setDescription(e.target.value)} placeholder="科技评论与前沿快讯" className="w-full px-3 py-2 text-xs rounded-xl border border-neutral-200" />
-            </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>插件名称</label>
+                        <input
+                          value={pluginName}
+                          onChange={e => setPluginName(e.target.value)}
+                          placeholder="e.g. 极客周报 RSS"
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>插件 ID（可选）</label>
+                        <input
+                          value={pluginId}
+                          onChange={e => setPluginId(e.target.value)}
+                          placeholder="verge-rss"
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        />
+                      </div>
+                    </div>
 
-            <div className="space-y-1">
-              <label className="text-[11px] text-neutral-500">说明</label>
-              <p className="text-[11px] text-neutral-400">右侧 JSON 会随左侧字段实时更新；你直接改 JSON 后，左侧也会自动回填。</p>
-            </div>
-            {error && <p className="text-xs text-rose-500">{error}</p>}
-          </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>媒体类型 mediaType</label>
+                        <select
+                          value={mediaType}
+                          onChange={e => setMediaType(e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>)}
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        >
+                          <option value="article">article</option>
+                          <option value="manga">manga</option>
+                          <option value="video">video</option>
+                          <option value="audio">audio</option>
+                        </select>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>排版分类大区</label>
+                        <select
+                          value={marketCategory}
+                          onChange={e => setMarketCategory(e.target.value as Exclude<PluginMarketCategory, "all">)}
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        >
+                          <option value="blog">个人博客</option>
+                          <option value="news">新闻资讯</option>
+                          <option value="manga">二次元漫画</option>
+                          <option value="video">流媒体/视频</option>
+                          <option value="audio">有声播客</option>
+                        </select>
+                      </div>
+                    </div>
 
-          <div className="h-full bg-[#0b0f12] text-[#58f5d3] border-l border-neutral-800 flex flex-col">
-            <div className="px-5 py-3 border-b border-neutral-800 text-xs text-neutral-400 flex items-center justify-between">
-              <span>manifest.json</span>
-              <span className="text-emerald-400">● RSS 配置</span>
-            </div>
-            <textarea
-              value={jsonText}
-              onFocus={() => setIsEditingJson(true)}
-              onChange={(e) => {
-                const next = e.target.value;
-                setJsonText(next);
-                applyJsonToForm(next);
-              }}
-              onBlur={() => {
-                setIsEditingJson(false);
-                if (applyJsonToForm(jsonText)) {
-                  setJsonText(buildManifestJsonText());
-                }
-              }}
-              spellCheck={false}
-              className="flex-1 w-full bg-[#0b0f12] p-5 text-[12px] leading-6 font-mono text-[#58f5d3] resize-none outline-none"
-            />
-            <div className="px-5 py-3 border-t border-neutral-800 text-[11px] text-neutral-500">
-              可直接编辑 JSON（支持 config/meta 结构）
-            </div>
-          </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>刷新间隔 refreshInterval（秒）</label>
+                        <input
+                          value={refreshInterval}
+                          onChange={e => setRefreshInterval(e.target.value)}
+                          placeholder="3600"
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>User-Agent（可选）</label>
+                        <input
+                          value={userAgent}
+                          onChange={e => setUserAgent(e.target.value)}
+                          placeholder="OrbitReader/0.1"
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className={`mt-8 p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
+                      <div className="flex items-center gap-2 mb-5">
+                        <div className="w-1 h-4 rounded-full bg-orange-500" />
+                        <h4 className="text-sm font-bold">品牌与展示效果预览</h4>
+                      </div>
+
+                      <div className="flex flex-col md:flex-row md:items-start gap-6">
+                        <div className="shrink-0 w-full md:w-[240px]">
+                          <div className="flex items-center gap-4">
+                            <div
+                              className={`w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center text-white text-2xl font-black shadow-lg ${isTailwindBg ? color : ""}`}
+                              style={!isTailwindBg ? { backgroundColor: color } : undefined}
+                            >
+                              {logoImageUrl.trim() ? (
+                                <img
+                                  src={logoImageUrl.trim()}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <span>{logoLetter}</span>
+                              )}
+                            </div>
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold">Icon Preview</p>
+                              <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>用于插件卡片与标签</p>
+                            </div>
+                          </div>
+
+                          <div className="mt-4 space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>颜色</label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="color"
+                                value={/^#([0-9a-fA-F]{6})$/.test(color.trim()) ? color.trim() : "#7c3aed"}
+                                onChange={e => setColor(e.target.value)}
+                                className="h-10 w-12 rounded-xl border border-neutral-200 p-1 bg-white"
+                              />
+                              <input
+                                value={color}
+                                onChange={e => setColor(e.target.value)}
+                                placeholder="#7c3aed"
+                                className={`flex-1 px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          <div className="space-y-1.5 lg:col-span-2">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>图标类型</label>
+                            <select
+                              value={icon}
+                              onChange={e => setIcon(e.target.value as PluginContentType)}
+                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            >
+                              <option value="text">文章适应排版</option>
+                              <option value="image">漫画/图片</option>
+                              <option value="video">视频</option>
+                              <option value="audio">音频</option>
+                            </select>
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>分类标签</label>
+                            <input
+                              value={categoryTag}
+                              onChange={e => setCategoryTag(e.target.value)}
+                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            />
+                          </div>
+
+                          <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>图标图片 URL（可选）</label>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <input
+                                value={logoSourceUrl}
+                                onChange={e => setLogoSourceUrl(e.target.value)}
+                                placeholder="https://example.com/icon.png"
+                                className={`flex-1 px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  disabled={isUploadingLogo}
+                                  onClick={() => setLogoImageUrl(logoSourceUrl.trim())}
+                                  className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} ${
+                                    isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-white"
+                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
+                                  title="直接使用该 URL 作为图标"
+                                >
+                                  直接使用
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={isUploadingLogo}
+                                  onClick={uploadLogoByURL}
+                                  className={`px-4 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY} disabled:opacity-60 disabled:cursor-not-allowed`}
+                                  title="通过 runtime 上传到 imgbb 并返回新 URL"
+                                >
+                                  {isUploadingLogo ? "上传中..." : "URL 上传"}
+                                </button>
+                                <label
+                                  className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} cursor-pointer ${
+                                    isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-white"
+                                  }`}
+                                  title="选择本地图片上传"
+                                >
+                                  图片上传
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0];
+                                      if (!file) return;
+                                      void uploadLogoFile(file);
+                                      e.currentTarget.value = "";
+                                    }}
+                                  />
+                                </label>
+                              </div>
+                            </div>
+                            {logoImageUrl.trim() && (
+                              <p className={`text-[11px] mt-1 truncate ${isDark ? "text-neutral-500" : "text-neutral-500"}`}>
+                                当前图标：{logoImageUrl.trim()}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-5 space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>描述 description（可选）</label>
+                        <input
+                          value={description}
+                          onChange={e => setDescription(e.target.value)}
+                          placeholder="科技评论与前沿快讯"
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        />
+                      </div>
+                    </div>
+
+                    {error && <p className="text-xs text-rose-500 mt-2">{error}</p>}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-hidden p-7">
+                <div className={`h-full rounded-[22px] overflow-hidden border ${subtleBorder} ${isDark ? "bg-[#0b0f12]" : "bg-neutral-950"}`}>
+                  <div className={`px-5 py-3 border-b ${isDark ? "border-neutral-800" : "border-neutral-900"} text-xs flex items-center justify-between`}>
+                    <span className={isDark ? "text-neutral-400" : "text-neutral-400"}>manifest.json</span>
+                    <span className="text-emerald-400">● RSS 配置</span>
+                  </div>
+                  <textarea
+                    value={jsonText}
+                    onFocus={() => setIsEditingJson(true)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setJsonText(next);
+                      applyJsonToForm(next);
+                    }}
+                    onBlur={() => {
+                      setIsEditingJson(false);
+                      if (applyJsonToForm(jsonText)) {
+                        setJsonText(buildManifestJsonText());
+                      }
+                    }}
+                    spellCheck={false}
+                    className="w-full h-[calc(100%-48px)] bg-transparent p-5 text-[12px] leading-6 font-mono text-[#58f5d3] resize-none outline-none"
+                  />
+                </div>
+                {error && <p className="text-xs text-rose-500 mt-3">{error}</p>}
+              </div>
+            )}
+          </main>
         </div>
-        <div className="h-[68px] border-t border-neutral-200 px-8 flex items-center justify-end">
-          <button type="button" onClick={handleSubmit} className="px-5 py-2 rounded-xl text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4]">保存并同步</button>
+
+        <div className={`h-[68px] px-8 flex items-center justify-between border-t ${subtleBorder}`}>
+          <div className={`text-[11px] ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+            {viewMode === "json" ? "提示：JSON 模式会绕过部分表单校验，保存前请确认语法正确。" : "保存后会立即同步到运行时插件目录。"}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} ${
+                isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+              }`}
+            >
+              取消
+            </button>
+            <button type="button" onClick={handleSubmit} className={`px-5 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY}`}>
+              保存并同步
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -598,6 +949,7 @@ export function PluginManagerModal({
   onToggleActive,
   onMove,
   onImport,
+  onRefresh,
   embedded = false,
 }: PluginManagerModalProps) {
   const [activeTab, setActiveTab] = useState<Extract<PluginManagerTab, "market" | "manage">>("market");
@@ -700,7 +1052,23 @@ export function PluginManagerModal({
                         <article key={plugin.id} className={`relative flex flex-col p-4 rounded-2xl border ${subtleBorder} bg-white dark:bg-neutral-900 shadow-sm hover:shadow-md hover:border-[#5856D6]/30 transition-colors`}>
                           {plugin.official && <span className="absolute top-3 right-3 text-[10px] font-medium px-2 py-0.5 rounded-md bg-amber-50 text-amber-600">官方推荐</span>}
                           <div className="flex items-start gap-3 mb-3 pr-16">
-                            <div className={`w-11 h-11 shrink-0 rounded-xl flex items-center justify-center font-bold text-white text-sm ${plugin.color}`}>{plugin.logoText}</div>
+                            <div
+                              className={`w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-white text-sm ${
+                                plugin.color?.trim?.().startsWith("bg-") ? plugin.color : ""
+                              }`}
+                              style={plugin.color?.trim?.().startsWith("bg-") ? undefined : { backgroundColor: plugin.color || "#7c3aed" }}
+                            >
+                              {plugin.logoImageUrl ? (
+                                <img
+                                  src={plugin.logoImageUrl}
+                                  alt=""
+                                  className="w-full h-full object-cover"
+                                  referrerPolicy="no-referrer"
+                                />
+                              ) : (
+                                <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
+                              )}
+                            </div>
                             <div className="min-w-0 pt-0.5">
                               <h3 className="text-xs font-bold leading-snug">{plugin.name}</h3>
                               <p className="text-[11px] text-neutral-500 mt-1 line-clamp-2 leading-relaxed">{plugin.desc}</p>
@@ -730,6 +1098,15 @@ export function PluginManagerModal({
                 </div>
                 <div className="flex items-center gap-2">
                   <span className={`text-xs font-medium px-3 py-1.5 rounded-lg shrink-0 ${mutedBg} text-neutral-500`}>运行中：{runningCount} 个</span>
+                  <button
+                    type="button"
+                    onClick={onRefresh}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold border ${subtleBorder} ${
+                      isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+                    }`}
+                  >
+                    刷新
+                  </button>
                   <button type="button" onClick={() => setShowImportModal(true)} className="px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4]">
                     导入插件
                   </button>
@@ -778,6 +1155,7 @@ export function PluginManagerModal({
 
       {showImportModal && (
         <ImportPluginModal
+          theme={theme}
           onClose={() => {
             setShowImportModal(false);
             setEditingPlugin(null);

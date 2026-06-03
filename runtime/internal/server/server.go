@@ -15,10 +15,16 @@ type Server struct {
 	store    *store.Store
 	registry *plugin.Registry
 	mux      *http.ServeMux
+	imgbb    *imgbbService
 }
 
 func New(st *store.Store, reg *plugin.Registry) *Server {
-	s := &Server{store: st, registry: reg, mux: http.NewServeMux()}
+	s := &Server{
+		store:    st,
+		registry: reg,
+		mux:      http.NewServeMux(),
+		imgbb:    newImgbbService(),
+	}
 	s.routes()
 	return s
 }
@@ -43,6 +49,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/plugins/", s.handlePluginByID)
 	s.mux.HandleFunc("/v1/feed", s.handleFeed)
 	s.mux.HandleFunc("/v1/feed/refresh", s.handleRefreshFeed)
+	s.mux.HandleFunc("/v1/images/upload", s.handleUploadImage)
+	s.mux.HandleFunc("/v1/images/upload-url", s.handleUploadImageByURL)
+	s.mux.HandleFunc("/openapi.json", s.handleOpenAPI)
+	s.mux.HandleFunc("/swagger", s.handleSwaggerRedirect)
+	s.mux.HandleFunc("/swagger/", s.handleSwaggerUI)
 }
 
 func (s *Server) handlePlugins(w http.ResponseWriter, r *http.Request) {

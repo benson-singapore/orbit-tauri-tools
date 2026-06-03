@@ -24,6 +24,7 @@ export interface Article {
   sourceUrl?: string;
   tags: string[];
   isBookmarked: boolean;
+  isRead: boolean;
 }
 
 export type PluginContentType = "text" | "video" | "audio" | "image";
@@ -42,9 +43,14 @@ export interface Plugin {
   id: string;
   name: string;
   icon: PluginContentType | string;
+  mediaType?: "article" | "manga" | "video" | "audio";
   active?: boolean;
   desc: string;
+  feedUrl?: string;
+  refreshInterval?: number;
+  userAgent?: string;
   logoText?: string;
+  logoImageUrl?: string;
   color: string;
   marketCategory?: Exclude<PluginMarketCategory, "all">;
   categoryTag?: string;
@@ -57,6 +63,9 @@ export interface FeedResponse {
   ok: boolean;
   items: Article[];
   count: number;
+  total?: number;
+  limit?: number;
+  offset?: number;
 }
 
 export interface PluginsResponse {
@@ -75,6 +84,7 @@ export interface InstallRSSPluginRequest {
   description?: string;
   color?: string;
   logoText?: string;
+  logoImageUrl?: string;
   marketCategory?: Exclude<PluginMarketCategory, "all">;
   categoryTag?: string;
 }

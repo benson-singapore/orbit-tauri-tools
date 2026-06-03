@@ -112,6 +112,7 @@ func NewRSSManifest(id, name, feedURL string) *Manifest {
 			Icon:           "text",
 			Color:          "bg-orange-500",
 			LogoText:       "R",
+			LogoImageURL:   "",
 			MarketCategory: "blog",
 			CategoryTag:    "RSS",
 			Official:       false,

@@ -16,18 +16,23 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	recs := s.registry.List()
 	// Frontend expects Plugin-like objects.
 	type pluginView struct {
-		ID             string `json:"id"`
-		Name           string `json:"name"`
-		Icon           string `json:"icon"`
-		Active         bool   `json:"active"`
-		Desc           string `json:"desc"`
-		LogoText       string `json:"logoText,omitempty"`
-		Color          string `json:"color"`
-		MarketCategory string `json:"marketCategory,omitempty"`
-		CategoryTag    string `json:"categoryTag,omitempty"`
-		Official       bool   `json:"official,omitempty"`
-		Source         string `json:"source"`
-		LastError      string `json:"lastError,omitempty"`
+		ID              string `json:"id"`
+		Name            string `json:"name"`
+		Icon            string `json:"icon"`
+		MediaType       string `json:"mediaType,omitempty"`
+		Active          bool   `json:"active"`
+		Desc            string `json:"desc"`
+		FeedURL         string `json:"feedUrl,omitempty"`
+		RefreshInterval int    `json:"refreshInterval,omitempty"`
+		UserAgent       string `json:"userAgent,omitempty"`
+		LogoText        string `json:"logoText,omitempty"`
+		LogoImageURL    string `json:"logoImageUrl,omitempty"`
+		Color           string `json:"color"`
+		MarketCategory  string `json:"marketCategory,omitempty"`
+		CategoryTag     string `json:"categoryTag,omitempty"`
+		Official        bool   `json:"official,omitempty"`
+		Source          string `json:"source"`
+		LastError       string `json:"lastError,omitempty"`
 	}
 	out := make([]pluginView, 0, len(recs))
 	for _, rec := range recs {
@@ -36,18 +41,23 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			icon = plugin.ContentTypeForMedia(rec.MediaType)
 		}
 		out = append(out, pluginView{
-			ID:             rec.ID,
-			Name:           rec.Name,
-			Icon:           icon,
-			Active:         rec.Active,
-			Desc:           rec.Meta.Description,
-			LogoText:       rec.Meta.LogoText,
-			Color:          rec.Meta.Color,
-			MarketCategory: rec.Meta.MarketCategory,
-			CategoryTag:    rec.Meta.CategoryTag,
-			Official:       rec.Meta.Official,
-			Source:         rec.Source,
-			LastError:      rec.LastError,
+			ID:              rec.ID,
+			Name:            rec.Name,
+			Icon:            icon,
+			MediaType:       rec.MediaType,
+			Active:          rec.Active,
+			Desc:            rec.Meta.Description,
+			FeedURL:         rec.Config.FeedURL,
+			RefreshInterval: rec.Config.RefreshInterval,
+			UserAgent:       rec.Config.UserAgent,
+			LogoText:        rec.Meta.LogoText,
+			LogoImageURL:    rec.Meta.LogoImageURL,
+			Color:           rec.Meta.Color,
+			MarketCategory:  rec.Meta.MarketCategory,
+			CategoryTag:     rec.Meta.CategoryTag,
+			Official:        rec.Meta.Official,
+			Source:          rec.Source,
+			LastError:       rec.LastError,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"plugins": out})
@@ -71,6 +81,7 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		Description     string `json:"description"`
 		Color           string `json:"color"`
 		LogoText        string `json:"logoText"`
+		LogoImageURL    string `json:"logoImageUrl"`
 		MarketCategory  string `json:"marketCategory"`
 		CategoryTag     string `json:"categoryTag"`
 	}
@@ -97,6 +108,7 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 		Description:     body.Description,
 		Color:           body.Color,
 		LogoText:        body.LogoText,
+		LogoImageURL:    body.LogoImageURL,
 		MarketCategory:  body.MarketCategory,
 		CategoryTag:     body.CategoryTag,
 	})

@@ -31,7 +31,11 @@ export default function App() {
     plugins: myPlugins,
     articles: feedArticles,
     loading: feedLoading,
+    loadingMore: feedLoadingMore,
+    hasMore: feedHasMore,
     error: feedError,
+    reload,
+    loadMore,
     installCustomRSS,
     togglePluginActive: orbitTogglePluginActive,
     removePlugin: orbitRemovePlugin,
@@ -39,19 +43,25 @@ export default function App() {
   } = useOrbitData();
 
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
+  const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const articles = useMemo(
     () =>
       feedArticles.map(item => ({
         ...item,
         isBookmarked: bookmarkedIds.has(item.id),
+        isRead: readIds.has(item.id),
       })),
-    [feedArticles, bookmarkedIds],
+    [feedArticles, bookmarkedIds, readIds],
   );
 
   const [selectedItem, setSelectedItem] = useState<Article | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("today");
 
   const [showPluginStore, setShowPluginStore] = useState(false);
+  const unreadCount = useMemo(
+    () => articles.filter(item => !item.isRead).length,
+    [articles],
+  );
 
   useEffect(() => {
     if (articles.length === 0) {
@@ -103,7 +113,7 @@ export default function App() {
         return (
           item.title.toLowerCase().includes(query) ||
           item.summary.toLowerCase().includes(query) ||
-          item.tags.some(t => t.toLowerCase().includes(query))
+          (item.tags ?? []).some(t => t.toLowerCase().includes(query))
         );
       }
 
@@ -111,11 +121,22 @@ export default function App() {
     });
   }, [articles, activePlugin, activeTab, activeCategory, searchQuery]);
 
+  const pluginById = useMemo(
+    () => new Map(myPlugins.map(plugin => [plugin.id, plugin] as const)),
+    [myPlugins],
+  );
+
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
   const handleItemSelect = (item: Article) => {
+    setReadIds(prev => {
+      if (prev.has(item.id)) return prev;
+      const next = new Set(prev);
+      next.add(item.id);
+      return next;
+    });
     setSelectedItem(item);
     setAiSummary(null); // Clear previous AI summarizes
     setIsPlayingAudio(false);
@@ -304,7 +325,7 @@ export default function App() {
                   <div className="flex-1 flex items-center justify-between">
                     <span>Today 全部</span>
                     <span className="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400 px-1.5 py-0.5 rounded-md font-semibold">
-                      {articles.length}
+                      未读 {unreadCount}
                     </span>
                   </div>
                 )}
@@ -395,8 +416,22 @@ export default function App() {
                   }`}
                   title={plugin.name}
                 >
-                  <div className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-bold text-white ${plugin.color}`}>
-                    {plugin.logoText || '★'}
+                  <div
+                    className={`w-5 h-5 rounded-md overflow-hidden flex items-center justify-center text-[10px] font-bold text-white ${
+                      plugin.color?.trim?.().startsWith("bg-") ? plugin.color : ""
+                    }`}
+                    style={plugin.color?.trim?.().startsWith("bg-") ? undefined : { backgroundColor: plugin.color || "#7c3aed" }}
+                  >
+                    {plugin.logoImageUrl ? (
+                      <img
+                        src={plugin.logoImageUrl}
+                        alt=""
+                        className="w-full h-full object-cover"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
+                    )}
                   </div>
                   {!isSidebarCollapsed && (
                     <div className="flex-1 flex items-center justify-between">
@@ -438,6 +473,9 @@ export default function App() {
               onToggleActive={handleTogglePluginActive}
               onMove={handleMovePlugin}
               onImport={handleImportCustomPlugin}
+              onRefresh={() => {
+                void reload().catch(console.error);
+              }}
               embedded
             />
           ) : (
@@ -525,94 +563,132 @@ export default function App() {
                   <p className="text-sm text-neutral-400">未找到符合条件的资讯资源</p>
                 </div>
               ) : (
-                filteredArticles.map((item) => {
-                  const isSelected = selectedItem && selectedItem.id === item.id;
-                  return (
-                    <div 
-                      key={item.id}
-                      onClick={() => handleItemSelect(item)}
-                      className={`group relative p-3.5 rounded-2xl cursor-pointer transition-all duration-300 border ${
-                        isSelected 
-                          ? 'bg-[#e9eef6] dark:bg-neutral-800 border-indigo-200 dark:border-neutral-700 shadow-sm' 
-                          : 'bg-white hover:bg-[#f0f4f9] dark:bg-neutral-900 dark:hover:bg-neutral-800/40 border-neutral-100 dark:border-neutral-800/50'
-                      }`}
-                    >
-                      <div className="flex gap-3 justify-between">
-                        <div className="flex-1 space-y-1">
-                          {/* Platform Tag & Resource Type Icon */}
-                          <div className="flex items-center gap-1.5">
-                            <span className={`w-2.5 h-2.5 rounded-full flex items-center justify-center text-[5px] text-white ${
-                              item.pluginId === 'verge' ? 'bg-cyan-500' :
-                              item.pluginId === 'polygon' ? 'bg-rose-500' :
-                              item.pluginId === 'youtube' ? 'bg-red-500' :
-                              item.pluginId === 'spotify' ? 'bg-emerald-500' : 'bg-neutral-800'
-                            }`}>
-                              {item.pluginName.charAt(0)}
-                            </span>
-                            <span className="text-[11px] font-medium text-neutral-400 dark:text-neutral-500">{item.pluginName}</span>
-                            <span className="text-[10px] text-neutral-300">•</span>
-                            <div className="text-neutral-400 group-hover:text-indigo-600 transition-colors">
-                              <Icon name={item.type} className="w-3 h-3" />
-                            </div>
-                          </div>
-                          
-                          <h4 className={`text-sm font-semibold leading-snug line-clamp-2 transition-colors ${
-                            isSelected ? 'text-indigo-700 dark:text-indigo-400' : 'text-neutral-800 dark:text-neutral-200'
-                          }`}>
-                            {item.title}
-                          </h4>
-                        </div>
-
-                        {item.image && (
-                          <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-neutral-100 relative">
-                            <img 
-                              src={item.image} 
-                              alt="Thumbnail" 
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                              onError={(e) => {
-                                e.currentTarget.src =
-                                  "https://placehold.co/100x100/eaeaea/999999?text=Cover";
-                              }}
-                            />
-                            {/* Overlay media badge */}
-                            {item.type !== 'text' && (
-                              <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                                <Icon name={item.type} className="w-4 h-4 text-white drop-shadow" />
+                <>
+                  {filteredArticles.map((item) => {
+                    const isSelected = selectedItem && selectedItem.id === item.id;
+                    const isUnread = !item.isRead;
+                    const pluginMeta = pluginById.get(item.pluginId);
+                    const badgeText = (
+                      pluginMeta?.logoText?.trim()
+                      || pluginMeta?.name?.trim().slice(0, 1)
+                      || item.pluginName.trim().slice(0, 1)
+                      || "★"
+                    );
+                    return (
+                      <div 
+                        key={item.id}
+                        onClick={() => handleItemSelect(item)}
+                        className={`group relative p-3.5 rounded-2xl cursor-pointer transition-all duration-300 border ${
+                          isSelected 
+                            ? 'bg-[#e9eef6] dark:bg-neutral-800 border-indigo-200 dark:border-neutral-700 shadow-sm' 
+                            : 'bg-white hover:bg-[#f0f4f9] dark:bg-neutral-900 dark:hover:bg-neutral-800/40 border-neutral-100 dark:border-neutral-800/50'
+                        }`}
+                      >
+                        <div className="flex gap-3 justify-between">
+                          <div className="flex-1 space-y-1">
+                            {/* Platform Tag & Resource Type Icon */}
+                            <div className="flex items-center gap-1.5">
+                              <div
+                                className={`w-2.5 h-2.5 rounded-full overflow-hidden flex items-center justify-center text-[5px] text-white ${
+                                  pluginMeta?.color?.trim?.().startsWith("bg-") ? pluginMeta.color : "bg-neutral-800"
+                                }`}
+                                style={pluginMeta?.color?.trim?.().startsWith("bg-") ? undefined : { backgroundColor: pluginMeta?.color || "#262626" }}
+                              >
+                                {pluginMeta?.logoImageUrl ? (
+                                  <img
+                                    src={pluginMeta.logoImageUrl}
+                                    alt=""
+                                    className="w-full h-full object-cover"
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  <span>{badgeText}</span>
+                                )}
                               </div>
-                            )}
+                              <span className="text-[11px] font-medium text-neutral-400 dark:text-neutral-500">{item.pluginName}</span>
+                              <span className="text-[10px] text-neutral-300">•</span>
+                              <div className="text-neutral-400 group-hover:text-indigo-600 transition-colors">
+                                <Icon name={item.type} className="w-3 h-3" />
+                              </div>
+                            </div>
+                            
+                            <h4 className={`text-sm font-semibold leading-snug line-clamp-2 transition-colors ${
+                              isSelected ? 'text-indigo-700 dark:text-indigo-400' : 'text-neutral-800 dark:text-neutral-200'
+                            }`}>
+                              {item.title}
+                            </h4>
                           </div>
-                        )}
-                      </div>
 
-                      {/* Summary Excerpt */}
-                      <p className="text-xs text-neutral-400 dark:text-neutral-500 line-clamp-2 mt-2">
-                        {item.summary}
-                      </p>
+                          {isUnread && (
+                            <span
+                              className="mt-1 w-1.5 h-1.5 rounded-full bg-emerald-500 flex-shrink-0"
+                              title="未读"
+                            />
+                          )}
 
-                      {/* Footer specs inside card */}
-                      <div className="flex items-center justify-between mt-3 pt-2 border-t border-dashed border-neutral-100 dark:border-neutral-800/80 text-[10px] text-neutral-400">
-                        <div className="flex items-center gap-2">
-                          <span>{item.author}</span>
-                          <span>•</span>
-                          <span>{item.time}</span>
+                          {item.image && (
+                            <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-neutral-100 relative">
+                              <img 
+                                src={item.image} 
+                                alt="Thumbnail" 
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                onError={(e) => {
+                                  e.currentTarget.src =
+                                    "https://placehold.co/100x100/eaeaea/999999?text=Cover";
+                                }}
+                              />
+                              {/* Overlay media badge */}
+                              {item.type !== 'text' && (
+                                <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                                  <Icon name={item.type} className="w-4 h-4 text-white drop-shadow" />
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span>{item.reads}</span>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleBookmarkToggle(item.id);
-                            }}
-                            className="p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full"
-                          >
-                            <Icon name="bookmark" className="w-3 h-3 text-neutral-400" active={item.isBookmarked} />
-                          </button>
-                        </div>
-                      </div>
 
-                    </div>
-                  );
-                })
+                        {/* Summary Excerpt */}
+                        <p className="text-xs text-neutral-400 dark:text-neutral-500 line-clamp-2 mt-2">
+                          {item.summary}
+                        </p>
+
+                        {/* Footer specs inside card */}
+                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-dashed border-neutral-100 dark:border-neutral-800/80 text-[10px] text-neutral-400">
+                          <div className="flex items-center gap-2">
+                            <span>{item.author}</span>
+                            <span>•</span>
+                            <span>{item.time}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span>{item.reads}</span>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleBookmarkToggle(item.id);
+                              }}
+                              className="p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full"
+                            >
+                              <Icon name="bookmark" className="w-3 h-3 text-neutral-400" active={item.isBookmarked} />
+                            </button>
+                          </div>
+                        </div>
+
+                      </div>
+                    );
+                  })}
+                  {feedHasMore && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void loadMore().catch(console.error);
+                      }}
+                      disabled={feedLoadingMore}
+                      className="w-full rounded-xl border border-neutral-200 dark:border-neutral-700 py-2.5 text-sm font-medium text-neutral-600 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {feedLoadingMore ? "加载中…" : "加载更多（20条）"}
+                    </button>
+                  )}
+                </>
               )}
             </div>
           </section>
@@ -855,7 +931,7 @@ export default function App() {
 
                 {/* Tags Section */}
                 <div className="flex flex-wrap gap-2">
-                  {selectedItem.tags.map((tag, idx) => (
+                  {(selectedItem.tags ?? []).map((tag, idx) => (
                     <span 
                       key={idx} 
                       className="px-3 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 cursor-pointer transition-colors"

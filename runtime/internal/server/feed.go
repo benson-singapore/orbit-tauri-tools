@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,8 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	pluginID := strings.TrimSpace(q.Get("plugin_id"))
 	refresh := q.Get("refresh") == "1" || strings.EqualFold(q.Get("refresh"), "true")
+	limit := parsePositiveInt(q.Get("limit"), 20)
+	offset := parseNonNegativeInt(q.Get("offset"), 0)
 
 	items, err := s.registry.Feed(r.Context(), pluginID, refresh)
 	if err != nil {
@@ -39,8 +42,22 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		IsBookmarked bool     `json:"isBookmarked"`
 	}
 
-	out := make([]feedArticle, 0, len(items))
-	for _, item := range items {
+	total := len(items)
+	if offset > total {
+		offset = total
+	}
+	end := total
+	if limit > 0 && offset+limit < end {
+		end = offset + limit
+	}
+	page := items[offset:end]
+
+	out := make([]feedArticle, 0, len(page))
+	for _, item := range page {
+		tags := item.Tags
+		if tags == nil {
+			tags = []string{}
+		}
 		out = append(out, feedArticle{
 			ID:           item.ID,
 			Title:        item.Title,
@@ -55,15 +72,18 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			Reads:        item.Reads,
 			Image:        item.Image,
 			SourceURL:    item.SourceURL,
-			Tags:         item.Tags,
+			Tags:         tags,
 			IsBookmarked: false,
 		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":    true,
-		"items": out,
-		"count": len(out),
+		"ok":     true,
+		"items":  out,
+		"count":  len(out),
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
 	})
 }
 
@@ -88,4 +108,20 @@ func (s *Server) handleRefreshFeed(w http.ResponseWriter, r *http.Request) {
 		"ok":    true,
 		"count": len(items),
 	})
+}
+
+func parsePositiveInt(raw string, fallback int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
+}
+
+func parseNonNegativeInt(raw string, fallback int) int {
+	n, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || n < 0 {
+		return fallback
+	}
+	return n
 }

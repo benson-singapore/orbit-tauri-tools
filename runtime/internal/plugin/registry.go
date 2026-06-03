@@ -255,6 +255,9 @@ func (r *Registry) InstallRSS(ctx context.Context, opts InstallRSSOptions) (*Plu
 		runes := []rune(v)
 		m.Meta.LogoText = string(runes[0])
 	}
+	if v := strings.TrimSpace(opts.LogoImageURL); v != "" {
+		m.Meta.LogoImageURL = v
+	}
 	if v := strings.TrimSpace(opts.MarketCategory); v != "" {
 		m.Meta.MarketCategory = v
 	}
