@@ -24,18 +24,27 @@ export GOARCH
 cd "$RUNTIME_DIR"
 go build -ldflags="-s -w" -o "$OUT_DIR/orbit-runtime-$SUFFIX" ./cmd/orbit-runtime
 
-ORBIT_PLUGINS_DIST="$ROOT/orbit-plugins/dist"
-if [ -d "$ORBIT_PLUGINS_DIST" ]; then
+ORBIT_PLUGINS_DIR="$ROOT/orbit-plugins"
+ORBIT_PLUGINS_DIST="$ORBIT_PLUGINS_DIR/dist"
+if [ -f "$ORBIT_PLUGINS_DIR/Makefile" ]; then
   echo "building official wasm plugins..."
-  (cd "$ROOT/orbit-plugins" && make sync)
+  (cd "$ORBIT_PLUGINS_DIR" && make package-all)
 fi
 
-PLUGINS_SRC="$ROOT/plugins"
 PLUGINS_DST="$OUT_DIR/plugins"
-if [ -d "$PLUGINS_SRC" ]; then
+if [ -d "$ORBIT_PLUGINS_DIST" ] && [ -n "$(ls -A "$ORBIT_PLUGINS_DIST" 2>/dev/null)" ]; then
   rm -rf "$PLUGINS_DST"
-  cp -R "$PLUGINS_SRC" "$PLUGINS_DST"
-  echo "bundled plugins -> $PLUGINS_DST"
+  mkdir -p "$PLUGINS_DST"
+  for plugin_dir in "$ORBIT_PLUGINS_DIST"/*/; do
+    [ -d "$plugin_dir" ] || continue
+    id="$(basename "$plugin_dir")"
+    cp -R "$plugin_dir" "$PLUGINS_DST/$id"
+  done
+  echo "bundled plugins from dist -> $PLUGINS_DST"
+elif [ -d "$ROOT/plugins" ]; then
+  rm -rf "$PLUGINS_DST"
+  cp -R "$ROOT/plugins" "$PLUGINS_DST"
+  echo "bundled plugins from repo plugins/ -> $PLUGINS_DST"
 fi
 
 echo "built $OUT_DIR/orbit-runtime-$SUFFIX"

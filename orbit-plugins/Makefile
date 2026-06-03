@@ -1,15 +1,20 @@
 # Official WASM plugins — build all or one plugin at a time.
 #
+# Build outputs go to dist/<id>/ only (make dev-go scans dist/ for dev).
+# Copying into the app repo plugins/ is opt-in — use make sync-<id> when
+# you need bundled plugins under ../plugins/ (e.g. Tauri release).
+#
 # Examples:
-#   make build-juejin              # build one plugin
+#   make build-juejin              # WASM -> dist/juejin/ only
 #   make package PLUGIN=juejin     # same as make package-juejin
-#   make sync-juejin               # package + copy to ../plugins/juejin
+#   make sync-juejin               # package + copy dist -> ../plugins/juejin
 #   make test-native-juejin
 #   make build-all                 # every plugin under plugins/
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 DIST := $(ROOT)dist
-MAIN_PLUGINS := $(ROOT)../plugins
+# Target for explicit sync-* only; never written by build/package.
+INSTALL_PLUGINS_DIR ?= $(ROOT)../plugins
 comma := ,
 
 # Auto-discover plugin ids (plugins/<id>/Makefile)
@@ -32,13 +37,16 @@ help:
 	@echo ""
 	@echo "Discovered plugins: $(PLUGINS)"
 	@echo ""
+	@echo "Build outputs: $(DIST)/<id>/  (dev runtime scans dist/ via make dev-go)"
+	@echo ""
 	@echo "All plugins:"
-	@echo "  make build-all | package-all | sync-all | clean-all | test-native-all"
+	@echo "  make build-all | package-all | clean-all | test-native-all"
+	@echo "  make sync-all                  # opt-in: copy dist -> $(INSTALL_PLUGINS_DIR)"
 	@echo ""
 	@echo "Single plugin:"
-	@echo "  make build-juejin"
+	@echo "  make build-juejin              # -> dist/juejin/ only"
 	@echo "  make package PLUGIN=juejin     # same as make package-juejin"
-	@echo "  make sync-juejin"
+	@echo "  make sync-juejin               # opt-in: also copy to $(INSTALL_PLUGINS_DIR)"
 	@echo "  make test-native-juejin"
 	@echo "  make try-juejin              # same as test-native, via try.sh"
 	@echo "  make try-wasm-juejin         # wasmtime (needs: brew install wasmtime)"
@@ -68,11 +76,11 @@ package-$(1): build-$(1)
 	@$(MAKE) -C plugins/$(1) package
 
 sync-$(1): package-$(1)
-	@echo "→ syncing $(1) to $(MAIN_PLUGINS)/$(1)"
-	@rm -rf "$(MAIN_PLUGINS)/$(1)"
-	@mkdir -p "$(MAIN_PLUGINS)/$(1)"
-	@cp -R "$(DIST)/$(1)/"* "$(MAIN_PLUGINS)/$(1)/"
-	@echo "synced $(MAIN_PLUGINS)/$(1)"
+	@echo "→ installing $(1) to $(INSTALL_PLUGINS_DIR)/$(1)"
+	@rm -rf "$(INSTALL_PLUGINS_DIR)/$(1)"
+	@mkdir -p "$(INSTALL_PLUGINS_DIR)/$(1)"
+	@cp -R "$(DIST)/$(1)/"* "$(INSTALL_PLUGINS_DIR)/$(1)/"
+	@echo "installed $(INSTALL_PLUGINS_DIR)/$(1)"
 
 clean-$(1):
 	@echo "→ $(1): clean"
@@ -117,7 +125,7 @@ package-all: $(PACKAGE_TARGETS)
 
 sync: $(call assert_plugins) sync-all
 sync-all: $(SYNC_TARGETS)
-	@echo "synced -> $(MAIN_PLUGINS)"
+	@echo "installed -> $(INSTALL_PLUGINS_DIR)"
 
 clean: $(call assert_plugins) clean-all
 clean-all: $(CLEAN_TARGETS)
