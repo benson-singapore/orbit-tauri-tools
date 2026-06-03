@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,17 +17,23 @@ import (
 )
 
 type Registry struct {
-	store   *store.Store
-	fetcher *RSSFetcher
-	mu      sync.RWMutex
-	records map[string]*PluginRecord
+	store     *store.Store
+	fetcher   *RSSFetcher
+	wasmExec  *WASMExecutor
+	mu        sync.RWMutex
+	records   map[string]*PluginRecord
+	pluginDir        map[string]string // plugin id -> absolute package dir
+	bundledOnDisk    map[string]manifestOnDisk
 }
 
 func NewRegistry(st *store.Store) *Registry {
 	return &Registry{
-		store:   st,
-		fetcher: NewRSSFetcher(),
-		records: make(map[string]*PluginRecord),
+		store:     st,
+		fetcher:   NewRSSFetcher(),
+		wasmExec:  NewWASMExecutor(),
+		records:   make(map[string]*PluginRecord),
+		pluginDir:     make(map[string]string),
+		bundledOnDisk: make(map[string]manifestOnDisk),
 	}
 }
 
@@ -110,16 +117,7 @@ func (r *Registry) Sync(ctx context.Context) error {
 		}
 	}
 
-	r.mu.Lock()
-	for id := range r.records {
-		if _, ok := disk[id]; !ok {
-			if row, ok := dbByID[id]; ok && row.Source == SourceRSS {
-				// Keep user plugins that only exist in DB (legacy) — skip delete.
-				continue
-			}
-		}
-	}
-	r.mu.Unlock()
+	r.syncPluginDirs(disk)
 
 	return r.loadFromDB(ctx)
 }
@@ -150,19 +148,29 @@ func (r *Registry) scanDir(root string, out map[string]manifestOnDisk) error {
 		if _, err := os.Stat(manifestPath); err != nil {
 			continue
 		}
-		m, err := LoadManifest(manifestPath)
+		data, err := os.ReadFile(manifestPath)
 		if err != nil {
+			return fmt.Errorf("read %s: %w", manifestPath, err)
+		}
+		var m Manifest
+		if err := json.Unmarshal(data, &m); err != nil {
+			return fmt.Errorf("parse %s: %w", manifestPath, err)
+		}
+		MigrateManifestConfig(&m.Config)
+		pluginDir := filepath.Join(root, ent.Name())
+		if err := ValidateManifestOnDisk(pluginDir, &m); err != nil {
 			return fmt.Errorf("%s: %w", manifestPath, err)
 		}
 		bundled := filepath.Clean(root) != userDir
+		dir := pluginDir
 		if prev, ok := out[m.ID]; ok {
 			// Later dirs override earlier; user dir wins over bundled.
 			if prev.bundled && !bundled {
-				out[m.ID] = manifestOnDisk{manifest: m, bundled: bundled, dir: filepath.Join(root, ent.Name())}
+				out[m.ID] = manifestOnDisk{manifest: &m, bundled: bundled, dir: dir}
 			}
 			continue
 		}
-		out[m.ID] = manifestOnDisk{manifest: m, bundled: bundled, dir: filepath.Join(root, ent.Name())}
+		out[m.ID] = manifestOnDisk{manifest: &m, bundled: bundled, dir: dir}
 	}
 	return nil
 }
@@ -183,6 +191,106 @@ func (r *Registry) loadFromDB(ctx context.Context) error {
 		r.records[row.ID] = rec
 	}
 	return nil
+}
+
+func (r *Registry) setPluginDir(id, dir string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if dir == "" {
+		delete(r.pluginDir, id)
+		return
+	}
+	r.pluginDir[id] = dir
+}
+
+func (r *Registry) getPluginDir(id string) (string, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	dir, ok := r.pluginDir[id]
+	return dir, ok
+}
+
+func (r *Registry) syncPluginDirs(disk map[string]manifestOnDisk) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.pluginDir = make(map[string]string, len(disk))
+	r.bundledOnDisk = make(map[string]manifestOnDisk)
+	for id, onDisk := range disk {
+		r.pluginDir[id] = onDisk.dir
+		if onDisk.bundled && onDisk.manifest != nil && onDisk.manifest.Meta.Official {
+			r.bundledOnDisk[id] = onDisk
+		}
+	}
+}
+
+// ListMarketPlugins returns official bundled plugins on disk that are not installed yet.
+func (r *Registry) ListMarketPlugins() []*PluginRecord {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*PluginRecord, 0, len(r.bundledOnDisk))
+	for id, onDisk := range r.bundledOnDisk {
+		if _, installed := r.records[id]; installed {
+			continue
+		}
+		m := *onDisk.manifest
+		m.Bundled = true
+		out = append(out, &PluginRecord{
+			Manifest:  m,
+			Active:    false,
+			SortOrder: 0,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// InstallBundled registers a bundled official plugin from disk into SQLite.
+func (r *Registry) InstallBundled(ctx context.Context, id string) (*PluginRecord, error) {
+	r.mu.RLock()
+	onDisk, ok := r.bundledOnDisk[id]
+	if _, exists := r.records[id]; exists {
+		r.mu.RUnlock()
+		return nil, fmt.Errorf("plugin already installed: %s", id)
+	}
+	r.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("bundled plugin not found: %s", id)
+	}
+	now := time.Now().Unix()
+	m := *onDisk.manifest
+	m.Bundled = true
+	rec := &PluginRecord{
+		Manifest:  m,
+		Active:    true,
+		SortOrder: 1000,
+		Installed: now,
+	}
+	if err := r.upsertPlugin(ctx, rec); err != nil {
+		return nil, err
+	}
+	r.setRecord(rec)
+	r.setPluginDir(id, onDisk.dir)
+	return cloneRecord(rec), nil
+}
+
+// PluginAssetPath resolves a relative asset path within a plugin package directory.
+func (r *Registry) PluginAssetPath(pluginID, relPath string) (string, error) {
+	relPath = strings.TrimPrefix(filepath.Clean(relPath), string(filepath.Separator))
+	if relPath == "." || strings.HasPrefix(relPath, "..") {
+		return "", fmt.Errorf("invalid asset path")
+	}
+	dir, ok := r.getPluginDir(pluginID)
+	if !ok {
+		return "", fmt.Errorf("plugin not found: %s", pluginID)
+	}
+	full := filepath.Join(dir, relPath)
+	if !strings.HasPrefix(filepath.Clean(full), filepath.Clean(dir)) {
+		return "", fmt.Errorf("invalid asset path")
+	}
+	if _, err := os.Stat(full); err != nil {
+		return "", err
+	}
+	return full, nil
 }
 
 func rowToRecord(row store.PluginRow) (*PluginRecord, error) {
@@ -372,8 +480,13 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 	if !rec.Active {
 		return nil, fmt.Errorf("plugin is disabled: %s", pluginID)
 	}
-	if rec.Source != SourceRSS {
+	if rec.Source != SourceRSS && rec.Source != SourceWASM {
 		return nil, fmt.Errorf("unsupported plugin source: %s", rec.Source)
+	}
+	if rec.Source == SourceWASM {
+		if rec.Config.ExecutionMode != ExecutionWASM && rec.Config.ExecutionMode != "" {
+			return nil, fmt.Errorf("execution mode %q is not implemented yet", rec.Config.ExecutionMode)
+		}
 	}
 
 	var refreshErr error
@@ -420,7 +533,20 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 }
 
 func (r *Registry) refreshChannel(ctx context.Context, rec *PluginRecord, ch *FeedChannel) ([]FeedItem, error) {
-	items, err := r.fetcher.FetchFeedURL(ctx, &rec.Manifest, ch.FeedURL)
+	var items []FeedItem
+	var err error
+	switch rec.Source {
+	case SourceRSS:
+		items, err = r.fetcher.FetchFeedURL(ctx, &rec.Manifest, ch.FeedURL)
+	case SourceWASM:
+		dir, ok := r.getPluginDir(rec.ID)
+		if !ok {
+			return nil, fmt.Errorf("plugin dir not found for %s", rec.ID)
+		}
+		items, err = r.wasmExec.FetchChannel(ctx, dir, rec, ch)
+	default:
+		return nil, fmt.Errorf("unsupported plugin source: %s", rec.Source)
+	}
 	now := time.Now().Unix()
 	if err != nil {
 		return nil, err

@@ -150,6 +150,31 @@ export async function fetchFeedItem(id: string): Promise<Article> {
   return normalizeArticle(data.item);
 }
 
+export async function fetchMarketPlugins(): Promise<Plugin[]> {
+  const base = await apiBase();
+  const res = await fetchGetWithDedupe(`${base}/v1/plugins/market`);
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const data = (await res.json()) as PluginsResponse;
+  return (data.plugins ?? []).map(plugin => ({
+    ...plugin,
+    channels: Array.isArray(plugin.channels) ? plugin.channels : [],
+  }));
+}
+
+export async function installBundledPlugin(id: string): Promise<Plugin> {
+  const base = await apiBase();
+  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/install`, {
+    method: "POST",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const data = (await res.json()) as { plugin: Plugin };
+  return data.plugin;
+}
+
 export async function installRSSPlugin(
   body: InstallRSSPluginRequest,
 ): Promise<Plugin> {

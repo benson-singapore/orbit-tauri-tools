@@ -63,19 +63,79 @@ func ValidateManifest(m *Manifest) error {
 			return fmt.Errorf("rss plugin must declare capability %q", CapFeed)
 		}
 		MigrateManifestConfig(&m.Config)
-		if err := validateChannels(m.Config.Channels); err != nil {
+		if err := validateRSSChannels(m.Config.Channels); err != nil {
 			return err
 		}
-		if dc := strings.TrimSpace(m.Config.DefaultChannel); dc != "" {
-			if _, ok := findChannel(m.Config.Channels, dc); !ok {
-				return fmt.Errorf("defaultChannel %q not found in channels", dc)
-			}
-			m.Config.DefaultChannel = dc
+		if err := validateDefaultChannel(m); err != nil {
+			return err
+		}
+	case SourceWASM:
+		if !HasCapability(m, CapFeed) {
+			return fmt.Errorf("wasm plugin must declare capability %q", CapFeed)
+		}
+		MigrateManifestConfig(&m.Config)
+		if err := validateWasmChannels(m.Config.Channels); err != nil {
+			return err
+		}
+		if err := validateDefaultChannel(m); err != nil {
+			return err
+		}
+		normalizeWasmConfig(&m.Config)
+		if m.Config.ExecutionMode == "" {
+			m.Config.ExecutionMode = ExecutionWASM
+		}
+		switch m.Config.ExecutionMode {
+		case ExecutionWASM, ExecutionBrowser, ExecutionHybrid:
+		default:
+			return fmt.Errorf("unsupported executionMode %q", m.Config.ExecutionMode)
 		}
 	case SourceScript:
 		return fmt.Errorf("script plugins are not supported yet")
 	default:
 		return fmt.Errorf("unsupported manifest.source %q", m.Source)
+	}
+	return nil
+}
+
+func validateDefaultChannel(m *Manifest) error {
+	if dc := strings.TrimSpace(m.Config.DefaultChannel); dc != "" {
+		if _, ok := findChannel(m.Config.Channels, dc); !ok {
+			return fmt.Errorf("defaultChannel %q not found in channels", dc)
+		}
+		m.Config.DefaultChannel = dc
+	}
+	return nil
+}
+
+func normalizeWasmConfig(cfg *ManifestConfig) {
+	w := cfg.Wasm
+	if strings.TrimSpace(w.Entry) == "" {
+		w.Entry = DefaultWasmConfig().Entry
+	}
+	if w.TimeoutMs <= 0 {
+		w.TimeoutMs = DefaultWasmConfig().TimeoutMs
+	}
+	if w.MaxMemoryMB <= 0 {
+		w.MaxMemoryMB = DefaultWasmConfig().MaxMemoryMB
+	}
+	cfg.Wasm = w
+}
+
+// ValidateManifestOnDisk checks manifest and required wasm binary under pluginDir.
+func ValidateManifestOnDisk(pluginDir string, m *Manifest) error {
+	if err := ValidateManifest(m); err != nil {
+		return err
+	}
+	if m.Source != SourceWASM {
+		return nil
+	}
+	entry := strings.TrimSpace(m.Config.Wasm.Entry)
+	if entry == "" {
+		entry = DefaultWasmConfig().Entry
+	}
+	wasmPath := filepath.Join(pluginDir, entry)
+	if _, err := os.Stat(wasmPath); err != nil {
+		return fmt.Errorf("wasm entry %q not found in plugin dir: %w", entry, err)
 	}
 	return nil
 }

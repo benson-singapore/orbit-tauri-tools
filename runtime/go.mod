@@ -1,6 +1,6 @@
 module github.com/orbit-tauri-tools/runtime
 
-go 1.22
+go 1.22.0
 
 require modernc.org/sqlite v1.34.5
 
@@ -17,6 +17,7 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	github.com/tetratelabs/wazero v1.9.0 // indirect
 	golang.org/x/net v0.4.0 // indirect
 	golang.org/x/sys v0.22.0 // indirect
 	golang.org/x/text v0.5.0 // indirect

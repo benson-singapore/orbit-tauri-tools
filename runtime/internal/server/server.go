@@ -45,8 +45,9 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) routes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/v1/status", s.handleStatus)
-	s.mux.HandleFunc("/v1/plugins", s.handlePlugins)
+	s.mux.HandleFunc("/v1/plugins/market", s.handlePluginsMarket)
 	s.mux.HandleFunc("/v1/plugins/", s.handlePluginByID)
+	s.mux.HandleFunc("/v1/plugins", s.handlePlugins)
 	s.mux.HandleFunc("/v1/feed", s.handleFeed)
 	s.mux.HandleFunc("/v1/feed/unread", s.handleFeedUnread)
 	s.mux.HandleFunc("/v1/feed/item", s.handleFeedItem)

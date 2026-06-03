@@ -56,6 +56,7 @@ export const INITIAL_PLUGINS: Plugin[] = [
   },
 ];
 
+/** @deprecated Official market listings come from GET /v1/plugins/market (bundled WASM/RSS on disk). */
 export const PLUGINS_STORE: Plugin[] = [
   {
     id: "wired",

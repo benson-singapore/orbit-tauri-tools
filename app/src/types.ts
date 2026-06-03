@@ -9,6 +9,8 @@ export interface PluginChannel {
   id: string;
   label: string;
   feedUrl?: string;
+  route?: string;
+  params?: Record<string, string>;
   itemLimit?: number;
 }
 

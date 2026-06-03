@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
-import { PLUGIN_MARKET_GROUPS, PLUGINS_STORE } from "@/data/plugins";
+import { PLUGIN_MARKET_GROUPS } from "@/data/plugins";
+import { fetchMarketPlugins } from "@/lib/feed";
 import { slugifyChannelId } from "@/lib/channelId";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
@@ -1652,13 +1653,40 @@ export function PluginManagerModal({
   const installedPlugins = myPlugins.filter(p => p.id !== "all");
   const runningCount = installedPlugins.filter(p => p.active !== false).length;
 
-  const availableStorePlugins = useMemo(
-    () => PLUGINS_STORE.filter(p => !myPlugins.some(mp => mp.id === p.id)),
-    [myPlugins],
-  );
+  const [marketPlugins, setMarketPlugins] = useState<Plugin[]>([]);
+  const [marketLoading, setMarketLoading] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== "market") {
+      return;
+    }
+    let cancelled = false;
+    setMarketLoading(true);
+    void fetchMarketPlugins()
+      .then(plugins => {
+        if (!cancelled) {
+          setMarketPlugins(plugins);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          console.error("load market plugins failed", err);
+          setMarketPlugins([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setMarketLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, myPlugins]);
+
   const filteredMarketPlugins = useMemo(
-    () => filterMarketPlugins(availableStorePlugins, marketCategory, marketSearch),
-    [availableStorePlugins, marketCategory, marketSearch],
+    () => filterMarketPlugins(marketPlugins, marketCategory, marketSearch),
+    [marketPlugins, marketCategory, marketSearch],
   );
 
   const isDark = theme === "dark";
@@ -1737,7 +1765,9 @@ export function PluginManagerModal({
                   </div>
                 </div>
                 <div className={`flex-1 overflow-y-auto px-6 py-5 ${isDark ? "bg-neutral-950/30" : "bg-neutral-100/80"}`}>
-                  {filteredMarketPlugins.length === 0 ? (
+                  {marketLoading ? (
+                    <p className="text-sm text-neutral-400 text-center py-16">加载官方插件…</p>
+                  ) : filteredMarketPlugins.length === 0 ? (
                     <p className="text-sm text-neutral-400 text-center py-16">暂无匹配插件</p>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">

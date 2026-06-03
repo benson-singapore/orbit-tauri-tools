@@ -3,6 +3,7 @@ import { INITIAL_PLUGINS } from "@/data/plugins";
 import {
   fetchFeed,
   fetchPlugins,
+  installBundledPlugin,
   installRSSPlugin,
   markFeedItemRead,
   setPluginActive,
@@ -28,6 +29,7 @@ interface UseOrbitDataResult {
   loadMore: () => Promise<void>;
   markArticleRead: (id: string) => Promise<void>;
   installCustomRSS: (payload: InstallRSSPluginRequest) => Promise<Plugin>;
+  installOfficialPlugin: (id: string) => Promise<Plugin>;
   togglePluginActive: (id: string) => Promise<void>;
   removePlugin: (id: string) => Promise<void>;
   movePlugin: (id: string, direction: "up" | "down") => void;
@@ -232,6 +234,16 @@ export function useOrbitData(
     [loadPlugins, loadFeedPage],
   );
 
+  const installOfficialPlugin = useCallback(
+    async (id: string) => {
+      const plugin = await installBundledPlugin(id);
+      await loadPlugins();
+      await loadFeedPage({ force: true, offset: 0, append: false });
+      return plugin;
+    },
+    [loadPlugins, loadFeedPage],
+  );
+
   const togglePluginActive = useCallback(
     async (id: string) => {
       const target = plugins.find(p => p.id === id);
@@ -329,6 +341,7 @@ export function useOrbitData(
     loadMore,
     markArticleRead,
     installCustomRSS,
+    installOfficialPlugin,
     togglePluginActive,
     removePlugin,
     movePlugin,

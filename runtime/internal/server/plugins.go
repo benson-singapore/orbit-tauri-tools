@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"strings"
 
 	"github.com/orbit-tauri-tools/runtime/internal/plugin"
@@ -13,56 +14,94 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
 		return
 	}
-	recs := s.registry.List()
-	// Frontend expects Plugin-like objects.
-	type pluginView struct {
-		ID              string               `json:"id"`
-		Name            string               `json:"name"`
-		Icon            string               `json:"icon"`
-		MediaType       string               `json:"mediaType,omitempty"`
-		Active          bool                 `json:"active"`
-		Desc            string               `json:"desc"`
-		Channels        []plugin.FeedChannel `json:"channels"`
-		DefaultChannel  string               `json:"defaultChannel,omitempty"`
-		RefreshInterval int                  `json:"refreshInterval,omitempty"`
-		UserAgent       string               `json:"userAgent,omitempty"`
-		LogoText        string               `json:"logoText,omitempty"`
-		LogoImageURL    string               `json:"logoImageUrl,omitempty"`
-		Color           string               `json:"color"`
-		MarketCategory  string               `json:"marketCategory,omitempty"`
-		CategoryTag     string               `json:"categoryTag,omitempty"`
-		Official        bool                 `json:"official,omitempty"`
-		Source          string               `json:"source"`
-		LastError       string               `json:"lastError,omitempty"`
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": pluginRecordsToViews(s.registry.List())})
+}
+
+type pluginView struct {
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	Icon            string               `json:"icon"`
+	MediaType       string               `json:"mediaType,omitempty"`
+	Active          bool                 `json:"active"`
+	Desc            string               `json:"desc"`
+	Channels        []plugin.FeedChannel `json:"channels"`
+	DefaultChannel  string               `json:"defaultChannel,omitempty"`
+	RefreshInterval int                  `json:"refreshInterval,omitempty"`
+	UserAgent       string               `json:"userAgent,omitempty"`
+	LogoText        string               `json:"logoText,omitempty"`
+	LogoImageURL    string               `json:"logoImageUrl,omitempty"`
+	Color           string               `json:"color"`
+	MarketCategory  string               `json:"marketCategory,omitempty"`
+	CategoryTag     string               `json:"categoryTag,omitempty"`
+	Official        bool                 `json:"official,omitempty"`
+	Source          string               `json:"source"`
+	LastError       string               `json:"lastError,omitempty"`
+}
+
+func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
+	icon := rec.Meta.Icon
+	if strings.TrimSpace(icon) == "" {
+		icon = plugin.ContentTypeForMedia(rec.MediaType)
 	}
+	return pluginView{
+		ID:              rec.ID,
+		Name:            rec.Name,
+		Icon:            icon,
+		MediaType:       rec.MediaType,
+		Active:          rec.Active,
+		Desc:            rec.Meta.Description,
+		Channels:        rec.Config.Channels,
+		DefaultChannel:  rec.Config.DefaultChannel,
+		RefreshInterval: rec.Config.RefreshInterval,
+		UserAgent:       rec.Config.UserAgent,
+		LogoText:        rec.Meta.LogoText,
+		LogoImageURL:    rec.Meta.LogoImageURL,
+		Color:           rec.Meta.Color,
+		MarketCategory:  rec.Meta.MarketCategory,
+		CategoryTag:     rec.Meta.CategoryTag,
+		Official:        rec.Meta.Official,
+		Source:          rec.Source,
+		LastError:       rec.LastError,
+	}
+}
+
+func pluginRecordsToViews(recs []*plugin.PluginRecord) []pluginView {
 	out := make([]pluginView, 0, len(recs))
 	for _, rec := range recs {
-		icon := rec.Meta.Icon
-		if strings.TrimSpace(icon) == "" {
-			icon = plugin.ContentTypeForMedia(rec.MediaType)
-		}
-		out = append(out, pluginView{
-			ID:              rec.ID,
-			Name:            rec.Name,
-			Icon:            icon,
-			MediaType:       rec.MediaType,
-			Active:          rec.Active,
-			Desc:            rec.Meta.Description,
-			Channels:        rec.Config.Channels,
-			DefaultChannel:  rec.Config.DefaultChannel,
-			RefreshInterval: rec.Config.RefreshInterval,
-			UserAgent:       rec.Config.UserAgent,
-			LogoText:        rec.Meta.LogoText,
-			LogoImageURL:    rec.Meta.LogoImageURL,
-			Color:           rec.Meta.Color,
-			MarketCategory:  rec.Meta.MarketCategory,
-			CategoryTag:     rec.Meta.CategoryTag,
-			Official:        rec.Meta.Official,
-			Source:          rec.Source,
-			LastError:       rec.LastError,
-		})
+		out = append(out, pluginRecordToView(rec))
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"plugins": out})
+	return out
+}
+
+func (s *Server) handlePluginAsset(w http.ResponseWriter, r *http.Request, rest string) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+		return
+	}
+	parts := strings.SplitN(rest, "/assets/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		writeJSON(w, http.StatusNotFound, errorBody("not found"))
+		return
+	}
+	path, err := s.registry.PluginAssetPath(parts[0], parts[1])
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".png":
+		w.Header().Set("Content-Type", "image/png")
+	case ".jpg", ".jpeg":
+		w.Header().Set("Content-Type", "image/jpeg")
+	case ".svg":
+		w.Header().Set("Content-Type", "image/svg+xml")
+	case ".webp":
+		w.Header().Set("Content-Type", "image/webp")
+	default:
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+	http.ServeFile(w, r, path)
 }
 
 func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
@@ -125,12 +164,44 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"plugin": rec})
 }
 
+func (s *Server) handlePluginsMarket(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+		return
+	}
+	recs := s.registry.ListMarketPlugins()
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": pluginRecordsToViews(recs)})
+}
+
 func (s *Server) handlePluginByID(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/v1/plugins/")
-	if id == "" || strings.Contains(id, "/") {
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/plugins/")
+	if rest == "" {
 		writeJSON(w, http.StatusNotFound, errorBody("not found"))
 		return
 	}
+
+	if strings.Contains(rest, "/assets/") {
+		s.handlePluginAsset(w, r, rest)
+		return
+	}
+
+	if strings.HasSuffix(rest, "/install") && r.Method == http.MethodPost {
+		id := strings.TrimSuffix(rest, "/install")
+		id = strings.TrimSuffix(id, "/")
+		rec, err := s.registry.InstallBundled(r.Context(), id)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"plugin": pluginRecordToView(rec)})
+		return
+	}
+
+	if strings.Contains(rest, "/") {
+		writeJSON(w, http.StatusNotFound, errorBody("not found"))
+		return
+	}
+	id := rest
 
 	switch r.Method {
 	case http.MethodPatch:

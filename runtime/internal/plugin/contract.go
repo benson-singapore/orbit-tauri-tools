@@ -4,7 +4,12 @@ import "time"
 
 const (
 	SourceRSS    = "rss"
+	SourceWASM   = "wasm"
 	SourceScript = "script"
+
+	ExecutionWASM    = "wasm"
+	ExecutionBrowser = "browser"
+	ExecutionHybrid  = "hybrid"
 
 	MediaArticle = "article"
 	MediaManga   = "manga"
@@ -36,6 +41,30 @@ type ManifestConfig struct {
 	RefreshInterval int           `json:"refreshInterval"` // seconds, default 3600
 	UserAgent       string        `json:"userAgent"`
 	LegacyFeedURL   string        `json:"feedUrl,omitempty"` // migrated to channels on load; not persisted after save
+	ExecutionMode   string        `json:"executionMode,omitempty"` // wasm | browser | hybrid (Phase 3)
+	Wasm            WasmConfig    `json:"wasm,omitempty"`
+	Browser         BrowserConfig `json:"browser,omitempty"`
+}
+
+// WasmConfig describes the WASM binary for source=wasm plugins.
+type WasmConfig struct {
+	Entry       string `json:"entry"`                 // default plugin.wasm
+	TimeoutMs   int    `json:"timeoutMs,omitempty"`   // default 30000
+	MaxMemoryMB int    `json:"maxMemoryMB,omitempty"` // default 64
+}
+
+// BrowserConfig reserves Phase 3 browser/hybrid execution (not implemented yet).
+type BrowserConfig struct {
+	Required   bool     `json:"required,omitempty"`
+	FallbackOn []string `json:"fallbackOn,omitempty"`
+}
+
+func DefaultWasmConfig() WasmConfig {
+	return WasmConfig{
+		Entry:       "plugin.wasm",
+		TimeoutMs:   30000,
+		MaxMemoryMB: 64,
+	}
 }
 
 type ManifestMeta struct {

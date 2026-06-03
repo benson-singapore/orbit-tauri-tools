@@ -77,6 +77,7 @@ export default function App() {
     togglePluginActive: orbitTogglePluginActive,
     removePlugin: orbitRemovePlugin,
     movePlugin: orbitMovePlugin,
+    installOfficialPlugin: orbitInstallOfficialPlugin,
   } = useOrbitData(
     activePlugin,
     activeChannel,
@@ -303,8 +304,9 @@ export default function App() {
   };
 
   const handleInstallPlugin = (newPlugin: Plugin) => {
-    void newPlugin;
-    // 插件市场条目尚未绑定 RSS manifest，后续 Phase 2 接入
+    void orbitInstallOfficialPlugin(newPlugin.id)
+      .then(() => reload())
+      .catch(console.error);
   };
 
   const handleUninstallPlugin = (id: string) => {

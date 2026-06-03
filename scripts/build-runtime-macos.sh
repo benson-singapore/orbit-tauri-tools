@@ -24,6 +24,12 @@ export GOARCH
 cd "$RUNTIME_DIR"
 go build -ldflags="-s -w" -o "$OUT_DIR/orbit-runtime-$SUFFIX" ./cmd/orbit-runtime
 
+ORBIT_PLUGINS_DIST="$ROOT/orbit-plugins/dist"
+if [ -d "$ORBIT_PLUGINS_DIST" ]; then
+  echo "building official wasm plugins..."
+  (cd "$ROOT/orbit-plugins" && make sync)
+fi
+
 PLUGINS_SRC="$ROOT/plugins"
 PLUGINS_DST="$OUT_DIR/plugins"
 if [ -d "$PLUGINS_SRC" ]; then
