@@ -31,9 +31,11 @@ type Manifest struct {
 }
 
 type ManifestConfig struct {
-	FeedURL         string `json:"feedUrl"`
-	RefreshInterval int    `json:"refreshInterval"` // seconds, default 3600
-	UserAgent       string `json:"userAgent"`
+	Channels        []FeedChannel `json:"channels"`
+	DefaultChannel  string        `json:"defaultChannel,omitempty"`
+	RefreshInterval int           `json:"refreshInterval"` // seconds, default 3600
+	UserAgent       string        `json:"userAgent"`
+	LegacyFeedURL   string        `json:"feedUrl,omitempty"` // migrated to channels on load; not persisted after save
 }
 
 type ManifestMeta struct {
@@ -50,7 +52,9 @@ type ManifestMeta struct {
 type InstallRSSOptions struct {
 	ID              string
 	Name            string
-	FeedURL         string
+	Channels        []FeedChannel
+	FeedURL         string // legacy: converted to single channel if Channels empty
+	DefaultChannel  string
 	MediaType       string
 	RefreshInterval int
 	UserAgent       string
@@ -78,7 +82,10 @@ type FeedItem struct {
 	Reads       string   `json:"reads"`
 	Image       string   `json:"image,omitempty"`
 	SourceURL   string   `json:"sourceUrl,omitempty"`
+	ChannelID   string   `json:"channelId,omitempty"`
 	Tags        []string `json:"tags"`
+	ReadAt      int64    `json:"readAt,omitempty"`
+	IsRead      bool     `json:"isRead"`
 }
 
 // PluginRecord merges manifest with runtime state from SQLite.

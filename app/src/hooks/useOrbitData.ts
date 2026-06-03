@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { INITIAL_PLUGINS } from "@/data/plugins";
 import {
   fetchFeed,
   fetchPlugins,
   installRSSPlugin,
+  markFeedItemRead,
   setPluginActive,
   uninstallPlugin,
 } from "@/lib/feed";
@@ -16,25 +17,39 @@ const FEED_PAGE_SIZE = 20;
 interface UseOrbitDataResult {
   plugins: Plugin[];
   articles: Article[];
+  unreadTotal: number;
   loading: boolean;
   loadingMore: boolean;
   hasMore: boolean;
   error: string | null;
   reload: () => Promise<void>;
   loadMore: () => Promise<void>;
+  markArticleRead: (id: string) => Promise<void>;
   installCustomRSS: (payload: InstallRSSPluginRequest) => Promise<void>;
   togglePluginActive: (id: string) => Promise<void>;
   removePlugin: (id: string) => Promise<void>;
   movePlugin: (id: string, direction: "up" | "down") => void;
 }
 
-export function useOrbitData(): UseOrbitDataResult {
+export function useOrbitData(
+  pluginFilter = "all",
+  channelFilter = "all",
+  contentTypeFilter?: string,
+): UseOrbitDataResult {
   const [plugins, setPlugins] = useState<Plugin[]>(INITIAL_PLUGINS);
   const [articles, setArticles] = useState<Article[]>([]);
+  const [unreadTotal, setUnreadTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const feedRequestId = useRef(0);
+  const pluginFilterRef = useRef(pluginFilter);
+  const channelFilterRef = useRef(channelFilter);
+  const contentTypeFilterRef = useRef(contentTypeFilter);
+  pluginFilterRef.current = pluginFilter;
+  channelFilterRef.current = channelFilter;
+  contentTypeFilterRef.current = contentTypeFilter;
 
   const loadPlugins = useCallback(async () => {
     const remote = await fetchPlugins();
@@ -46,17 +61,36 @@ export function useOrbitData(): UseOrbitDataResult {
     offset?: number;
     append?: boolean;
   }) => {
+    const requestId = ++feedRequestId.current;
     const offset = options?.offset ?? 0;
     const append = options?.append ?? false;
+    const pluginId = pluginFilterRef.current;
+    const channel = channelFilterRef.current;
+    const contentType = contentTypeFilterRef.current;
     const data = await fetchFeed({
+      pluginId,
+      channel:
+        pluginId !== "all" && channel !== "all" ? channel : undefined,
+      type:
+        pluginId === "all" && contentType && contentType !== "all"
+          ? (contentType as import("@/types").ContentType)
+          : undefined,
       refresh: options?.force ?? false,
       limit: FEED_PAGE_SIZE,
       offset,
     });
+    if (requestId !== feedRequestId.current) {
+      return;
+    }
     const items = data.items ?? [];
     const total = data.total ?? (offset + items.length);
-    setHasMore(offset+items.length < total);
+    setHasMore(offset + items.length < total);
     setArticles(prev => (append ? [...prev, ...items] : items));
+    if (!append) {
+      setUnreadTotal(data.unreadTotal ?? items.filter(item => !item.isRead).length);
+    } else if (typeof data.unreadTotal === "number") {
+      setUnreadTotal(data.unreadTotal);
+    }
   }, []);
 
   const reload = useCallback(async () => {
@@ -97,6 +131,19 @@ export function useOrbitData(): UseOrbitDataResult {
     }
   }, [loadFeedPage]);
 
+  const reloadFeedOnly = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      await loadFeedPage({ force: false, offset: 0, append: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [loadFeedPage]);
+
+  const initialMount = useRef(true);
   useEffect(() => {
     void reload();
     const timer = window.setInterval(() => {
@@ -106,6 +153,14 @@ export function useOrbitData(): UseOrbitDataResult {
       window.clearInterval(timer);
     };
   }, [reload, refreshInBackground]);
+
+  useEffect(() => {
+    if (initialMount.current) {
+      initialMount.current = false;
+      return;
+    }
+    void reloadFeedOnly();
+  }, [pluginFilter, channelFilter, contentTypeFilter, reloadFeedOnly]);
 
   const installCustomRSS = useCallback(
     async (payload: InstallRSSPluginRequest) => {
@@ -175,15 +230,41 @@ export function useOrbitData(): UseOrbitDataResult {
     });
   }, []);
 
+  const markArticleRead = useCallback(async (id: string) => {
+    let wasUnread = false;
+    setArticles(prev => prev.map(article => {
+      if (article.id !== id || article.isRead) {
+        return article;
+      }
+      wasUnread = true;
+      return { ...article, isRead: true };
+    }));
+    if (wasUnread) {
+      setUnreadTotal(prev => Math.max(0, prev - 1));
+    }
+    try {
+      await markFeedItemRead(id);
+    } catch {
+      setArticles(prev => prev.map(article => (
+        article.id === id ? { ...article, isRead: false } : article
+      )));
+      if (wasUnread) {
+        setUnreadTotal(prev => prev + 1);
+      }
+    }
+  }, []);
+
   return {
     plugins,
     articles,
+    unreadTotal,
     loading,
     loadingMore,
     hasMore,
     error,
     reload,
     loadMore,
+    markArticleRead,
     installCustomRSS,
     togglePluginActive,
     removePlugin,

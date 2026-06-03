@@ -49,6 +49,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/plugins/", s.handlePluginByID)
 	s.mux.HandleFunc("/v1/feed", s.handleFeed)
 	s.mux.HandleFunc("/v1/feed/refresh", s.handleRefreshFeed)
+	s.mux.HandleFunc("/v1/feed/read", s.handleMarkFeedRead)
 	s.mux.HandleFunc("/v1/images/upload", s.handleUploadImage)
 	s.mux.HandleFunc("/v1/images/upload-url", s.handleUploadImageByURL)
 	s.mux.HandleFunc("/openapi.json", s.handleOpenAPI)

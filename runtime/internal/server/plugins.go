@@ -16,23 +16,24 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	recs := s.registry.List()
 	// Frontend expects Plugin-like objects.
 	type pluginView struct {
-		ID              string `json:"id"`
-		Name            string `json:"name"`
-		Icon            string `json:"icon"`
-		MediaType       string `json:"mediaType,omitempty"`
-		Active          bool   `json:"active"`
-		Desc            string `json:"desc"`
-		FeedURL         string `json:"feedUrl,omitempty"`
-		RefreshInterval int    `json:"refreshInterval,omitempty"`
-		UserAgent       string `json:"userAgent,omitempty"`
-		LogoText        string `json:"logoText,omitempty"`
-		LogoImageURL    string `json:"logoImageUrl,omitempty"`
-		Color           string `json:"color"`
-		MarketCategory  string `json:"marketCategory,omitempty"`
-		CategoryTag     string `json:"categoryTag,omitempty"`
-		Official        bool   `json:"official,omitempty"`
-		Source          string `json:"source"`
-		LastError       string `json:"lastError,omitempty"`
+		ID              string               `json:"id"`
+		Name            string               `json:"name"`
+		Icon            string               `json:"icon"`
+		MediaType       string               `json:"mediaType,omitempty"`
+		Active          bool                 `json:"active"`
+		Desc            string               `json:"desc"`
+		Channels        []plugin.FeedChannel `json:"channels"`
+		DefaultChannel  string               `json:"defaultChannel,omitempty"`
+		RefreshInterval int                  `json:"refreshInterval,omitempty"`
+		UserAgent       string               `json:"userAgent,omitempty"`
+		LogoText        string               `json:"logoText,omitempty"`
+		LogoImageURL    string               `json:"logoImageUrl,omitempty"`
+		Color           string               `json:"color"`
+		MarketCategory  string               `json:"marketCategory,omitempty"`
+		CategoryTag     string               `json:"categoryTag,omitempty"`
+		Official        bool                 `json:"official,omitempty"`
+		Source          string               `json:"source"`
+		LastError       string               `json:"lastError,omitempty"`
 	}
 	out := make([]pluginView, 0, len(recs))
 	for _, rec := range recs {
@@ -47,7 +48,8 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 			MediaType:       rec.MediaType,
 			Active:          rec.Active,
 			Desc:            rec.Meta.Description,
-			FeedURL:         rec.Config.FeedURL,
+			Channels:        rec.Config.Channels,
+			DefaultChannel:  rec.Config.DefaultChannel,
 			RefreshInterval: rec.Config.RefreshInterval,
 			UserAgent:       rec.Config.UserAgent,
 			LogoText:        rec.Meta.LogoText,
@@ -70,20 +72,22 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		Source          string `json:"source"`
-		FeedURL         string `json:"feedUrl"`
-		Name            string `json:"name"`
-		ID              string `json:"id"`
-		MediaType       string `json:"mediaType"`
-		RefreshInterval int    `json:"refreshInterval"`
-		UserAgent       string `json:"userAgent"`
-		Icon            string `json:"icon"`
-		Description     string `json:"description"`
-		Color           string `json:"color"`
-		LogoText        string `json:"logoText"`
-		LogoImageURL    string `json:"logoImageUrl"`
-		MarketCategory  string `json:"marketCategory"`
-		CategoryTag     string `json:"categoryTag"`
+		Source          string               `json:"source"`
+		FeedURL         string               `json:"feedUrl"`
+		Channels        []plugin.FeedChannel `json:"channels"`
+		DefaultChannel  string               `json:"defaultChannel"`
+		Name            string               `json:"name"`
+		ID              string               `json:"id"`
+		MediaType       string               `json:"mediaType"`
+		RefreshInterval int                  `json:"refreshInterval"`
+		UserAgent       string               `json:"userAgent"`
+		Icon            string               `json:"icon"`
+		Description     string               `json:"description"`
+		Color           string               `json:"color"`
+		LogoText        string               `json:"logoText"`
+		LogoImageURL    string               `json:"logoImageUrl"`
+		MarketCategory  string               `json:"marketCategory"`
+		CategoryTag     string               `json:"categoryTag"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("invalid JSON body"))
@@ -100,7 +104,9 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 	rec, err := s.registry.InstallRSS(r.Context(), plugin.InstallRSSOptions{
 		ID:              body.ID,
 		Name:            body.Name,
+		Channels:        body.Channels,
 		FeedURL:         body.FeedURL,
+		DefaultChannel:  body.DefaultChannel,
 		MediaType:       body.MediaType,
 		RefreshInterval: body.RefreshInterval,
 		UserAgent:       body.UserAgent,

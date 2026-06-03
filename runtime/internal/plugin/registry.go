@@ -166,6 +166,7 @@ func rowToRecord(row store.PluginRow) (*PluginRecord, error) {
 	if err := store.DecodeJSON(row.ManifestJSON, &m); err != nil {
 		return nil, err
 	}
+	MigrateManifestConfig(&m.Config)
 	return &PluginRecord{
 		Manifest:  m,
 		Active:    row.Active,
@@ -211,25 +212,38 @@ func (r *Registry) Get(id string) (*PluginRecord, bool) {
 func cloneRecord(rec *PluginRecord) *PluginRecord {
 	cp := *rec
 	cp.Capabilities = append([]string(nil), rec.Capabilities...)
+	cp.Config.Channels = append([]FeedChannel(nil), rec.Config.Channels...)
 	return &cp
 }
 
 func (r *Registry) InstallRSS(ctx context.Context, opts InstallRSSOptions) (*PluginRecord, error) {
-	feedURL := strings.TrimSpace(opts.FeedURL)
-	if feedURL == "" {
-		return nil, fmt.Errorf("feedUrl is required")
+	channels := opts.Channels
+	if len(channels) == 0 {
+		feedURL := strings.TrimSpace(opts.FeedURL)
+		if feedURL == "" {
+			return nil, fmt.Errorf("channels or feedUrl is required")
+		}
+		channels = []FeedChannel{{
+			ID:      DefaultChannelID,
+			Label:   "全部",
+			FeedURL: feedURL,
+		}}
 	}
+	seedURL := channels[0].FeedURL
 	id := strings.TrimSpace(opts.ID)
 	if id == "" {
-		sum := sha256Hex(feedURL)
+		sum := sha256Hex(seedURL)
 		id = "rss-" + sum[:10]
 	}
 	name := strings.TrimSpace(opts.Name)
 	if name == "" {
-		name = hostnameFromURL(feedURL)
+		name = hostnameFromURL(seedURL)
 	}
 
-	m := NewRSSManifest(id, name, feedURL)
+	m := NewRSSManifest(id, name, channels)
+	if dc := strings.TrimSpace(opts.DefaultChannel); dc != "" {
+		m.Config.DefaultChannel = dc
+	}
 	if opts.RefreshInterval > 0 {
 		m.Config.RefreshInterval = opts.RefreshInterval
 	}
@@ -327,7 +341,7 @@ func (r *Registry) Uninstall(ctx context.Context, id string) error {
 	return nil
 }
 
-func (r *Registry) RefreshPlugin(ctx context.Context, pluginID string) ([]FeedItem, error) {
+func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string) ([]FeedItem, error) {
 	rec, ok := r.Get(pluginID)
 	if !ok {
 		return nil, fmt.Errorf("plugin not found: %s", pluginID)
@@ -339,29 +353,88 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID string) ([]FeedIt
 		return nil, fmt.Errorf("unsupported plugin source: %s", rec.Source)
 	}
 
-	items, err := r.fetcher.FetchFeed(ctx, &rec.Manifest)
-	now := time.Now().Unix()
-	if err != nil {
-		rec.LastError = err.Error()
-		rec.LastFetch = now
-		_ = r.upsertPlugin(ctx, rec)
-		r.setRecord(rec)
-		return nil, err
+	var refreshErr error
+	var all []FeedItem
+	channels := rec.Config.Channels
+	if channelID != "" {
+		ch, ok := findChannel(channels, channelID)
+		if !ok {
+			return nil, fmt.Errorf("channel not found: %s", channelID)
+		}
+		items, err := r.refreshChannel(ctx, rec, ch)
+		if err != nil {
+			return nil, err
+		}
+		all = items
+	} else {
+		for _, ch := range channels {
+			items, err := r.refreshChannel(ctx, rec, &ch)
+			if err != nil {
+				refreshErr = err
+				continue
+			}
+			all = append(all, items...)
+		}
+		if refreshErr != nil && len(all) == 0 {
+			return nil, refreshErr
+		}
 	}
 
-	if err := r.persistFeedItems(ctx, pluginID, items, now); err != nil {
-		return nil, err
-	}
-	rec.LastError = ""
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].PublishedAt > all[j].PublishedAt
+	})
+
+	now := time.Now().Unix()
 	rec.LastFetch = now
-	if err := r.upsertPlugin(ctx, rec); err != nil {
+	if refreshErr != nil {
+		rec.LastError = refreshErr.Error()
+	} else {
+		rec.LastError = ""
+	}
+	_ = r.upsertPlugin(ctx, rec)
+	r.setRecord(rec)
+	return all, nil
+}
+
+func (r *Registry) refreshChannel(ctx context.Context, rec *PluginRecord, ch *FeedChannel) ([]FeedItem, error) {
+	items, err := r.fetcher.FetchFeedURL(ctx, &rec.Manifest, ch.FeedURL)
+	now := time.Now().Unix()
+	if err != nil {
 		return nil, err
 	}
-	r.setRecord(rec)
+	for i := range items {
+		items[i].ChannelID = ch.ID
+	}
+	if err := r.persistFeedItemsForChannel(ctx, rec.ID, ch.ID, items, now); err != nil {
+		return nil, err
+	}
 	return items, nil
 }
 
-func (r *Registry) Feed(ctx context.Context, pluginID string, refresh bool) ([]FeedItem, error) {
+func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord, channelID string) ([]FeedItem, error) {
+	channelID = ResolveChannelID(&rec.Config, channelID)
+	if channelID != "" {
+		return r.loadFeedItems(ctx, rec.ID, channelID)
+	}
+	var all []FeedItem
+	for _, ch := range rec.Config.Channels {
+		items, err := r.loadFeedItems(ctx, rec.ID, ch.ID)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, items...)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].PublishedAt > all[j].PublishedAt
+	})
+	return all, nil
+}
+
+func (r *Registry) Feed(
+	ctx context.Context,
+	pluginID, channelID, contentType string,
+	refresh bool,
+) ([]FeedItem, error) {
 	recs := r.List()
 	if pluginID != "" && pluginID != "all" {
 		rec, ok := r.Get(pluginID)
@@ -380,11 +453,17 @@ func (r *Registry) Feed(ctx context.Context, pluginID string, refresh bool) ([]F
 			continue
 		}
 
+		effectiveChannel := channelID
+		if pluginID != "" && pluginID != "all" {
+			effectiveChannel = ResolveChannelID(&rec.Config, channelID)
+		} else {
+			effectiveChannel = ""
+		}
+
 		stale := refresh || r.isStale(rec)
 		if stale {
-			if _, err := r.RefreshPlugin(ctx, rec.ID); err != nil {
-				// Degrade to cache if refresh fails.
-				cached, cacheErr := r.loadFeedItems(ctx, rec.ID)
+			if _, err := r.RefreshPlugin(ctx, rec.ID, effectiveChannel); err != nil {
+				cached, cacheErr := r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel)
 				if cacheErr != nil || len(cached) == 0 {
 					if err != nil {
 						return nil, err
@@ -396,7 +475,7 @@ func (r *Registry) Feed(ctx context.Context, pluginID string, refresh bool) ([]F
 			}
 		}
 
-		items, err := r.loadFeedItems(ctx, rec.ID)
+		items, err := r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel)
 		if err != nil {
 			return nil, err
 		}
@@ -406,7 +485,43 @@ func (r *Registry) Feed(ctx context.Context, pluginID string, refresh bool) ([]F
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].PublishedAt > all[j].PublishedAt
 	})
+
+	if contentType != "" {
+		filtered := make([]FeedItem, 0, len(all))
+		for _, item := range all {
+			if item.Type == contentType {
+				filtered = append(filtered, item)
+			}
+		}
+		all = filtered
+	}
 	return all, nil
+}
+
+func (r *Registry) MarkFeedItemRead(ctx context.Context, id string) error {
+	return r.store.MarkFeedItemRead(ctx, id, time.Now().Unix())
+}
+
+func (r *Registry) CountUnread(
+	ctx context.Context,
+	pluginID, channelID, contentType string,
+) (int, error) {
+	if pluginID == "all" {
+		pluginID = ""
+	}
+	if channelID == "all" {
+		channelID = ""
+	}
+	if pluginID != "" {
+		rec, ok := r.Get(pluginID)
+		if !ok {
+			return 0, fmt.Errorf("plugin not found: %s", pluginID)
+		}
+		if channelID != "" {
+			channelID = ResolveChannelID(&rec.Config, channelID)
+		}
+	}
+	return r.store.CountUnreadFeedItems(ctx, pluginID, channelID, contentType)
 }
 
 func (r *Registry) isStale(rec *PluginRecord) bool {

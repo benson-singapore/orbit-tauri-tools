@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
 import { PLUGIN_MARKET_GROUPS, PLUGINS_STORE } from "@/data/plugins";
+import { slugifyChannelId } from "@/lib/channelId";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import type {
   InstallRSSPluginRequest,
@@ -13,6 +14,42 @@ import type {
 
 const MODAL_HEIGHT = "h-[660px]";
 const PRIMARY = "bg-[#5856D6] hover:bg-[#4a48c4]";
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value.trim());
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+type ChannelFormRow = {
+  _key: string;
+  id: string;
+  label: string;
+  feedUrl: string;
+  /** 为 true 时，修改名称会自动更新 id */
+  idAuto: boolean;
+};
+
+function createChannelRow(
+  partial: Partial<Pick<ChannelFormRow, "id" | "label" | "feedUrl">> = {},
+  options?: { idAuto?: boolean },
+): ChannelFormRow {
+  const label = partial.label ?? "全部";
+  const idAuto = options?.idAuto ?? partial.id === undefined;
+  const id =
+    partial.id ??
+    (idAuto ? slugifyChannelId(label) || "main" : "main");
+  return {
+    _key: `ch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    id,
+    label,
+    feedUrl: partial.feedUrl ?? "",
+    idAuto,
+  };
+}
 
 interface PluginManagerModalProps {
   theme: ThemeMode;
@@ -31,6 +68,44 @@ const TABS: { id: Extract<PluginManagerTab, "market" | "manage">; label: string;
   { id: "market", label: "插件市场", icon: "sparkles" },
   { id: "manage", label: "已安装插件", icon: "puzzle" },
 ];
+
+function StyledSelect({
+  value,
+  onChange,
+  children,
+  className,
+}: {
+  value: string;
+  onChange: (e: ChangeEvent<HTMLSelectElement>) => void;
+  children: ReactNode;
+  className: string;
+}) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={onChange}
+        className={`orbit-select w-full appearance-none px-4 py-3 pr-10 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${className}`}
+      >
+        {children}
+      </select>
+      <svg
+        className="pointer-events-none absolute right-3.5 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-400"
+        viewBox="0 0 12 12"
+        fill="none"
+        aria-hidden
+      >
+        <path
+          d="M3 4.5 6 7.5 9 4.5"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </div>
+  );
+}
 
 function filterMarketPlugins(
   plugins: Plugin[],
@@ -77,6 +152,7 @@ function PluginSection(props: PluginSectionProps) {
   } = props;
   const [draggingPluginId, setDraggingPluginId] = useState<string | null>(null);
   const [dragOverPluginId, setDragOverPluginId] = useState<string | null>(null);
+  const [uninstallTarget, setUninstallTarget] = useState<Plugin | null>(null);
 
   const handleDropReorder = (targetPluginId: string) => {
     if (!draggingPluginId || draggingPluginId === targetPluginId) {
@@ -105,9 +181,6 @@ function PluginSection(props: PluginSectionProps) {
         const isEnabled = plugin.active !== false;
         const canMoveUp = index > 0;
         const canMoveDown = index < installedPlugins.length - 1;
-        const handleUninstall = () => {
-          onUninstall(plugin.id);
-        };
         const cardClass = customStyle
           ? "border border-indigo-200/70 dark:border-indigo-900/40 bg-indigo-50/30 dark:bg-indigo-950/10"
           : `border ${subtleBorder} ${mutedBg}`;
@@ -232,7 +305,7 @@ function PluginSection(props: PluginSectionProps) {
                   </span>
                   <button
                     type="button"
-                    onClick={handleUninstall}
+                    onClick={() => setUninstallTarget(plugin)}
                     className="px-2.5 py-1.5 text-[11px] font-medium rounded-lg text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-900/30"
                   >
                     卸载插件
@@ -243,6 +316,47 @@ function PluginSection(props: PluginSectionProps) {
           </article>
         );
       })}
+
+      {uninstallTarget && (
+        <div
+          className="fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-6"
+          onClick={() => setUninstallTarget(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-[24px] border border-neutral-200 bg-white p-6 shadow-2xl dark:border-neutral-800 dark:bg-[#141416] dark:text-white"
+            onClick={e => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="uninstall-confirm-title"
+          >
+            <h4 id="uninstall-confirm-title" className="text-sm font-bold">
+              确认卸载插件
+            </h4>
+            <p className="text-[11px] mt-2 text-neutral-500 dark:text-neutral-400 leading-relaxed">
+              确定要卸载「{uninstallTarget.name}」吗？卸载后插件配置将从本地移除，此操作不可恢复。
+            </p>
+            <div className="mt-6 flex items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => setUninstallTarget(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold border border-neutral-200 text-neutral-600 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-900/50"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  onUninstall(uninstallTarget.id);
+                  setUninstallTarget(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-white bg-rose-600 hover:bg-rose-700"
+              >
+                确认卸载
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -271,7 +385,9 @@ function ImportPluginModal({
   const [marketCategory, setMarketCategory] = useState<Exclude<PluginMarketCategory, "all">>("blog");
   const [icon, setIcon] = useState<PluginContentType>("text");
   const [mediaType, setMediaType] = useState<NonNullable<InstallRSSPluginRequest["mediaType"]>>("article");
-  const [feedUrl, setFeedUrl] = useState("");
+  const [channels, setChannels] = useState<ChannelFormRow[]>([
+    createChannelRow({ id: "main", label: "全部" }, { idAuto: false }),
+  ]);
   const [refreshInterval, setRefreshInterval] = useState("3600");
   const [userAgent, setUserAgent] = useState("");
   const [categoryTag, setCategoryTag] = useState("NEWS");
@@ -280,6 +396,8 @@ function ImportPluginModal({
   const [logoImageUrl, setLogoImageUrl] = useState("");
   const [logoSourceUrl, setLogoSourceUrl] = useState("");
   const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const [showLogoUploadModal, setShowLogoUploadModal] = useState(false);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
   const [jsonText, setJsonText] = useState("");
   const [isEditingJson, setIsEditingJson] = useState(false);
   const [viewMode, setViewMode] = useState<"form" | "json">("form");
@@ -304,7 +422,22 @@ function ImportPluginModal({
     setColor(initialPlugin.color);
     setLogoImageUrl(initialPlugin.logoImageUrl ?? "");
     setLogoSourceUrl(initialPlugin.logoImageUrl ?? "");
-    setFeedUrl(initialPlugin.feedUrl ?? "");
+    if (initialPlugin.channels?.length) {
+      setChannels(
+        initialPlugin.channels.map(ch =>
+          createChannelRow(
+            {
+              id: ch.id,
+              label: ch.label,
+              feedUrl: ch.feedUrl ?? "",
+            },
+            { idAuto: false },
+          ),
+        ),
+      );
+    } else {
+      setChannels([createChannelRow({ id: "main", label: "全部" }, { idAuto: false })]);
+    }
     setRefreshInterval(String(initialPlugin.refreshInterval ?? 3600));
     setUserAgent(initialPlugin.userAgent ?? "");
     if (
@@ -323,7 +456,11 @@ function ImportPluginModal({
     const parsedRefresh = Number.parseInt(refreshInterval.trim(), 10);
     return {
       source: "rss",
-      feedUrl: feedUrl.trim(),
+      channels: channels.map(ch => ({
+        id: ch.id.trim(),
+        label: ch.label.trim(),
+        feedUrl: ch.feedUrl.trim(),
+      })),
       id: pluginId.trim() || undefined,
       name: pluginName.trim() || undefined,
       icon,
@@ -349,7 +486,7 @@ function ImportPluginModal({
       source: "rss",
       capabilities: ["feed"],
       config: {
-        feedUrl: payload.feedUrl,
+        channels: payload.channels ?? [],
         refreshInterval: payload.refreshInterval ?? 3600,
         userAgent: payload.userAgent || "",
       },
@@ -377,11 +514,26 @@ function ImportPluginModal({
       const nextId = typeof raw.id === "string" ? raw.id : "";
       const nextName = typeof raw.name === "string" ? raw.name : "";
       const nextMediaType = typeof raw.mediaType === "string" ? raw.mediaType : undefined;
-      const nextFeedUrl = typeof raw.feedUrl === "string"
-        ? raw.feedUrl
-        : typeof config.feedUrl === "string"
-          ? config.feedUrl
-          : "";
+      const rawChannels = Array.isArray(config.channels)
+        ? (config.channels as { id?: string; label?: string; feedUrl?: string }[])
+        : [];
+      const legacyFeedUrl =
+        typeof config.feedUrl === "string" ? config.feedUrl.trim() : "";
+      const nextChannels: ChannelFormRow[] =
+        rawChannels.length > 0
+          ? rawChannels.map((ch, i) =>
+              createChannelRow(
+                {
+                  id: String(ch.id ?? `channel-${i + 1}`).trim(),
+                  label: String(ch.label ?? ch.id ?? `频道 ${i + 1}`).trim(),
+                  feedUrl: String(ch.feedUrl ?? "").trim(),
+                },
+                { idAuto: false },
+              ),
+            )
+          : legacyFeedUrl
+            ? [createChannelRow({ id: "main", label: "全部", feedUrl: legacyFeedUrl }, { idAuto: false })]
+            : [createChannelRow({ id: "main", label: "全部" }, { idAuto: false })];
       const nextRefreshIntervalRaw = typeof raw.refreshInterval === "number"
         ? raw.refreshInterval
         : typeof config.refreshInterval === "number"
@@ -398,7 +550,7 @@ function ImportPluginModal({
       if (nextMediaType === "article" || nextMediaType === "manga" || nextMediaType === "video" || nextMediaType === "audio") {
         setMediaType(nextMediaType);
       }
-      setFeedUrl(nextFeedUrl);
+      setChannels(nextChannels);
       setRefreshInterval(String(nextRefreshIntervalRaw));
       setUserAgent(nextUserAgent);
 
@@ -457,7 +609,7 @@ function ImportPluginModal({
   useEffect(() => {
     if (isEditingJson) return;
     setJsonText(buildManifestJsonText());
-  }, [isEditingJson, pluginId, pluginName, marketCategory, icon, mediaType, feedUrl, refreshInterval, userAgent, categoryTag, description, color, logoLetter, logoImageUrl]);
+  }, [isEditingJson, pluginId, pluginName, marketCategory, icon, mediaType, channels, refreshInterval, userAgent, categoryTag, description, color, logoLetter, logoImageUrl]);
 
   const uploadLogoFile = async (file: File) => {
     setIsUploadingLogo(true);
@@ -475,6 +627,7 @@ function ImportPluginModal({
       if (!url) throw new Error("upload succeeded but url missing");
       setLogoImageUrl(url);
       setLogoSourceUrl(url);
+      setShowLogoUploadModal(false);
     } catch (e) {
       setError(`图标上传失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
@@ -505,11 +658,26 @@ function ImportPluginModal({
       if (!url) throw new Error("upload succeeded but url missing");
       setLogoImageUrl(url);
       setLogoSourceUrl(url);
+      setShowLogoUploadModal(false);
     } catch (e) {
       setError(`图标上传失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsUploadingLogo(false);
     }
+  };
+
+  const applyDirectLogoUrl = (value?: string) => {
+    const trimmed = (value ?? logoSourceUrl).trim();
+    if (!isHttpUrl(trimmed)) return;
+    setLogoImageUrl(trimmed);
+  };
+
+  const handleLogoSourcePaste = (e: ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData("text").trim();
+    if (!isHttpUrl(pasted)) return;
+    e.preventDefault();
+    setLogoSourceUrl(pasted);
+    setLogoImageUrl(pasted);
   };
 
   const handleSubmit = () => {
@@ -520,24 +688,38 @@ function ImportPluginModal({
     }
 
     const payload: InstallRSSPluginRequest = buildPayloadFromForm();
-    const trimmedFeedUrl = payload.feedUrl.trim();
     const trimmedId = (payload.id ?? "").trim();
     const parsedRefresh = payload.refreshInterval ?? 3600;
+    const normalizedChannels = (payload.channels ?? []).map(ch => ({
+      id: ch.id.trim(),
+      label: ch.label.trim(),
+      feedUrl: ch.feedUrl?.trim() ?? "",
+    }));
 
     if (trimmedId && !/^[a-z0-9_-]{2,64}$/.test(trimmedId)) {
       setError("插件 ID 需为 2-64 位小写字母/数字/-/_");
       return;
     }
-    if (!trimmedFeedUrl) {
-      setError("请填写 RSS FEED 地址");
+    if (normalizedChannels.length === 0) {
+      setError("请至少配置一个 RSS 频道");
       return;
+    }
+    for (const ch of normalizedChannels) {
+      if (!ch.id || !ch.label || !ch.feedUrl) {
+        setError("每个频道需填写 ID、名称与 Feed URL");
+        return;
+      }
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(ch.id)) {
+        setError(`频道 ID「${ch.id}」格式无效`);
+        return;
+      }
     }
     if (!Number.isFinite(parsedRefresh) || parsedRefresh <= 0) {
       setError("刷新间隔需为正整数（秒）");
       return;
     }
     payload.source = "rss";
-    payload.feedUrl = trimmedFeedUrl;
+    payload.channels = normalizedChannels;
     onImport(payload);
     onClose();
   };
@@ -613,7 +795,7 @@ function ImportPluginModal({
                 </div>
                 <div className="flex-1 min-w-0 text-left">
                   <p className="text-sm font-semibold truncate">RSS 订阅源</p>
-                  <p className={`text-[11px] mt-0.5 truncate ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>通过 `config.feedUrl` 拉取</p>
+                  <p className={`text-[11px] mt-0.5 truncate ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>通过 `config.channels` 拉取</p>
                 </div>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${isDark ? "bg-neutral-900/60 text-neutral-300" : "bg-white text-neutral-600 border border-neutral-200"}`}>
                   已启用
@@ -656,14 +838,101 @@ function ImportPluginModal({
                   </div>
 
                   <div className="space-y-5">
-                    <div className="space-y-1.5">
-                      <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>RSS 地址 (Feed URL)</label>
-                      <input
-                        value={feedUrl}
-                        onChange={e => setFeedUrl(e.target.value)}
-                        placeholder="https://example.com/feed.xml"
-                        className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                      />
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                          RSS 频道 (config.channels)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setChannels(prev => [
+                              ...prev,
+                              createChannelRow(
+                                { label: `频道 ${prev.length + 1}` },
+                                { idAuto: true },
+                              ),
+                            ])
+                          }
+                          className="text-[11px] font-semibold text-[#5856D6] hover:underline"
+                        >
+                          + 添加频道
+                        </button>
+                      </div>
+                      <div className="space-y-3">
+                        {channels.map((ch, index) => (
+                          <div
+                            key={ch._key}
+                            className={`p-4 rounded-2xl border space-y-3 ${subtleBorder} ${mutedBg}`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-semibold">频道 {index + 1}</span>
+                              {channels.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setChannels(prev => prev.filter((_, i) => i !== index))
+                                  }
+                                  className="text-[11px] text-rose-500 hover:underline"
+                                >
+                                  删除
+                                </button>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <input
+                                value={ch.label}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  setChannels(prev =>
+                                    prev.map((row, i) => {
+                                      if (i !== index) return row;
+                                      const next: ChannelFormRow = { ...row, label: v };
+                                      if (row.idAuto) {
+                                        const slug = slugifyChannelId(v);
+                                        if (slug) next.id = slug;
+                                      }
+                                      return next;
+                                    }),
+                                  );
+                                }}
+                                placeholder="显示名称"
+                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                              <input
+                                value={ch.id}
+                                onChange={e => {
+                                  const v = e.target.value
+                                    .toLowerCase()
+                                    .replace(/[^a-z0-9_-]/g, "");
+                                  setChannels(prev =>
+                                    prev.map((row, i) =>
+                                      i === index ? { ...row, id: v, idAuto: false } : row,
+                                    ),
+                                  );
+                                }}
+                                placeholder="id（根据名称自动生成）"
+                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText} ${
+                                  ch.idAuto ? (isDark ? "text-neutral-400" : "text-neutral-500") : ""
+                                }`}
+                              />
+                            </div>
+                            <input
+                              value={ch.feedUrl}
+                              onChange={e => {
+                                const v = e.target.value;
+                                setChannels(prev =>
+                                  prev.map((row, i) =>
+                                    i === index ? { ...row, feedUrl: v } : row,
+                                  ),
+                                );
+                              }}
+                              placeholder="https://example.com/feed.xml"
+                              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            />
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -690,30 +959,38 @@ function ImportPluginModal({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div className="space-y-1.5">
                         <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>媒体类型 mediaType</label>
-                        <select
+                        <StyledSelect
                           value={mediaType}
-                          onChange={e => setMediaType(e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>)}
-                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                          onChange={e =>
+                            setMediaType(
+                              e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>,
+                            )
+                          }
+                          className={`${inputBg} ${inputBorder} ${inputText}`}
                         >
                           <option value="article">article</option>
                           <option value="manga">manga</option>
                           <option value="video">video</option>
                           <option value="audio">audio</option>
-                        </select>
+                        </StyledSelect>
                       </div>
                       <div className="space-y-1.5">
                         <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>排版分类大区</label>
-                        <select
+                        <StyledSelect
                           value={marketCategory}
-                          onChange={e => setMarketCategory(e.target.value as Exclude<PluginMarketCategory, "all">)}
-                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                          onChange={e =>
+                            setMarketCategory(
+                              e.target.value as Exclude<PluginMarketCategory, "all">,
+                            )
+                          }
+                          className={`${inputBg} ${inputBorder} ${inputText}`}
                         >
                           <option value="blog">个人博客</option>
                           <option value="news">新闻资讯</option>
                           <option value="manga">二次元漫画</option>
                           <option value="video">流媒体/视频</option>
                           <option value="audio">有声播客</option>
-                        </select>
+                        </StyledSelect>
                       </div>
                     </div>
 
@@ -790,16 +1067,16 @@ function ImportPluginModal({
                         <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                           <div className="space-y-1.5 lg:col-span-2">
                             <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>图标类型</label>
-                            <select
+                            <StyledSelect
                               value={icon}
                               onChange={e => setIcon(e.target.value as PluginContentType)}
-                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              className={`${inputBg} ${inputBorder} ${inputText}`}
                             >
                               <option value="text">文章适应排版</option>
                               <option value="image">漫画/图片</option>
                               <option value="video">视频</option>
                               <option value="audio">音频</option>
-                            </select>
+                            </StyledSelect>
                           </div>
                           <div className="space-y-1.5">
                             <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>分类标签</label>
@@ -812,55 +1089,39 @@ function ImportPluginModal({
 
                           <div className="space-y-1.5 sm:col-span-2 lg:col-span-3">
                             <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>图标图片 URL（可选）</label>
-                            <div className="flex flex-col sm:flex-row gap-2">
+                            <div className="flex gap-2">
                               <input
                                 value={logoSourceUrl}
                                 onChange={e => setLogoSourceUrl(e.target.value)}
+                                onPaste={handleLogoSourcePaste}
+                                onBlur={() => applyDirectLogoUrl()}
                                 placeholder="https://example.com/icon.png"
-                                className={`flex-1 px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                                className={`min-w-0 flex-1 px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
                               />
-                              <div className="flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  disabled={isUploadingLogo}
-                                  onClick={() => setLogoImageUrl(logoSourceUrl.trim())}
-                                  className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} ${
-                                    isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-white"
-                                  } disabled:opacity-60 disabled:cursor-not-allowed`}
-                                  title="直接使用该 URL 作为图标"
-                                >
-                                  直接使用
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={isUploadingLogo}
-                                  onClick={uploadLogoByURL}
-                                  className={`px-4 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY} disabled:opacity-60 disabled:cursor-not-allowed`}
-                                  title="通过 runtime 上传到 imgbb 并返回新 URL"
-                                >
-                                  {isUploadingLogo ? "上传中..." : "URL 上传"}
-                                </button>
-                                <label
-                                  className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} cursor-pointer ${
-                                    isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-white"
-                                  }`}
-                                  title="选择本地图片上传"
-                                >
-                                  图片上传
-                                  <input
-                                    type="file"
-                                    accept="image/*"
-                                    className="hidden"
-                                    onChange={(e) => {
-                                      const file = e.target.files?.[0];
-                                      if (!file) return;
-                                      void uploadLogoFile(file);
-                                      e.currentTarget.value = "";
-                                    }}
-                                  />
-                                </label>
-                              </div>
+                              <button
+                                type="button"
+                                disabled={isUploadingLogo}
+                                onClick={() => setShowLogoUploadModal(true)}
+                                className={`shrink-0 px-4 py-3 rounded-2xl text-xs font-semibold text-white ${PRIMARY} disabled:opacity-60 disabled:cursor-not-allowed`}
+                              >
+                                {isUploadingLogo ? "上传中..." : "上传图标"}
+                              </button>
                             </div>
+                            <p className={`text-[10px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                              粘贴或输入图片链接后将直接使用；需托管上传请点击「上传图标」
+                            </p>
+                            <input
+                              ref={logoFileInputRef}
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                void uploadLogoFile(file);
+                                e.currentTarget.value = "";
+                              }}
+                            />
                             {logoImageUrl.trim() && (
                               <p className={`text-[11px] mt-1 truncate ${isDark ? "text-neutral-500" : "text-neutral-500"}`}>
                                 当前图标：{logoImageUrl.trim()}
@@ -936,6 +1197,74 @@ function ImportPluginModal({
           </div>
         </div>
       </div>
+
+      {showLogoUploadModal && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/45 p-6"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (!isUploadingLogo) setShowLogoUploadModal(false);
+          }}
+        >
+          <div
+            className={`w-full max-w-md rounded-[24px] border shadow-2xl p-6 ${panelBg} ${subtleBorder}`}
+            onClick={e => e.stopPropagation()}
+          >
+            <h4 className="text-sm font-bold">上传插件图标</h4>
+            <p className={`text-[11px] mt-1.5 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+              选择上传方式。若已在上方输入框填写链接，URL 上传将使用该地址。
+            </p>
+
+            <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                disabled={isUploadingLogo}
+                onClick={() => logoFileInputRef.current?.click()}
+                className={`p-4 rounded-2xl border text-left transition-colors ${subtleBorder} ${
+                  isDark ? "hover:bg-neutral-900/60" : "hover:bg-neutral-50"
+                } disabled:opacity-60 disabled:cursor-not-allowed`}
+              >
+                <p className="text-xs font-semibold">本地上传</p>
+                <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                  从设备选择图片并上传至图床
+                </p>
+              </button>
+              <button
+                type="button"
+                disabled={isUploadingLogo}
+                onClick={() => void uploadLogoByURL()}
+                className={`p-4 rounded-2xl border text-left transition-colors ${subtleBorder} ${
+                  isDark ? "hover:bg-neutral-900/60" : "hover:bg-neutral-50"
+                } disabled:opacity-60 disabled:cursor-not-allowed`}
+              >
+                <p className="text-xs font-semibold">URL 上传</p>
+                <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                  将输入框中的图片链接上传至图床
+                </p>
+              </button>
+            </div>
+
+            {logoSourceUrl.trim() && (
+              <p className={`text-[11px] mt-4 truncate ${isDark ? "text-neutral-500" : "text-neutral-500"}`}>
+                当前链接：{logoSourceUrl.trim()}
+              </p>
+            )}
+
+            <div className="mt-5 flex justify-end">
+              <button
+                type="button"
+                disabled={isUploadingLogo}
+                onClick={() => setShowLogoUploadModal(false)}
+                className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} ${
+                  isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+                } disabled:opacity-60 disabled:cursor-not-allowed`}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

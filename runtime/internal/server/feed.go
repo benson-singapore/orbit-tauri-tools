@@ -1,6 +1,8 @@
 package server
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,11 +16,13 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 
 	q := r.URL.Query()
 	pluginID := strings.TrimSpace(q.Get("plugin_id"))
+	channelID := strings.TrimSpace(q.Get("channel"))
+	contentType := strings.TrimSpace(q.Get("type"))
 	refresh := q.Get("refresh") == "1" || strings.EqualFold(q.Get("refresh"), "true")
 	limit := parsePositiveInt(q.Get("limit"), 20)
 	offset := parseNonNegativeInt(q.Get("offset"), 0)
 
-	items, err := s.registry.Feed(r.Context(), pluginID, refresh)
+	items, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, refresh)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
 		return
@@ -32,6 +36,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		Type         string   `json:"type"`
 		PluginID     string   `json:"pluginId"`
 		PluginName   string   `json:"pluginName"`
+		ChannelID    string   `json:"channelId,omitempty"`
 		Author       string   `json:"author"`
 		Time         string   `json:"time"`
 		PublishedAt  int64    `json:"publishedAt"`
@@ -40,9 +45,21 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		SourceURL    string   `json:"sourceUrl,omitempty"`
 		Tags         []string `json:"tags"`
 		IsBookmarked bool     `json:"isBookmarked"`
+		IsRead       bool     `json:"isRead"`
 	}
 
 	total := len(items)
+	unreadTotal := 0
+	for _, item := range items {
+		if !item.IsRead {
+			unreadTotal++
+		}
+	}
+	if offset == 0 {
+		if count, err := s.registry.CountUnread(r.Context(), pluginID, channelID, contentType); err == nil {
+			unreadTotal = count
+		}
+	}
 	if offset > total {
 		offset = total
 	}
@@ -66,6 +83,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			Type:         item.Type,
 			PluginID:     item.PluginID,
 			PluginName:   item.PluginName,
+			ChannelID:    item.ChannelID,
 			Author:       item.Author,
 			Time:         item.Time,
 			PublishedAt:  item.PublishedAt,
@@ -74,16 +92,18 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 			SourceURL:    item.SourceURL,
 			Tags:         tags,
 			IsBookmarked: false,
+			IsRead:       item.IsRead,
 		})
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok":     true,
-		"items":  out,
-		"count":  len(out),
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+		"ok":          true,
+		"items":       out,
+		"count":       len(out),
+		"total":       total,
+		"unreadTotal": unreadTotal,
+		"limit":       limit,
+		"offset":      offset,
 	})
 }
 
@@ -98,8 +118,9 @@ func (s *Server) handleRefreshFeed(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("plugin_id is required"))
 		return
 	}
+	channelID := strings.TrimSpace(r.URL.Query().Get("channel"))
 
-	items, err := s.registry.RefreshPlugin(r.Context(), pluginID)
+	items, err := s.registry.RefreshPlugin(r.Context(), pluginID, channelID)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
 		return
@@ -108,6 +129,36 @@ func (s *Server) handleRefreshFeed(w http.ResponseWriter, r *http.Request) {
 		"ok":    true,
 		"count": len(items),
 	})
+}
+
+func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+		return
+	}
+
+	var body struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("invalid json body"))
+		return
+	}
+	id := strings.TrimSpace(body.ID)
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, errorBody("id is required"))
+		return
+	}
+
+	if err := s.registry.MarkFeedItemRead(r.Context(), id); err != nil {
+		if strings.Contains(err.Error(), "not found") {
+			writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, errorBody(err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "id": id})
 }
 
 func parsePositiveInt(raw string, fallback int) int {

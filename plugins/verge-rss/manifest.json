@@ -6,8 +6,14 @@
   "source": "rss",
   "capabilities": ["feed"],
   "config": {
-    "feedUrl": "https://www.theverge.com/rss/index.xml",
-    "refreshInterval": 3600
+    "refreshInterval": 3600,
+    "channels": [
+      {
+        "id": "main",
+        "label": "全部",
+        "feedUrl": "https://www.theverge.com/rss/index.xml"
+      }
+    ]
   },
   "meta": {
     "description": "科技评论与前沿快讯",

@@ -2,8 +2,10 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -21,6 +23,7 @@ type PluginRow struct {
 type FeedItemRow struct {
 	ID          string
 	PluginID    string
+	ChannelID   string
 	Title       string
 	Summary     string
 	Cover       string
@@ -29,6 +32,7 @@ type FeedItemRow struct {
 	Author      string
 	PublishedAt int64
 	PayloadJSON string
+	ReadAt      sql.NullInt64
 }
 
 func (s *Store) ListPlugins(ctx context.Context) ([]PluginRow, error) {
@@ -96,22 +100,55 @@ func (s *Store) DeletePlugin(ctx context.Context, id string) error {
 	return err
 }
 
-func (s *Store) ReplaceFeedItems(ctx context.Context, pluginID string, items []FeedItemRow, fetchedAt int64) error {
+func (s *Store) ReplaceFeedItemsForChannel(
+	ctx context.Context,
+	pluginID, channelID string,
+	items []FeedItemRow,
+	fetchedAt int64,
+) error {
 	tx, err := s.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if _, err := tx.ExecContext(ctx, `DELETE FROM feed_items WHERE plugin_id = ?`, pluginID); err != nil {
+	readAtByID := make(map[string]int64)
+	readRows, err := tx.QueryContext(ctx,
+		`SELECT id, read_at FROM feed_items
+		 WHERE plugin_id = ? AND channel_id = ? AND read_at IS NOT NULL`,
+		pluginID, channelID,
+	)
+	if err != nil {
+		return err
+	}
+	for readRows.Next() {
+		var id string
+		var readAt int64
+		if err := readRows.Scan(&id, &readAt); err != nil {
+			readRows.Close()
+			return err
+		}
+		readAtByID[id] = readAt
+	}
+	if err := readRows.Close(); err != nil {
+		return err
+	}
+	if err := readRows.Err(); err != nil {
+		return err
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM feed_items WHERE plugin_id = ? AND channel_id = ?`,
+		pluginID, channelID,
+	); err != nil {
 		return err
 	}
 
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO feed_items (
-			id, plugin_id, title, summary, cover, media_type, source_url,
-			author, published_at, payload_json, fetched_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			id, plugin_id, channel_id, title, summary, cover, media_type, source_url,
+			author, published_at, payload_json, fetched_at, read_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return err
@@ -119,9 +156,17 @@ func (s *Store) ReplaceFeedItems(ctx context.Context, pluginID string, items []F
 	defer stmt.Close()
 
 	for _, item := range items {
+		chID := item.ChannelID
+		if chID == "" {
+			chID = channelID
+		}
+		var readAt any
+		if ts, ok := readAtByID[item.ID]; ok {
+			readAt = ts
+		}
 		if _, err := stmt.ExecContext(ctx,
-			item.ID, pluginID, item.Title, item.Summary, item.Cover, item.MediaType,
-			item.SourceURL, item.Author, item.PublishedAt, item.PayloadJSON, fetchedAt,
+			item.ID, pluginID, chID, item.Title, item.Summary, item.Cover, item.MediaType,
+			item.SourceURL, item.Author, item.PublishedAt, item.PayloadJSON, fetchedAt, readAt,
 		); err != nil {
 			return err
 		}
@@ -130,16 +175,24 @@ func (s *Store) ReplaceFeedItems(ctx context.Context, pluginID string, items []F
 	return tx.Commit()
 }
 
-func (s *Store) ListFeedItems(ctx context.Context, pluginID string) ([]FeedItemRow, error) {
+func (s *Store) ListFeedItems(ctx context.Context, pluginID, channelID string) ([]FeedItemRow, error) {
 	query := `
-		SELECT id, plugin_id, title, summary, cover, media_type, source_url,
-		       author, published_at, payload_json
+		SELECT id, plugin_id, channel_id, title, summary, cover, media_type, source_url,
+		       author, published_at, payload_json, read_at
 		FROM feed_items
 	`
 	args := []any{}
+	where := make([]string, 0, 2)
 	if pluginID != "" {
-		query += ` WHERE plugin_id = ?`
+		where = append(where, `plugin_id = ?`)
 		args = append(args, pluginID)
+	}
+	if channelID != "" {
+		where = append(where, `channel_id = ?`)
+		args = append(args, channelID)
+	}
+	if len(where) > 0 {
+		query += ` WHERE ` + strings.Join(where, ` AND `)
 	}
 	query += ` ORDER BY published_at DESC`
 
@@ -153,8 +206,9 @@ func (s *Store) ListFeedItems(ctx context.Context, pluginID string) ([]FeedItemR
 	for rows.Next() {
 		var item FeedItemRow
 		if err := rows.Scan(
-			&item.ID, &item.PluginID, &item.Title, &item.Summary, &item.Cover,
+			&item.ID, &item.PluginID, &item.ChannelID, &item.Title, &item.Summary, &item.Cover,
 			&item.MediaType, &item.SourceURL, &item.Author, &item.PublishedAt, &item.PayloadJSON,
+			&item.ReadAt,
 		); err != nil {
 			return nil, err
 		}
@@ -165,18 +219,78 @@ func (s *Store) ListFeedItems(ctx context.Context, pluginID string) ([]FeedItemR
 
 func (s *Store) GetFeedItem(ctx context.Context, id string) (*FeedItemRow, error) {
 	row := s.DB.QueryRowContext(ctx, `
-		SELECT id, plugin_id, title, summary, cover, media_type, source_url,
-		       author, published_at, payload_json
+		SELECT id, plugin_id, channel_id, title, summary, cover, media_type, source_url,
+		       author, published_at, payload_json, read_at
 		FROM feed_items WHERE id = ?
 	`, id)
 	var item FeedItemRow
 	if err := row.Scan(
-		&item.ID, &item.PluginID, &item.Title, &item.Summary, &item.Cover,
+		&item.ID, &item.PluginID, &item.ChannelID, &item.Title, &item.Summary, &item.Cover,
 		&item.MediaType, &item.SourceURL, &item.Author, &item.PublishedAt, &item.PayloadJSON,
+		&item.ReadAt,
 	); err != nil {
 		return nil, err
 	}
 	return &item, nil
+}
+
+func (s *Store) MarkFeedItemRead(ctx context.Context, id string, readAt int64) error {
+	if readAt <= 0 {
+		readAt = time.Now().Unix()
+	}
+	res, err := s.DB.ExecContext(ctx,
+		`UPDATE feed_items SET read_at = ? WHERE id = ? AND read_at IS NULL`,
+		readAt, id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		var exists int
+		err := s.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM feed_items WHERE id = ?`, id,
+		).Scan(&exists)
+		if err != nil {
+			return err
+		}
+		if exists == 0 {
+			return fmt.Errorf("feed item not found: %s", id)
+		}
+	}
+	return nil
+}
+
+func (s *Store) CountUnreadFeedItems(
+	ctx context.Context,
+	pluginID, channelID, contentType string,
+) (int, error) {
+	query := `SELECT COUNT(*) FROM feed_items WHERE read_at IS NULL`
+	args := []any{}
+	where := make([]string, 0, 3)
+	if pluginID != "" {
+		where = append(where, `plugin_id = ?`)
+		args = append(args, pluginID)
+	}
+	if channelID != "" {
+		where = append(where, `channel_id = ?`)
+		args = append(args, channelID)
+	}
+	if contentType != "" {
+		where = append(where, `media_type = ?`)
+		args = append(args, contentType)
+	}
+	if len(where) > 0 {
+		query += ` AND ` + strings.Join(where, ` AND `)
+	}
+	var count int
+	if err := s.DB.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
 }
 
 func (s *Store) DeleteFeedItemsByPlugin(ctx context.Context, pluginID string) error {

@@ -6,8 +6,14 @@
   "source": "rss",
   "capabilities": ["feed"],
   "config": {
-    "feedUrl": "https://techcrunch.com/feed/",
-    "refreshInterval": 3600
+    "refreshInterval": 3600,
+    "channels": [
+      {
+        "id": "main",
+        "label": "全部",
+        "feedUrl": "https://techcrunch.com/feed/"
+      }
+    ]
   },
   "meta": {
     "description": "硅谷创投快讯与硬核科技创业分析",

@@ -6,8 +6,14 @@
   "source": "rss",
   "capabilities": ["feed"],
   "config": {
-    "feedUrl": "https://www.wired.com/feed/rss",
-    "refreshInterval": 3600
+    "refreshInterval": 3600,
+    "channels": [
+      {
+        "id": "main",
+        "label": "全部",
+        "feedUrl": "https://www.wired.com/feed/rss"
+      }
+    ]
   },
   "meta": {
     "description": "关注科技、人文、科学对社会和文化的深远改变",

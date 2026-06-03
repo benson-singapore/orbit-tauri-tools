@@ -52,6 +52,7 @@ export const INITIAL_PLUGINS: Plugin[] = [
     active: true,
     desc: "集成展示所有订阅内容",
     color: "bg-indigo-500",
+    channels: [],
   },
   {
     id: "verge",

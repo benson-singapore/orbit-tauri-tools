@@ -1,5 +1,6 @@
 import type {
   Article,
+  ContentType,
   FeedResponse,
   InstallRSSPluginRequest,
   Plugin,
@@ -53,11 +54,16 @@ export async function fetchPlugins(): Promise<Plugin[]> {
     throw new Error(await parseError(res));
   }
   const data = (await res.json()) as PluginsResponse;
-  return data.plugins ?? [];
+  return (data.plugins ?? []).map(plugin => ({
+    ...plugin,
+    channels: Array.isArray(plugin.channels) ? plugin.channels : [],
+  }));
 }
 
 export async function fetchFeed(options?: {
   pluginId?: string;
+  channel?: string;
+  type?: ContentType;
   refresh?: boolean;
   limit?: number;
   offset?: number;
@@ -66,6 +72,12 @@ export async function fetchFeed(options?: {
   const params = new URLSearchParams();
   if (options?.pluginId && options.pluginId !== "all") {
     params.set("plugin_id", options.pluginId);
+  }
+  if (options?.channel) {
+    params.set("channel", options.channel);
+  }
+  if (options?.type) {
+    params.set("type", options.type);
   }
   if (options?.refresh) {
     params.set("refresh", "1");
@@ -123,6 +135,18 @@ export async function uninstallPlugin(id: string): Promise<void> {
   const base = await apiBase();
   const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
     method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+}
+
+export async function markFeedItemRead(id: string): Promise<void> {
+  const base = await apiBase();
+  const res = await fetch(`${base}/v1/feed/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
   });
   if (!res.ok) {
     throw new Error(await parseError(res));

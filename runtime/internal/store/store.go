@@ -105,6 +105,50 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("migrate: %w", err)
 		}
 	}
+	if err := s.migrateFeedItemsChannelID(); err != nil {
+		return err
+	}
+	if err := s.migrateFeedItemsReadAt(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) migrateFeedItemsChannelID() error {
+	var count int
+	err := s.DB.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('feed_items') WHERE name = 'channel_id'`,
+	).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check channel_id column: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	if _, err := s.DB.Exec(
+		`ALTER TABLE feed_items ADD COLUMN channel_id TEXT NOT NULL DEFAULT 'main'`,
+	); err != nil {
+		return fmt.Errorf("add channel_id column: %w", err)
+	}
+	_, _ = s.DB.Exec(`CREATE INDEX IF NOT EXISTS idx_feed_items_plugin_channel ON feed_items(plugin_id, channel_id)`)
+	return nil
+}
+
+func (s *Store) migrateFeedItemsReadAt() error {
+	var count int
+	err := s.DB.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('feed_items') WHERE name = 'read_at'`,
+	).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check read_at column: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	if _, err := s.DB.Exec(`ALTER TABLE feed_items ADD COLUMN read_at INTEGER`); err != nil {
+		return fmt.Errorf("add read_at column: %w", err)
+	}
+	_, _ = s.DB.Exec(`CREATE INDEX IF NOT EXISTS idx_feed_items_unread ON feed_items(read_at) WHERE read_at IS NULL`)
 	return nil
 }
 

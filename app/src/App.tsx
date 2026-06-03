@@ -24,56 +24,58 @@ export default function App() {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [layoutSwap, setLayoutSwap] = useState(false);
   const [activePlugin, setActivePlugin] = useState("all");
+  const [activeChannel, setActiveChannel] = useState("all");
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
 
+  const feedContentType =
+    activePlugin === "all" && activeCategory !== "all"
+      ? activeCategory
+      : undefined;
+
   const {
     plugins: myPlugins,
-    articles: feedArticles,
+    articles,
+    unreadTotal,
     loading: feedLoading,
     loadingMore: feedLoadingMore,
     hasMore: feedHasMore,
     error: feedError,
     reload,
     loadMore,
+    markArticleRead,
     installCustomRSS,
     togglePluginActive: orbitTogglePluginActive,
     removePlugin: orbitRemovePlugin,
     movePlugin: orbitMovePlugin,
-  } = useOrbitData();
+  } = useOrbitData(activePlugin, activeChannel, feedContentType);
 
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
-  const [readIds, setReadIds] = useState<Set<string>>(new Set());
-  const articles = useMemo(
+  const articlesWithBookmarks = useMemo(
     () =>
-      feedArticles.map(item => ({
+      articles.map(item => ({
         ...item,
         isBookmarked: bookmarkedIds.has(item.id),
-        isRead: readIds.has(item.id),
       })),
-    [feedArticles, bookmarkedIds, readIds],
+    [articles, bookmarkedIds],
   );
 
   const [selectedItem, setSelectedItem] = useState<Article | null>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("today");
 
   const [showPluginStore, setShowPluginStore] = useState(false);
-  const unreadCount = useMemo(
-    () => articles.filter(item => !item.isRead).length,
-    [articles],
-  );
 
   useEffect(() => {
-    if (articles.length === 0) {
+    if (articlesWithBookmarks.length === 0) {
       return;
     }
     setSelectedItem(prev => {
-      if (prev && articles.some(a => a.id === prev.id)) {
-        return articles.find(a => a.id === prev.id) ?? prev;
+      if (prev && articlesWithBookmarks.some(a => a.id === prev.id)) {
+        return articlesWithBookmarks.find(a => a.id === prev.id) ?? prev;
       }
-      return articles[0] ?? null;
+      return articlesWithBookmarks[0] ?? null;
     });
-  }, [articles]);
+  }, [articlesWithBookmarks]);
 
   const [focusMode, setFocusMode] = useState(false);
   const [dimmerMode, setDimmerMode] = useState(false);
@@ -87,12 +89,7 @@ export default function App() {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
 
   const filteredArticles = useMemo(() => {
-    return articles.filter(item => {
-      // Filter by plugin ID
-      if (activePlugin !== 'all' && item.pluginId !== activePlugin) {
-        return false;
-      }
-      
+    return articlesWithBookmarks.filter(item => {
       // Filter by custom left-side tabs
       if (activeTab === 'bookmarks' && !item.isBookmarked) {
         return false;
@@ -100,11 +97,6 @@ export default function App() {
       if (activeTab === 'trending' && item.reads && parseInt(item.reads) < 15) {
         // Simple trending heuristic for items with higher readership
         if (!item.reads.includes('k')) return false;
-      }
-
-      // Filter by category icons
-      if (activeCategory !== 'all' && item.type !== activeCategory) {
-        return false;
       }
 
       // Filter by Search Query
@@ -119,24 +111,26 @@ export default function App() {
 
       return true;
     });
-  }, [articles, activePlugin, activeTab, activeCategory, searchQuery]);
+  }, [articlesWithBookmarks, activeTab, searchQuery]);
 
   const pluginById = useMemo(
     () => new Map(myPlugins.map(plugin => [plugin.id, plugin] as const)),
     [myPlugins],
   );
 
+  const activePluginChannels = useMemo(() => {
+    if (activePlugin === "all") return [];
+    return pluginById.get(activePlugin)?.channels ?? [];
+  }, [activePlugin, pluginById]);
+
+  const showPluginChannelBar = activePluginChannels.length > 1;
+
   const toggleTheme = () => {
     setTheme(prev => prev === 'light' ? 'dark' : 'light');
   };
 
   const handleItemSelect = (item: Article) => {
-    setReadIds(prev => {
-      if (prev.has(item.id)) return prev;
-      const next = new Set(prev);
-      next.add(item.id);
-      return next;
-    });
+    void markArticleRead(item.id);
     setSelectedItem(item);
     setAiSummary(null); // Clear previous AI summarizes
     setIsPlayingAudio(false);
@@ -168,7 +162,7 @@ export default function App() {
   const handleUninstallPlugin = (id: string) => {
     void orbitRemovePlugin(id).catch(console.error);
     if (activePlugin === id) {
-      setActivePlugin("all");
+      selectPlugin("all");
     }
   };
 
@@ -177,7 +171,7 @@ export default function App() {
     if (activePlugin === id) {
       const target = myPlugins.find(p => p.id === id);
       if (target?.active !== false) {
-        setActivePlugin("all");
+        selectPlugin("all");
       }
     }
   };
@@ -187,11 +181,27 @@ export default function App() {
   };
 
   const handleImportCustomPlugin = (payload: InstallRSSPluginRequest) => {
-    const trimmed = payload.feedUrl.trim();
-    if (!trimmed) {
+    const channels =
+      payload.channels && payload.channels.length > 0
+        ? payload.channels
+        : payload.feedUrl?.trim()
+          ? [
+              {
+                id: "main",
+                label: "全部",
+                feedUrl: payload.feedUrl.trim(),
+              },
+            ]
+          : [];
+    if (channels.length === 0) {
       return;
     }
-    void installCustomRSS({ ...payload, feedUrl: trimmed }).catch(console.error);
+    void installCustomRSS({ ...payload, channels }).catch(console.error);
+  };
+
+  const selectPlugin = (pluginId: string) => {
+    setActivePlugin(pluginId);
+    setActiveChannel("all");
   };
 
   return (
@@ -303,7 +313,7 @@ export default function App() {
                 onClick={() => {
                   setShowPluginStore(false);
                   setActiveTab('today');
-                  setActivePlugin('all');
+                  selectPlugin('all');
                 }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
                   isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
@@ -325,7 +335,7 @@ export default function App() {
                   <div className="flex-1 flex items-center justify-between">
                     <span>Today 全部</span>
                     <span className="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400 px-1.5 py-0.5 rounded-md font-semibold">
-                      未读 {unreadCount}
+                      未读 {unreadTotal}
                     </span>
                   </div>
                 )}
@@ -335,7 +345,7 @@ export default function App() {
                 onClick={() => {
                   setShowPluginStore(false);
                   setActiveTab('bookmarks');
-                  setActivePlugin('all');
+                  selectPlugin('all');
                 }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
                   isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
@@ -351,7 +361,7 @@ export default function App() {
                   <div className="flex-1 flex items-center justify-between">
                     <span>Bookmarks 收藏</span>
                     <span className="text-[10px] bg-rose-50 text-rose-600 dark:bg-rose-950/50 dark:text-rose-400 px-1.5 py-0.5 rounded-md font-semibold">
-                      {articles.filter(a => a.isBookmarked).length}
+                      {articlesWithBookmarks.filter(a => a.isBookmarked).length}
                     </span>
                   </div>
                 )}
@@ -361,7 +371,7 @@ export default function App() {
                 onClick={() => {
                   setShowPluginStore(false);
                   setActiveTab('trending');
-                  setActivePlugin('all');
+                  selectPlugin('all');
                 }}
                 className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
                   isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
@@ -404,7 +414,7 @@ export default function App() {
                   key={plugin.id}
                   onClick={() => {
                     setShowPluginStore(false);
-                    setActivePlugin(plugin.id);
+                    selectPlugin(plugin.id);
                     setActiveTab('all');
                   }}
                   className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
@@ -510,33 +520,66 @@ export default function App() {
                 )}
               </div>
 
-              {/* Resource Content Categories Filters */}
-              <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
-                {(
-                  [
-                    { id: "all", label: "全部" },
-                    { id: "text", label: "资讯" },
-                    { id: "video", label: "视频" },
-                    { id: "audio", label: "音频" },
-                    { id: "image", label: "图片" },
-                  ] as const satisfies ReadonlyArray<{
-                    id: CategoryFilter;
-                    label: string;
-                  }>
-                ).map((cat) => (
-                  <button
-                    key={cat.id}
-                    onClick={() => setActiveCategory(cat.id)}
-                    className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
-                      activeCategory === cat.id
-                        ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm'
-                        : 'bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300'
-                    }`}
-                  >
-                    {cat.label}
-                  </button>
-                ))}
-              </div>
+              {/* Feed filters: media types (all platforms) or plugin channels */}
+              {(activePlugin === "all" || showPluginChannelBar) && (
+                <div className="flex gap-1 overflow-x-auto pb-1 no-scrollbar">
+                  {activePlugin === "all"
+                    ? (
+                      [
+                        { id: "all", label: "全部" },
+                        { id: "text", label: "资讯" },
+                        { id: "video", label: "视频" },
+                        { id: "audio", label: "音频" },
+                        { id: "image", label: "图片" },
+                      ] as const satisfies ReadonlyArray<{
+                        id: CategoryFilter;
+                        label: string;
+                      }>
+                    ).map((cat) => (
+                      <button
+                        key={cat.id}
+                        type="button"
+                        onClick={() => setActiveCategory(cat.id)}
+                        className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
+                          activeCategory === cat.id
+                            ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm"
+                            : "bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300"
+                        }`}
+                      >
+                        {cat.label}
+                      </button>
+                    ))
+                    : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => setActiveChannel("all")}
+                          className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
+                            activeChannel === "all"
+                              ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm"
+                              : "bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300"
+                          }`}
+                        >
+                          全部
+                        </button>
+                        {activePluginChannels.map((ch) => (
+                          <button
+                            key={ch.id}
+                            type="button"
+                            onClick={() => setActiveChannel(ch.id)}
+                            className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
+                              activeChannel === ch.id
+                                ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm"
+                                : "bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300"
+                            }`}
+                          >
+                            {ch.label}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                </div>
+              )}
             </div>
 
             {/* Scrollable list of feeds */}

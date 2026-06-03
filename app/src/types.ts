@@ -5,6 +5,12 @@ export type ThemeMode = "light" | "dark";
 export type ActiveTab = "today" | "bookmarks" | "trending" | "all";
 export type CategoryFilter = "all" | ContentType;
 
+export interface PluginChannel {
+  id: string;
+  label: string;
+  feedUrl?: string;
+}
+
 export interface Article {
   id: string;
   title: string;
@@ -13,6 +19,7 @@ export interface Article {
   type: ContentType;
   pluginId: string;
   pluginName: string;
+  channelId?: string;
   author: string;
   time: string;
   reads: string;
@@ -46,7 +53,8 @@ export interface Plugin {
   mediaType?: "article" | "manga" | "video" | "audio";
   active?: boolean;
   desc: string;
-  feedUrl?: string;
+  channels?: PluginChannel[];
+  defaultChannel?: string;
   refreshInterval?: number;
   userAgent?: string;
   logoText?: string;
@@ -64,6 +72,7 @@ export interface FeedResponse {
   items: Article[];
   count: number;
   total?: number;
+  unreadTotal?: number;
   limit?: number;
   offset?: number;
 }
@@ -74,7 +83,9 @@ export interface PluginsResponse {
 
 export interface InstallRSSPluginRequest {
   source?: "rss";
-  feedUrl: string;
+  channels?: PluginChannel[];
+  feedUrl?: string;
+  defaultChannel?: string;
   name?: string;
   id?: string;
   mediaType?: "article" | "manga" | "video" | "audio";

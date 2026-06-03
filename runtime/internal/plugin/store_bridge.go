@@ -29,11 +29,12 @@ func storePluginRow(rec *PluginRecord, manifestJSON string) store.PluginRow {
 	}
 }
 
-func feedItemToRow(item FeedItem) (store.FeedItemRow, error) {
+func feedItemToRow(item FeedItem, channelID string) (store.FeedItemRow, error) {
 	payload, err := json.Marshal(map[string]any{
 		"tags":       item.Tags,
 		"pluginName": item.PluginName,
 		"type":       item.Type,
+		"channelId":  channelID,
 	})
 	if err != nil {
 		return store.FeedItemRow{}, err
@@ -41,6 +42,7 @@ func feedItemToRow(item FeedItem) (store.FeedItemRow, error) {
 	return store.FeedItemRow{
 		ID:          item.ID,
 		PluginID:    item.PluginID,
+		ChannelID:   channelID,
 		Title:       item.Title,
 		Summary:     item.Summary,
 		Cover:       item.Image,
@@ -64,14 +66,24 @@ func rowToFeedItem(row store.FeedItemRow) FeedItem {
 		Author:      row.Author,
 		PublishedAt: row.PublishedAt,
 		Time:        store.FormatRelativeTime(row.PublishedAt),
+		IsRead:      row.ReadAt.Valid,
+	}
+	if row.ReadAt.Valid {
+		item.ReadAt = row.ReadAt.Int64
 	}
 	if row.PayloadJSON != "" {
 		var payload struct {
 			Tags       []string `json:"tags"`
 			PluginName string   `json:"pluginName"`
 			Type       string   `json:"type"`
+			ChannelID  string   `json:"channelId"`
 		}
 		_ = json.Unmarshal([]byte(row.PayloadJSON), &payload)
+		if payload.ChannelID != "" {
+			item.ChannelID = payload.ChannelID
+		} else if row.ChannelID != "" {
+			item.ChannelID = row.ChannelID
+		}
 		if payload.PluginName != "" {
 			item.PluginName = payload.PluginName
 		}
@@ -85,20 +97,25 @@ func rowToFeedItem(row store.FeedItemRow) FeedItem {
 	return item
 }
 
-func (r *Registry) persistFeedItems(ctx context.Context, pluginID string, items []FeedItem, fetchedAt int64) error {
+func (r *Registry) persistFeedItemsForChannel(
+	ctx context.Context,
+	pluginID, channelID string,
+	items []FeedItem,
+	fetchedAt int64,
+) error {
 	rows := make([]store.FeedItemRow, 0, len(items))
 	for _, item := range items {
-		row, err := feedItemToRow(item)
+		row, err := feedItemToRow(item, channelID)
 		if err != nil {
 			return err
 		}
 		rows = append(rows, row)
 	}
-	return r.store.ReplaceFeedItems(ctx, pluginID, rows, fetchedAt)
+	return r.store.ReplaceFeedItemsForChannel(ctx, pluginID, channelID, rows, fetchedAt)
 }
 
-func (r *Registry) loadFeedItems(ctx context.Context, pluginID string) ([]FeedItem, error) {
-	rows, err := r.store.ListFeedItems(ctx, pluginID)
+func (r *Registry) loadFeedItems(ctx context.Context, pluginID, channelID string) ([]FeedItem, error) {
+	rows, err := r.store.ListFeedItems(ctx, pluginID, channelID)
 	if err != nil {
 		return nil, err
 	}

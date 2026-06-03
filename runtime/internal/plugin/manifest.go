@@ -20,6 +20,7 @@ func LoadManifest(path string) (*Manifest, error) {
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
+	MigrateManifestConfig(&m.Config)
 	if err := ValidateManifest(&m); err != nil {
 		return nil, err
 	}
@@ -61,9 +62,15 @@ func ValidateManifest(m *Manifest) error {
 		if !HasCapability(m, CapFeed) {
 			return fmt.Errorf("rss plugin must declare capability %q", CapFeed)
 		}
-		m.Config.FeedURL = strings.TrimSpace(m.Config.FeedURL)
-		if m.Config.FeedURL == "" {
-			return fmt.Errorf("rss plugin requires config.feedUrl")
+		MigrateManifestConfig(&m.Config)
+		if err := validateChannels(m.Config.Channels); err != nil {
+			return err
+		}
+		if dc := strings.TrimSpace(m.Config.DefaultChannel); dc != "" {
+			if _, ok := findChannel(m.Config.Channels, dc); !ok {
+				return fmt.Errorf("defaultChannel %q not found in channels", dc)
+			}
+			m.Config.DefaultChannel = dc
 		}
 	case SourceScript:
 		return fmt.Errorf("script plugins are not supported yet")
@@ -92,9 +99,13 @@ func SaveManifest(dir string, m *Manifest) error {
 }
 
 // NewRSSManifest builds a manifest for a user-imported feed.
-func NewRSSManifest(id, name, feedURL string) *Manifest {
+func NewRSSManifest(id, name string, channels []FeedChannel) *Manifest {
 	if name == "" {
 		name = "Custom RSS"
+	}
+	desc := name
+	if len(channels) == 1 {
+		desc = channels[0].FeedURL
 	}
 	return &Manifest{
 		ID:           id,
@@ -104,11 +115,11 @@ func NewRSSManifest(id, name, feedURL string) *Manifest {
 		Source:       SourceRSS,
 		Capabilities: []string{CapFeed},
 		Config: ManifestConfig{
-			FeedURL:         feedURL,
+			Channels:        channels,
 			RefreshInterval: 3600,
 		},
 		Meta: ManifestMeta{
-			Description:    feedURL,
+			Description:    desc,
 			Icon:           "text",
 			Color:          "bg-orange-500",
 			LogoText:       "R",

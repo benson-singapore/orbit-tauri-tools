@@ -31,12 +31,16 @@ func NewRSSFetcher() *RSSFetcher {
 	}
 }
 
-func (f *RSSFetcher) FetchFeed(ctx context.Context, m *Manifest) ([]FeedItem, error) {
+func (f *RSSFetcher) FetchFeedURL(ctx context.Context, m *Manifest, feedURL string) ([]FeedItem, error) {
 	if m.Source != SourceRSS {
 		return nil, fmt.Errorf("plugin %s is not rss", m.ID)
 	}
+	feedURL = strings.TrimSpace(feedURL)
+	if feedURL == "" {
+		return nil, fmt.Errorf("feedUrl is required")
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, m.Config.FeedURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feedURL, nil)
 	if err != nil {
 		return nil, err
 	}

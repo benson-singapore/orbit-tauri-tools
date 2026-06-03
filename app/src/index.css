@@ -34,3 +34,10 @@ html.orbit-tauri-non-mac .app-titlebar {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
+
+/* Native <select> on macOS WKWebView ignores border-radius; suppress system chrome */
+.orbit-select {
+  -webkit-appearance: none;
+  appearance: none;
+  background-image: none;
+}

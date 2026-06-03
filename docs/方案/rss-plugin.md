@@ -39,9 +39,15 @@ runtime/internal/
   "source": "rss",
   "capabilities": ["feed"],
   "config": {
-    "feedUrl": "https://www.theverge.com/rss/index.xml",
     "refreshInterval": 3600,
-    "userAgent": ""
+    "userAgent": "",
+    "channels": [
+      {
+        "id": "main",
+        "label": "全部",
+        "feedUrl": "https://www.theverge.com/rss/index.xml"
+      }
+    ]
   },
   "meta": {
     "description": "科技评论与前沿快讯",
@@ -61,7 +67,8 @@ runtime/internal/
 | `mediaType` | | 默认 `article`；后续支持 `manga` / `video` / `audio` |
 | `source` | ✓ | Phase 1 仅 `rss` |
 | `capabilities` | ✓ | RSS 必须包含 `feed` |
-| `config.feedUrl` | ✓ | RSS/Atom 地址 |
+| `config.channels` | ✓ | 至少 1 项；每项含 `id`、`label`、`feedUrl` |
+| `config.defaultChannel` | | 多频道时默认选中项 |
 | `config.refreshInterval` | | 秒，默认 3600 |
 | `meta.*` | | 前端插件卡片 UI 元数据 |
 
@@ -123,7 +130,10 @@ sequenceDiagram
 | Query | 说明 |
 |-------|------|
 | `plugin_id` | 可选，筛选单个插件 |
+| `channel` | 可选，单插件下指定频道；省略且插件有多频道时合并全部 |
+| `type` | 可选，`text`/`video`/`audio`/`image`；仅在 `plugin_id` 为全部时跨插件过滤 |
 | `refresh=1` | 强制拉取远程 Feed |
+| `limit` / `offset` | 分页 |
 
 响应：
 
