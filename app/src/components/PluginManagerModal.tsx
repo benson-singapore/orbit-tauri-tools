@@ -1,13 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
-import { PLUGIN_MARKET_GROUPS } from "@/data/plugins";
-import { fetchMarketPlugins } from "@/lib/feed";
+import {
+  fetchMarketPlugins,
+  fetchPluginTypeDicts,
+  marketItemToPlugin,
+  parseMarketPluginZhTags,
+} from "@/lib/orbitApi";
 import { slugifyChannelId } from "@/lib/channelId";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
 import { DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import type {
   InstallRSSPluginRequest,
+  MarketPluginItem,
+  MarketPluginSort,
   Plugin,
   PluginContentType,
   PluginManagerTab,
@@ -129,23 +135,153 @@ function StyledSelect({
   );
 }
 
-function filterMarketPlugins(
-  plugins: Plugin[],
-  category: PluginMarketCategory,
-  query: string,
-): Plugin[] {
-  let list = plugins;
-  if (category !== "all") list = list.filter(p => p.marketCategory === category);
-  if (query.trim()) {
-    const q = query.toLowerCase();
-    list = list.filter(
-      p =>
-        p.name.toLowerCase().includes(q) ||
-        p.desc.toLowerCase().includes(q) ||
-        (p.categoryTag?.toLowerCase().includes(q) ?? false),
-    );
-  }
-  return list;
+const MARKET_SORT_OPTIONS: { id: MarketPluginSort; label: string }[] = [
+  { id: "rating", label: "评分" },
+  { id: "downloads", label: "安装量" },
+  { id: "size", label: "文件大小" },
+];
+
+const MARKET_TAG_COLOR_CLASS: Record<string, string> = {
+  blue: "bg-blue-50 text-blue-600 border-blue-200",
+  green: "bg-emerald-50 text-emerald-600 border-emerald-200",
+  amber: "bg-amber-50 text-amber-600 border-amber-200",
+  rose: "bg-rose-50 text-rose-600 border-rose-200",
+  violet: "bg-violet-50 text-violet-600 border-violet-200",
+};
+
+function MarketStarRating({ stars }: { stars?: number }) {
+  const value = typeof stars === "number" ? Math.max(0, Math.min(5, stars)) : 0;
+  return (
+    <div className="flex items-center gap-0.5" aria-label={`评分 ${value.toFixed(1)} / 5`}>
+      {Array.from({ length: 5 }, (_, index) => {
+        const fill = value - index;
+        if (fill >= 1) {
+          return <Icon key={index} name="star" className="w-3.5 h-3.5 text-amber-400" />;
+        }
+        if (fill >= 0.5) {
+          return (
+            <span key={index} className="relative w-3.5 h-3.5">
+              <Icon name="star-outline" className="absolute inset-0 w-3.5 h-3.5 text-amber-300" />
+              <span className="absolute inset-0 w-1/2 overflow-hidden">
+                <Icon name="star" className="w-3.5 h-3.5 text-amber-400" />
+              </span>
+            </span>
+          );
+        }
+        return <Icon key={index} name="star-outline" className="w-3.5 h-3.5 text-amber-300" />;
+      })}
+    </div>
+  );
+}
+
+function MarketPluginCard({
+  plugin,
+  categoryLabel,
+  subtleBorder,
+  onInstall,
+}: {
+  plugin: MarketPluginItem;
+  categoryLabel?: string;
+  subtleBorder: string;
+  onInstall: (plugin: Plugin) => void;
+}) {
+  const color = plugin.colorClass?.trim() || plugin.accentColor || "#7c3aed";
+  const useBgClass = color.startsWith("bg-");
+  const zhTags = parseMarketPluginZhTags(plugin.longDesc);
+  const featuredTagClass =
+    MARKET_TAG_COLOR_CLASS[plugin.tagColor ?? "blue"]
+    ?? MARKET_TAG_COLOR_CLASS.blue;
+
+  return (
+    <article
+      className={`flex flex-col p-4 rounded-2xl border ${subtleBorder} bg-white dark:bg-neutral-900 shadow-sm hover:shadow-md hover:border-[#5856D6]/30 transition-colors`}
+    >
+      <div className="flex items-start gap-3 mb-3">
+        {plugin.logoUrl ? (
+          <img
+            src={plugin.logoUrl}
+            alt=""
+            className="h-11 w-auto max-w-[5.5rem] shrink-0 object-contain"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <div
+            className={`w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-white text-sm ${
+              useBgClass ? color : ""
+            }`}
+            style={useBgClass ? undefined : { backgroundColor: color }}
+          >
+            <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
+          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <h3 className="text-xs font-bold leading-snug text-neutral-900 dark:text-white">{plugin.name}</h3>
+          <div className="flex flex-wrap items-center gap-1 mt-1.5">
+            {categoryLabel ? (
+              <span
+                className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border ${featuredTagClass}`}
+              >
+                {categoryLabel}
+              </span>
+            ) : null}
+            {zhTags.map(tag => (
+              <span
+                key={tag}
+                className="text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+              >
+                {tag}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <p className="text-[11px] text-neutral-500 leading-relaxed line-clamp-2 mb-3">{plugin.desc}</p>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] mb-3">
+        {plugin.size ? <span className="text-neutral-400">{plugin.size}</span> : null}
+        <MarketStarRating stars={plugin.stars} />
+        <span className="inline-flex items-center gap-1 text-neutral-400">
+          <Icon name="download" className="w-3 h-3" />
+          {plugin.downloads ?? 0}
+        </span>
+        <span className="inline-flex items-center gap-1 text-emerald-500">
+          <Icon name="thumbs-up" className="w-3 h-3" />
+          {plugin.upvotes ?? 0}
+        </span>
+        <span className="inline-flex items-center gap-1 text-rose-500">
+          <Icon name="thumbs-down" className="w-3 h-3" />
+          {plugin.downvotes ?? 0}
+        </span>
+      </div>
+
+      <div className="mt-auto flex items-center justify-between gap-2 !-mt-[5px] -mb-[5px] border-t border-dashed border-neutral-100 dark:border-neutral-800">
+        {plugin.author ? (
+          <div className="flex items-center gap-1.5 min-w-0 text-[10px] text-neutral-400">
+            {plugin.authorAvatarUrl ? (
+              <img
+                src={plugin.authorAvatarUrl}
+                alt=""
+                className="w-4 h-4 rounded-full object-cover shrink-0"
+                referrerPolicy="no-referrer"
+              />
+            ) : null}
+            <span className="truncate">作者 {plugin.author}</span>
+          </div>
+        ) : (
+          <span />
+        )}
+        <button
+          type="button"
+          onClick={() => onInstall(marketItemToPlugin(plugin))}
+          className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-white px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 transition-colors"
+        >
+          <Icon name="download" className="w-3 h-3" />
+          插件下载
+        </button>
+      </div>
+    </article>
+  );
 }
 
 interface PluginSectionProps {
@@ -1676,8 +1812,53 @@ export function PluginManagerModal({
   const installedPlugins = myPlugins.filter(p => p.id !== "all");
   const runningCount = installedPlugins.filter(p => p.active !== false).length;
 
-  const [marketPlugins, setMarketPlugins] = useState<Plugin[]>([]);
+  const [marketPlugins, setMarketPlugins] = useState<MarketPluginItem[]>([]);
+  const [marketTotal, setMarketTotal] = useState(0);
   const [marketLoading, setMarketLoading] = useState(false);
+  const [marketSort, setMarketSort] = useState<MarketPluginSort>("rating");
+  const [debouncedMarketSearch, setDebouncedMarketSearch] = useState("");
+  const [marketGroups, setMarketGroups] = useState<{ id: string; label: string }[]>([
+    { id: "all", label: "全部官方精选" },
+  ]);
+  const [marketGroupsLoading, setMarketGroupsLoading] = useState(false);
+
+  useEffect(() => {
+    if (activeTab !== "market") {
+      return;
+    }
+    let cancelled = false;
+    setMarketGroupsLoading(true);
+    void fetchPluginTypeDicts()
+      .then(items => {
+        if (!cancelled) {
+          setMarketGroups([
+            { id: "all", label: "全部官方精选" },
+            ...items.map(item => ({ id: item.value, label: item.label })),
+          ]);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          console.error("load plugin type groups failed", err);
+          setMarketGroups([{ id: "all", label: "全部官方精选" }]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setMarketGroupsLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedMarketSearch(marketSearch.trim());
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [marketSearch]);
 
   useEffect(() => {
     if (activeTab !== "market") {
@@ -1685,16 +1866,23 @@ export function PluginManagerModal({
     }
     let cancelled = false;
     setMarketLoading(true);
-    void fetchMarketPlugins()
-      .then(plugins => {
+    void fetchMarketPlugins({
+      category: marketCategory,
+      sort: marketSort,
+      search: debouncedMarketSearch,
+      pageSize: 50,
+    })
+      .then(({ items, total }) => {
         if (!cancelled) {
-          setMarketPlugins(plugins);
+          setMarketPlugins(items);
+          setMarketTotal(total);
         }
       })
       .catch(err => {
         if (!cancelled) {
           console.error("load market plugins failed", err);
           setMarketPlugins([]);
+          setMarketTotal(0);
         }
       })
       .finally(() => {
@@ -1705,12 +1893,17 @@ export function PluginManagerModal({
     return () => {
       cancelled = true;
     };
-  }, [activeTab, myPlugins]);
+  }, [activeTab, marketCategory, marketSort, debouncedMarketSearch]);
 
-  const filteredMarketPlugins = useMemo(
-    () => filterMarketPlugins(marketPlugins, marketCategory, marketSearch),
-    [marketPlugins, marketCategory, marketSearch],
-  );
+  const marketCategoryLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const group of marketGroups) {
+      if (group.id !== "all") {
+        map.set(group.id, group.label);
+      }
+    }
+    return map;
+  }, [marketGroups]);
 
   const isDark = theme === "dark";
   const panelBg = isDark ? "bg-[#1c1d1f] text-white" : "bg-white text-neutral-900";
@@ -1755,26 +1948,30 @@ export function PluginManagerModal({
               <aside className={`w-52 shrink-0 border-r ${subtleBorder} px-4 py-5 overflow-y-auto`}>
                 <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-3 mb-3">插件分组</p>
                 <nav className="space-y-0.5">
-                  {PLUGIN_MARKET_GROUPS.map(group => (
-                    <button
-                      key={group.id}
-                      type="button"
-                      onClick={() => setMarketCategory(group.id)}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-colors ${
-                        marketCategory === group.id ? "bg-[#5856D6]/10 text-[#5856D6] font-medium" : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
-                      }`}
-                    >
-                      <Icon name={group.icon} className="w-4 h-4 shrink-0" />
-                      <span className="truncate text-left">{group.label}</span>
-                    </button>
-                  ))}
+                  {marketGroupsLoading && marketGroups.length <= 1 ? (
+                    <p className="px-3 py-2 text-xs text-neutral-400">加载分组…</p>
+                  ) : (
+                    marketGroups.map(group => (
+                      <button
+                        key={group.id}
+                        type="button"
+                        onClick={() => setMarketCategory(group.id)}
+                        className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-colors ${
+                          marketCategory === group.id ? "bg-[#5856D6]/10 text-[#5856D6] font-medium" : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+                        }`}
+                      >
+                        {group.id === "all" && <Icon name="sparkles" className="w-4 h-4 shrink-0" />}
+                        <span className="truncate text-left">{group.label}</span>
+                      </button>
+                    ))
+                  )}
                 </nav>
               </aside>
 
               <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
-                <div className={`shrink-0 px-6 py-4 border-b ${subtleBorder} ${isDark ? "bg-neutral-900/40" : "bg-neutral-50/80"}`}>
-                  <div className="flex items-center gap-4">
-                    <div className="flex-1 relative">
+                <div className={`shrink-0 px-6 py-4 border-b ${subtleBorder} ${isDark ? "bg-neutral-900/40" : "bg-white/80"}`}>
+                  <div className="flex items-center gap-3">
+                    <div className="flex-1 relative min-w-0">
                       <Icon name="search" className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-neutral-400" />
                       <input
                         type="search"
@@ -1784,49 +1981,37 @@ export function PluginManagerModal({
                         className={`w-full pl-10 pr-4 py-2 rounded-xl text-xs outline-none border ${subtleBorder} ${mutedBg} focus:border-[#5856D6]/50`}
                       />
                     </div>
-                    <span className="text-[11px] text-neutral-400 whitespace-nowrap shrink-0">发现 {filteredMarketPlugins.length} 个获取接口</span>
+                    <div className="w-28 shrink-0">
+                      <StyledSelect
+                        value={marketSort}
+                        onChange={e => setMarketSort(e.target.value as MarketPluginSort)}
+                        className={`py-2 px-3 text-xs rounded-xl ${mutedBg} ${subtleBorder}`}
+                      >
+                        {MARKET_SORT_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </StyledSelect>
+                    </div>
+                    <span className="text-[11px] text-neutral-400 whitespace-nowrap shrink-0">发现 {marketTotal} 个获取接口</span>
                   </div>
                 </div>
                 <div className={`flex-1 overflow-y-auto px-6 py-5 ${isDark ? "bg-neutral-950/30" : "bg-neutral-100/80"}`}>
                   {marketLoading ? (
                     <p className="text-sm text-neutral-400 text-center py-16">加载官方插件…</p>
-                  ) : filteredMarketPlugins.length === 0 ? (
+                  ) : marketPlugins.length === 0 ? (
                     <p className="text-sm text-neutral-400 text-center py-16">暂无匹配插件</p>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {filteredMarketPlugins.map(plugin => (
-                        <article key={plugin.id} className={`relative flex flex-col p-4 rounded-2xl border ${subtleBorder} bg-white dark:bg-neutral-900 shadow-sm hover:shadow-md hover:border-[#5856D6]/30 transition-colors`}>
-                          {plugin.official && <span className="absolute top-3 right-3 text-[10px] font-medium px-2 py-0.5 rounded-md bg-amber-50 text-amber-600">官方推荐</span>}
-                          <div className="flex items-start gap-3 mb-3 pr-16">
-                            <div
-                              className={`w-11 h-11 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-white text-sm ${
-                                plugin.color?.trim?.().startsWith("bg-") ? plugin.color : ""
-                              }`}
-                              style={plugin.color?.trim?.().startsWith("bg-") ? undefined : { backgroundColor: plugin.color || "#7c3aed" }}
-                            >
-                              {plugin.logoImageUrl ? (
-                                <img
-                                  src={plugin.logoImageUrl}
-                                  alt=""
-                                  className="w-full h-full object-cover"
-                                  referrerPolicy="no-referrer"
-                                />
-                              ) : (
-                                <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
-                              )}
-                            </div>
-                            <div className="min-w-0 pt-0.5">
-                              <h3 className="text-xs font-bold leading-snug">{plugin.name}</h3>
-                              <p className="text-[11px] text-neutral-500 mt-1 line-clamp-2 leading-relaxed">{plugin.desc}</p>
-                            </div>
-                          </div>
-                          <div className="mt-auto flex items-center justify-between pt-3 border-t border-dashed border-neutral-100">
-                            <span className="text-[10px] font-semibold text-neutral-400 tracking-wider">{plugin.categoryTag ?? "FEED"}</span>
-                            <button type="button" onClick={() => onInstall(plugin)} className={`text-[11px] font-semibold text-white px-3 py-1.5 rounded-lg ${PRIMARY}`}>
-                              下载安装
-                            </button>
-                          </div>
-                        </article>
+                      {marketPlugins.map(plugin => (
+                        <MarketPluginCard
+                          key={plugin.id}
+                          plugin={plugin}
+                          categoryLabel={marketCategoryLabels.get(String(plugin.categoryId))}
+                          subtleBorder={subtleBorder}
+                          onInstall={onInstall}
+                        />
                       ))}
                     </div>
                   )}

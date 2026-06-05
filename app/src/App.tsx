@@ -224,6 +224,13 @@ export default function App() {
     [myPlugins],
   );
 
+  const selectedPluginMeta = selectedItem ? pluginById.get(selectedItem.pluginId) : undefined;
+  const selectedPluginBadgeText =
+    selectedPluginMeta?.logoText?.trim()
+    || selectedPluginMeta?.name?.trim().slice(0, 1)
+    || selectedItem?.pluginName.trim().slice(0, 1)
+    || "★";
+
   const activePluginChannels = useMemo(() => {
     if (activePlugin === "all") return [];
     return pluginById.get(activePlugin)?.channels ?? [];
@@ -943,16 +950,16 @@ export default function App() {
                       <div 
                         key={item.id}
                         onClick={() => handleItemSelect(item)}
-                        className={`group relative p-3.5 rounded-2xl cursor-pointer transition-all duration-300 border ${
+                        className={`group relative p-3.5 rounded-2xl cursor-pointer transition-all duration-300 border-[0.5px] ${
                           isSelected 
-                            ? 'bg-[#e9eef6] dark:bg-neutral-800 border-indigo-200 dark:border-neutral-700 shadow-sm' 
-                            : 'bg-white hover:bg-[#f0f4f9] dark:bg-neutral-900 dark:hover:bg-neutral-800/40 border-neutral-100 dark:border-neutral-800/50'
+                            ? 'bg-[#e9eef6] dark:bg-neutral-800 border-indigo-300 dark:border-neutral-600 shadow-sm' 
+                            : 'bg-white hover:bg-[#f0f4f9] dark:bg-neutral-900 dark:hover:bg-neutral-800/40 border-neutral-200 dark:border-neutral-700'
                         }`}
                       >
-                        <div className="flex gap-3 justify-between">
-                          <div className="flex-1 space-y-1">
+                        <div className="flex gap-3 items-start">
+                          <div className="flex-1 min-w-0">
                             {/* Platform Tag & Resource Type Icon */}
-                            <div className="flex items-center gap-1.5">
+                            <div className="flex items-center gap-1.5 mb-1">
                               <div
                                 className={`w-2.5 h-2.5 rounded-full overflow-hidden flex items-center justify-center text-[5px] text-white ${
                                   pluginMeta?.color?.trim?.().startsWith("bg-") ? pluginMeta.color : "bg-neutral-800"
@@ -976,12 +983,17 @@ export default function App() {
                                 <Icon name={item.type} className="w-3 h-3" />
                               </div>
                             </div>
-                            
+
                             <h4 className={`text-sm font-semibold leading-snug line-clamp-2 transition-colors ${
                               isSelected ? 'text-indigo-700 dark:text-indigo-400' : 'text-neutral-800 dark:text-neutral-200'
                             }`}>
                               {item.title}
                             </h4>
+                            {item.summary && (
+                              <p className="text-xs text-neutral-400 dark:text-neutral-500 line-clamp-2 mt-0.5 leading-snug">
+                                {item.summary}
+                              </p>
+                            )}
                           </div>
 
                           {isUnread && (
@@ -1011,11 +1023,6 @@ export default function App() {
                             </div>
                           )}
                         </div>
-
-                        {/* Summary Excerpt */}
-                        <p className="text-xs text-neutral-400 dark:text-neutral-500 line-clamp-2 mt-2">
-                          {item.summary}
-                        </p>
 
                         {/* Footer specs inside card */}
                         <div className="flex items-center justify-between mt-3 pt-2 border-t border-dashed border-neutral-100 dark:border-neutral-800/80 text-[10px] text-neutral-400">
@@ -1078,7 +1085,28 @@ export default function App() {
                   >
                     <div className="flex items-center gap-2 p-2.5">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-1 rounded-lg shrink-0">
+                        <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-1 rounded-lg shrink-0 inline-flex items-center gap-1.5">
+                          <span
+                            className={`w-4 h-4 rounded-md overflow-hidden flex items-center justify-center text-[8px] text-white shrink-0 ${
+                              selectedPluginMeta?.color?.trim?.().startsWith("bg-") ? selectedPluginMeta.color : ""
+                            }`}
+                            style={
+                              selectedPluginMeta?.color?.trim?.().startsWith("bg-")
+                                ? undefined
+                                : { backgroundColor: selectedPluginMeta?.color || "#4f46e5" }
+                            }
+                          >
+                            {selectedPluginMeta?.logoImageUrl ? (
+                              <img
+                                src={selectedPluginMeta.logoImageUrl}
+                                alt=""
+                                className="w-full h-full object-cover"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <span>{selectedPluginBadgeText}</span>
+                            )}
+                          </span>
                           {selectedItem.pluginName}
                         </span>
                         <span className="text-xs text-neutral-400 truncate">

@@ -41,13 +41,61 @@ export type PluginContentType = "text" | "video" | "audio" | "image";
 
 export type PluginManagerTab = "market" | "manage" | "import";
 
-export type PluginMarketCategory =
-  | "all"
-  | "news"
-  | "manga"
-  | "video"
-  | "audio"
-  | "blog";
+export type PluginMarketCategory = "all" | string;
+
+export interface DictItem {
+  id: number;
+  dictType: string;
+  label: string;
+  labelEn: string;
+  value: string;
+  sortOrder: number;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DictListResponse {
+  code: number;
+  message: string;
+  data: DictItem[];
+}
+
+export type MarketPluginSort = "rating" | "downloads" | "size";
+
+export interface MarketPluginItem {
+  id: string;
+  name: string;
+  categoryId: number;
+  tag: string;
+  tagColor?: string;
+  desc: string;
+  longDesc?: string;
+  size?: string;
+  stars?: number;
+  upvotes?: number;
+  downvotes?: number;
+  comments?: number;
+  author?: string;
+  authorAvatarUrl?: string;
+  logoUrl?: string;
+  icon?: string;
+  iconColor?: string;
+  colorClass?: string;
+  accentColor?: string;
+  downloads?: number;
+}
+
+export interface MarketPluginsResponse {
+  code: number;
+  message: string;
+  data: {
+    items: MarketPluginItem[];
+    total: number;
+    page: number;
+    pageSize: number;
+  };
+}
 
 export interface Plugin {
   id: string;
