@@ -585,6 +585,7 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].PublishedAt > all[j].PublishedAt
 	})
+	all = dedupeFeedItems(all)
 
 	now := time.Now().Unix()
 	rec.LastFetch = now
@@ -646,6 +647,7 @@ func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord
 	sort.Slice(all, func(i, j int) bool {
 		return all[i].PublishedAt > all[j].PublishedAt
 	})
+	all = dedupeFeedItems(all)
 	return all, needsBackfill, nil
 }
 

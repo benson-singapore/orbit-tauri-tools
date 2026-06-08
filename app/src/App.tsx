@@ -1439,9 +1439,11 @@ export default function App() {
                   </>
                 ) : (
                   <div className="mt-6 border-t border-dashed dark:border-neutral-800 pt-6 space-y-4">
-                    <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed italic">
-                      “ {selectedItem.summary} ”
-                    </p>
+                    {selectedItem.summary?.trim() ? (
+                      <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed italic">
+                        “ {selectedItem.summary} ”
+                      </p>
+                    ) : null}
                     {selectedItem.sourceUrl ? (
                       <a
                         href={selectedItem.sourceUrl}
