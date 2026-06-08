@@ -12,7 +12,7 @@ function orbitApiBaseUrl(): string {
   if (typeof url === "string" && url.length > 0) {
     return url.replace(/\/$/, "");
   }
-  return "https://orbit-api.benson.indevs.in/api";
+  return "https://orbit-api.nnbtech.com/api";
 }
 
 async function parseError(res: Response): Promise<string> {
