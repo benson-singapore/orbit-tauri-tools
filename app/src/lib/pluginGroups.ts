@@ -115,7 +115,9 @@ export function groupInstalledPlugins(
 
   const entries = state.groups.map(group => ({
     group,
-    plugins: byGroup.get(group.id) ?? [],
+    plugins: (byGroup.get(group.id) ?? []).sort(
+      (a, b) => (a.sort ?? 0) - (b.sort ?? 0),
+    ),
   }));
 
   if (options?.includeEmptyGroups) {

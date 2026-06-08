@@ -55,10 +55,13 @@ export async function fetchPlugins(): Promise<Plugin[]> {
     throw new Error(await parseError(res));
   }
   const data = (await res.json()) as PluginsResponse;
-  return (data.plugins ?? []).map(plugin => ({
-    ...plugin,
-    channels: Array.isArray(plugin.channels) ? plugin.channels : [],
-  }));
+  return (data.plugins ?? [])
+    .map(plugin => ({
+      ...plugin,
+      sort: typeof plugin.sort === "number" ? plugin.sort : 0,
+      channels: Array.isArray(plugin.channels) ? plugin.channels : [],
+    }))
+    .sort((a, b) => (a.sort ?? 0) - (b.sort ?? 0));
 }
 
 export async function fetchFeed(options?: {
@@ -67,7 +70,6 @@ export async function fetchFeed(options?: {
   channel?: string;
   type?: ContentType;
   search?: string;
-  refresh?: boolean;
   limit?: number;
   offset?: number;
 }): Promise<FeedResponse> {
@@ -87,9 +89,6 @@ export async function fetchFeed(options?: {
   }
   if (options?.search?.trim()) {
     params.set("q", options.search.trim());
-  }
-  if (options?.refresh) {
-    params.set("refresh", "1");
   }
   if (options?.limit && options.limit > 0) {
     params.set("limit", String(options.limit));
@@ -175,6 +174,60 @@ export async function installBundledPlugin(id: string): Promise<Plugin> {
   return data.plugin;
 }
 
+export async function installMarketPlugin(marketId: string): Promise<Plugin> {
+  const base = await apiBase();
+  const res = await fetch(
+    `${base}/v1/plugins/market/${encodeURIComponent(marketId)}/install`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const data = (await res.json()) as { plugin: Plugin };
+  return data.plugin;
+}
+
+export async function installOrbitPackage(data: ArrayBuffer | Blob): Promise<Plugin> {
+  const base = await apiBase();
+  const body = data instanceof Blob ? data : new Blob([data], { type: "application/zip" });
+  const res = await fetch(`${base}/v1/plugins/install-orbit`, {
+    method: "POST",
+    headers: { "Content-Type": "application/zip" },
+    body,
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const json = (await res.json()) as { plugin: Plugin };
+  return json.plugin;
+}
+
+export async function fetchPluginManifest(id: string): Promise<string> {
+  const base = await apiBase();
+  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/manifest`);
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return res.text();
+}
+
+export async function updatePluginManifest(
+  id: string,
+  manifestText: string,
+): Promise<Plugin> {
+  const base = await apiBase();
+  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/manifest`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: manifestText,
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const data = (await res.json()) as { plugin: Plugin };
+  return data.plugin;
+}
+
 export async function installRSSPlugin(
   body: InstallRSSPluginRequest,
 ): Promise<Plugin> {
@@ -189,6 +242,18 @@ export async function installRSSPlugin(
   }
   const data = (await res.json()) as { plugin: Plugin };
   return data.plugin;
+}
+
+export async function reorderPlugins(orderedIds: string[]): Promise<void> {
+  const base = await apiBase();
+  const res = await fetch(`${base}/v1/plugins/order`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ orderedIds }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
 }
 
 export async function setPluginActive(

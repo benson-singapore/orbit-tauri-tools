@@ -23,12 +23,11 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	channelID := strings.TrimSpace(q.Get("channel"))
 	contentType := strings.TrimSpace(q.Get("type"))
 	search := strings.TrimSpace(q.Get("q"))
-	refresh := q.Get("refresh") == "1" || strings.EqualFold(q.Get("refresh"), "true")
 	limit := parsePositiveInt(q.Get("limit"), 20)
 	offset := parseNonNegativeInt(q.Get("offset"), 0)
 	scopePluginIDs := parseCSVPluginIDs(q.Get("plugin_ids"))
 
-	items, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, search, refresh, scopePluginIDs)
+	items, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, search, scopePluginIDs)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
 		return

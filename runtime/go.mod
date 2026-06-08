@@ -6,6 +6,7 @@ require modernc.org/sqlite v1.34.5
 
 require (
 	github.com/PuerkitoBio/goquery v1.8.0 // indirect
+	github.com/andybalholm/brotli v1.2.1 // indirect
 	github.com/andybalholm/cascadia v1.3.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect

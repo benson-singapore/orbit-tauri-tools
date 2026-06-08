@@ -41,6 +41,10 @@ func main() {
 		log.Fatalf("plugin sync: %v", err)
 	}
 
+	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
+	defer stopScheduler()
+	reg.StartRefreshScheduler(schedulerCtx)
+
 	srv := server.New(st, reg)
 	httpServer := &http.Server{Handler: srv.Handler()}
 

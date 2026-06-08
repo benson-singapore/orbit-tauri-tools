@@ -3,12 +3,14 @@ import { INITIAL_PLUGINS } from "@/data/plugins";
 import {
   fetchFeed,
   fetchPlugins,
-  installBundledPlugin,
+  installMarketPlugin,
   installRSSPlugin,
   markFeedItemRead,
   refreshPluginFeed,
+  reorderPlugins,
   setPluginActive,
   uninstallPlugin,
+  updatePluginManifest,
 } from "@/lib/feed";
 import type { Article, InstallRSSPluginRequest, Plugin } from "@/types";
 
@@ -25,15 +27,17 @@ interface UseOrbitDataResult {
   loadingMore: boolean;
   hasMore: boolean;
   error: string | null;
-  reload: (options?: { force?: boolean }) => Promise<void>;
+  reload: () => Promise<void>;
   refreshFromCache: () => Promise<void>;
   loadMore: () => Promise<void>;
   markArticleRead: (id: string) => Promise<void>;
   installCustomRSS: (payload: InstallRSSPluginRequest) => Promise<Plugin>;
-  installOfficialPlugin: (id: string) => Promise<Plugin>;
+  installOfficialPlugin: (marketId: string) => Promise<Plugin>;
+  savePluginManifest: (id: string, manifestText: string) => Promise<Plugin>;
   togglePluginActive: (id: string) => Promise<void>;
   removePlugin: (id: string) => Promise<void>;
   movePlugin: (id: string, direction: "up" | "down") => void;
+  reorderPlugins: (orderedIds: string[]) => void;
   forceRefreshPlugin: (id: string) => Promise<void>;
 }
 
@@ -54,6 +58,7 @@ export function useOrbitData(
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const feedRequestId = useRef(0);
+  const reorderPersistQueue = useRef(Promise.resolve());
   const pluginFilterRef = useRef(pluginFilter);
   const channelFilterRef = useRef(channelFilter);
   const contentTypeFilterRef = useRef(contentTypeFilter);
@@ -75,7 +80,6 @@ export function useOrbitData(
   }, []);
 
   const loadFeedPage = useCallback(async (options?: {
-    force?: boolean;
     offset?: number;
     append?: boolean;
   }) => {
@@ -123,7 +127,6 @@ export function useOrbitData(
           ? (contentType as import("@/types").ContentType)
           : undefined,
       search: search || undefined,
-      refresh: options?.force ?? false,
       limit: FEED_PAGE_SIZE,
       offset,
     });
@@ -142,13 +145,12 @@ export function useOrbitData(
     }
   }, []);
 
-  const reload = useCallback(async (options?: { force?: boolean }) => {
+  const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       await loadPlugins();
       await loadFeedPage({
-        force: options?.force ?? true,
         offset: 0,
         append: false,
       });
@@ -165,7 +167,7 @@ export function useOrbitData(
     }
     setLoadingMore(true);
     try {
-      await loadFeedPage({ force: false, offset: articles.length, append: true });
+      await loadFeedPage({ offset: articles.length, append: true });
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -176,8 +178,8 @@ export function useOrbitData(
 
   const refreshInBackground = useCallback(async () => {
     try {
-      // 仅触发调度检查：由后端根据每个插件的 refreshInterval 和 lastFetch 决定是否抓取。
-      await loadFeedPage({ force: false, offset: 0, append: false });
+      // 后端定时任务负责抓取；此处仅从数据库重新加载列表。
+      await loadFeedPage({ offset: 0, append: false });
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -188,7 +190,7 @@ export function useOrbitData(
     setLoading(true);
     setError(null);
     try {
-      await loadFeedPage({ force: false, offset: 0, append: false });
+      await loadFeedPage({ offset: 0, append: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -200,7 +202,7 @@ export function useOrbitData(
     setError(null);
     try {
       await loadPlugins();
-      await loadFeedPage({ force: false, offset: 0, append: false });
+      await loadFeedPage({ offset: 0, append: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       throw err;
@@ -230,17 +232,33 @@ export function useOrbitData(
     async (payload: InstallRSSPluginRequest) => {
       const plugin = await installRSSPlugin(payload);
       await loadPlugins();
-      await loadFeedPage({ force: true, offset: 0, append: false });
+      void refreshPluginFeed(plugin.id)
+        .then(() => loadFeedPage({ offset: 0, append: false }))
+        .catch(console.error);
       return plugin;
     },
     [loadPlugins, loadFeedPage],
   );
 
   const installOfficialPlugin = useCallback(
-    async (id: string) => {
-      const plugin = await installBundledPlugin(id);
+    async (marketId: string) => {
+      const plugin = await installMarketPlugin(marketId);
       await loadPlugins();
-      await loadFeedPage({ force: true, offset: 0, append: false });
+      // 首次安装后强制抓取，确保本地数据库有内容
+      await refreshPluginFeed(plugin.id, undefined, { force: true });
+      await loadFeedPage({ offset: 0, append: false });
+      return plugin;
+    },
+    [loadPlugins, loadFeedPage],
+  );
+
+  const savePluginManifest = useCallback(
+    async (id: string, manifestText: string) => {
+      const plugin = await updatePluginManifest(id, manifestText);
+      await loadPlugins();
+      void refreshPluginFeed(id)
+        .then(() => loadFeedPage({ offset: 0, append: false }))
+        .catch(console.error);
       return plugin;
     },
     [loadPlugins, loadFeedPage],
@@ -260,7 +278,7 @@ export function useOrbitData(
 
       try {
         await setPluginActive(id, nextActive);
-        await loadFeedPage({ force: false, offset: 0, append: false });
+        await loadFeedPage({ offset: 0, append: false });
       } catch (err) {
         // 失败时回滚并刷新，避免 UI 与后端状态不一致
         setPlugins(prev => prev.map(plugin => (
@@ -279,10 +297,10 @@ export function useOrbitData(
       setArticles(prev => prev.filter(article => article.pluginId !== id));
       try {
         await uninstallPlugin(id);
-        await loadFeedPage({ force: false, offset: 0, append: false });
+        await loadFeedPage({ offset: 0, append: false });
       } catch (err) {
         await loadPlugins();
-        await loadFeedPage({ force: false, offset: 0, append: false });
+        await loadFeedPage({ offset: 0, append: false });
         throw err;
       }
     },
@@ -291,28 +309,58 @@ export function useOrbitData(
 
   const forceRefreshPlugin = useCallback(
     async (id: string) => {
-      setArticles(prev => prev.filter(article => article.pluginId !== id));
+      // 手动抓取：清空该插件本地缓存后重新拉取，完成后从数据库刷新列表。
       await refreshPluginFeed(id, undefined, { force: true });
-      await loadFeedPage({ force: false, offset: 0, append: false });
+      await loadPlugins();
+      await loadFeedPage({ offset: 0, append: false });
     },
-    [loadFeedPage],
+    [loadPlugins, loadFeedPage],
   );
 
-  const movePlugin = useCallback((id: string, direction: "up" | "down") => {
-    setPlugins((prev) => {
-      if (prev.length <= 2) return prev;
-      const [allPlugin, ...rest] = prev;
-      const index = rest.findIndex(plugin => plugin.id === id);
-      if (index < 0) return prev;
-      if (direction === "up" && index === 0) return prev;
-      if (direction === "down" && index === rest.length - 1) return prev;
+  const persistPluginOrder = useCallback((orderedIds: string[]) => {
+    reorderPersistQueue.current = reorderPersistQueue.current
+      .then(() => reorderPlugins(orderedIds))
+      .catch(err => {
+        console.error("failed to persist plugin order:", err);
+        return loadPlugins();
+      });
+  }, [loadPlugins]);
 
-      const next = [...rest];
-      const targetIndex = direction === "up" ? index - 1 : index + 1;
-      [next[index], next[targetIndex]] = [next[targetIndex]!, next[index]!];
-      return [allPlugin, ...next];
-    });
-  }, []);
+  const applyPluginOrder = useCallback((orderedIds: string[]) => {
+    const prev = pluginsRef.current;
+    if (prev.length <= 1 || orderedIds.length === 0) return;
+
+    const [allPlugin, ...rest] = prev;
+    const byId = new Map(rest.map(plugin => [plugin.id, plugin]));
+    const next = orderedIds
+      .map(id => byId.get(id))
+      .filter((plugin): plugin is Plugin => !!plugin);
+    if (next.length !== rest.length) return;
+
+    const withSort = next.map((plugin, sortIndex) => ({ ...plugin, sort: sortIndex }));
+    setPlugins([allPlugin, ...withSort]);
+    persistPluginOrder(withSort.map(plugin => plugin.id));
+  }, [persistPluginOrder]);
+
+  const movePlugin = useCallback((id: string, direction: "up" | "down") => {
+    const prev = pluginsRef.current;
+    if (prev.length <= 2) return;
+
+    const rest = prev.filter(plugin => plugin.id !== "all");
+    const index = rest.findIndex(plugin => plugin.id === id);
+    if (index < 0) return;
+    if (direction === "up" && index === 0) return;
+    if (direction === "down" && index === rest.length - 1) return;
+
+    const next = [...rest];
+    const targetIndex = direction === "up" ? index - 1 : index + 1;
+    [next[index], next[targetIndex]] = [next[targetIndex]!, next[index]!];
+    applyPluginOrder(next.map(plugin => plugin.id));
+  }, [applyPluginOrder]);
+
+  const reorderPluginsByIds = useCallback((orderedIds: string[]) => {
+    applyPluginOrder(orderedIds);
+  }, [applyPluginOrder]);
 
   const markArticleRead = useCallback(async (id: string) => {
     let wasUnread = false;
@@ -353,9 +401,11 @@ export function useOrbitData(
     markArticleRead,
     installCustomRSS,
     installOfficialPlugin,
+    savePluginManifest,
     togglePluginActive,
     removePlugin,
     movePlugin,
+    reorderPlugins: reorderPluginsByIds,
     forceRefreshPlugin,
   };
 }

@@ -16,15 +16,34 @@ func LoadManifest(path string) (*Manifest, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read manifest: %w", err)
 	}
+	return ParseManifestBytes(data)
+}
+
+// ParseManifestBytes unmarshals and normalizes manifest JSON from disk or packages.
+func ParseManifestBytes(data []byte) (*Manifest, error) {
 	var m Manifest
 	if err := json.Unmarshal(data, &m); err != nil {
 		return nil, fmt.Errorf("parse manifest: %w", err)
 	}
+	NormalizeManifestMeta(&m)
 	MigrateManifestConfig(&m.Config)
 	if err := ValidateManifest(&m); err != nil {
 		return nil, err
 	}
 	return &m, nil
+}
+
+// NormalizeManifestMeta maps legacy field aliases from official plugin packages.
+func NormalizeManifestMeta(m *Manifest) {
+	if strings.TrimSpace(m.Meta.LogoImageURL) == "" && strings.TrimSpace(m.Meta.IconURL) != "" {
+		m.Meta.LogoImageURL = strings.TrimSpace(m.Meta.IconURL)
+	}
+	if strings.TrimSpace(m.Meta.IconURL) == "" && strings.TrimSpace(m.Meta.LogoImageURL) != "" {
+		m.Meta.IconURL = strings.TrimSpace(m.Meta.LogoImageURL)
+	}
+	if strings.TrimSpace(m.Meta.Color) == "" && strings.TrimSpace(m.Meta.IconColor) != "" {
+		m.Meta.Color = strings.TrimSpace(m.Meta.IconColor)
+	}
 }
 
 func ValidateManifest(m *Manifest) error {

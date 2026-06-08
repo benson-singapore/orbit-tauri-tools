@@ -128,10 +128,10 @@ func buildOpenAPISpec() map[string]any {
 			},
 			"/v1/feed": map[string]any{
 				"get": map[string]any{
-					"summary": "Get feed items",
+					"summary":     "Get feed items from SQLite cache (read-only)",
+					"description": "Does not fetch remote feeds. Background scheduler refreshes stale plugins per refreshInterval.",
 					"parameters": []any{
 						map[string]any{"name": "plugin_id", "in": "query", "required": false, "schema": map[string]any{"type": "string"}},
-						map[string]any{"name": "refresh", "in": "query", "required": false, "schema": map[string]any{"type": "boolean"}},
 					},
 					"responses": responseJSON(map[string]any{"ok": true, "items": []any{}, "count": 0}),
 				},

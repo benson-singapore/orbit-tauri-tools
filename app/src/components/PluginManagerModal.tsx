@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
+import { PluginAvatar } from "@/components/PluginAvatar";
 import {
   fetchMarketPlugins,
   fetchPluginTypeDicts,
-  marketItemToPlugin,
   parseMarketPluginZhTags,
 } from "@/lib/orbitApi";
+import { fetchPluginManifest, installOrbitPackage } from "@/lib/feed";
 import { slugifyChannelId } from "@/lib/channelId";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
@@ -70,16 +71,69 @@ function isChannelIdSyncedWithLabel(row: ChannelFormRow): boolean {
   return row.id === "main" && row.label === "全部";
 }
 
+type WasmChannelFormRow = {
+  _key: string;
+  id: string;
+  label: string;
+  route: string;
+  params: string;
+  itemLimit: string;
+  idAuto: boolean;
+};
+
+function createWasmChannelRow(
+  partial: Partial<Pick<WasmChannelFormRow, "id" | "label" | "route" | "params" | "itemLimit">> = {},
+  options?: { idAuto?: boolean },
+): WasmChannelFormRow {
+  const label = partial.label ?? "默认";
+  const idAuto = options?.idAuto ?? partial.id === undefined;
+  const id =
+    partial.id ??
+    (idAuto ? slugifyChannelId(label) || "main" : "main");
+  return {
+    _key: `wch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    id,
+    label,
+    route: partial.route ?? "",
+    params: partial.params ?? "",
+    itemLimit: partial.itemLimit ?? "100",
+    idAuto,
+  };
+}
+
+function isWasmChannelIdSyncedWithLabel(row: WasmChannelFormRow): boolean {
+  if (row.idAuto) return true;
+  const slug = slugifyChannelId(row.label);
+  if (slug && row.id === slug) return true;
+  return row.id === "main" && row.label === "默认";
+}
+
+function parseWasmChannelParams(paramsStr: string): Record<string, string> | undefined {
+  const trimmed = paramsStr.trim();
+  if (!trimmed) return undefined;
+  const parsed = JSON.parse(trimmed) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("params 须为 JSON 对象");
+  }
+  const result: Record<string, string> = {};
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    result[k] = String(v);
+  }
+  return result;
+}
+
 interface PluginManagerModalProps {
   theme: ThemeMode;
   myPlugins: Plugin[];
   pluginGroups: PluginSidebarGroup[];
   groupedPluginsForManage: { group: PluginSidebarGroup; plugins: Plugin[] }[];
   onClose: () => void;
-  onInstall: (plugin: Plugin) => void;
-  onUninstall: (id: string) => void;
+  onInstall: (marketId: string) => Promise<void>;
+  onSaveManifest: (pluginId: string, manifestText: string) => Promise<void>;
+  onUninstall: (id: string) => void | Promise<void>;
   onToggleActive: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
+  onReorder: (orderedIds: string[]) => void;
   onImport: (payload: InstallRSSPluginRequest, targetGroupId?: string) => void;
   onRefresh: () => void;
   onForceRefresh: (pluginId: string) => Promise<void>;
@@ -174,16 +228,34 @@ function MarketStarRating({ stars }: { stars?: number }) {
   );
 }
 
+function findInstalledMarketPlugin(
+  marketItem: MarketPluginItem,
+  installedPlugins: Plugin[],
+): Plugin | undefined {
+  const name = marketItem.name.trim().toLowerCase();
+  const logo = marketItem.logoUrl?.trim();
+  return installedPlugins.find(item => {
+    if (item.id === "all") return false;
+    if (item.name.trim().toLowerCase() === name) return true;
+    if (logo && item.logoImageUrl?.trim() === logo) return true;
+    return false;
+  });
+}
+
 function MarketPluginCard({
   plugin,
   categoryLabel,
   subtleBorder,
+  installedPlugin,
+  installing,
   onInstall,
 }: {
   plugin: MarketPluginItem;
   categoryLabel?: string;
   subtleBorder: string;
-  onInstall: (plugin: Plugin) => void;
+  installedPlugin?: Plugin;
+  installing: boolean;
+  onInstall: (marketId: string) => Promise<void>;
 }) {
   const color = plugin.colorClass?.trim() || plugin.accentColor || "#7c3aed";
   const useBgClass = color.startsWith("bg-");
@@ -271,14 +343,28 @@ function MarketPluginCard({
         ) : (
           <span />
         )}
-        <button
-          type="button"
-          onClick={() => onInstall(marketItemToPlugin(plugin))}
-          className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-white px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 transition-colors"
-        >
-          <Icon name="download" className="w-3 h-3" />
-          插件下载
-        </button>
+        {installedPlugin ? (
+          <button
+            type="button"
+            disabled
+            className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-900/50 cursor-not-allowed"
+          >
+            <Icon name="check" className="w-3 h-3" />
+            已安装
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={installing}
+            onClick={() => {
+              void onInstall(plugin.id).catch(console.error);
+            }}
+            className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-white px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Icon name={installing ? "refresh" : "download"} className={`w-3 h-3 ${installing ? "animate-spin" : ""}`} />
+            {installing ? "安装中…" : "插件安装"}
+          </button>
+        )}
       </div>
     </article>
   );
@@ -295,6 +381,7 @@ interface PluginSectionProps {
   onUninstall: (id: string) => void;
   onToggleActive: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
+  onReorder: (orderedIds: string[]) => void;
   onAssignGroup: (pluginId: string, groupId: string) => void;
   resolveGroupId: (pluginId: string) => string;
   onEdit?: (plugin: Plugin) => void;
@@ -313,6 +400,7 @@ function PluginSection(props: PluginSectionProps) {
     onUninstall,
     onToggleActive,
     onMove,
+    onReorder,
     onAssignGroup,
     resolveGroupId,
     onEdit,
@@ -322,6 +410,7 @@ function PluginSection(props: PluginSectionProps) {
   const [dragOverPluginId, setDragOverPluginId] = useState<string | null>(null);
   const [uninstallTarget, setUninstallTarget] = useState<Plugin | null>(null);
   const [forceRefreshingId, setForceRefreshingId] = useState<string | null>(null);
+  const [forceRefreshError, setForceRefreshError] = useState<string | null>(null);
 
   const handleDropReorder = (targetPluginId: string) => {
     if (!draggingPluginId || draggingPluginId === targetPluginId) {
@@ -335,22 +424,32 @@ function PluginSection(props: PluginSectionProps) {
       return;
     }
 
-    const direction: "up" | "down" = fromIndex < toIndex ? "down" : "up";
-    const steps = Math.abs(fromIndex - toIndex);
-    for (let i = 0; i < steps; i += 1) {
-      onMove(draggingPluginId, direction);
+    const next = [...installedPlugins];
+    const [moved] = next.splice(fromIndex, 1);
+    if (!moved) {
+      setDragOverPluginId(null);
+      return;
     }
+    next.splice(toIndex, 0, moved);
+    onReorder(next.map(plugin => plugin.id));
     setDragOverPluginId(null);
   };
 
   return (
     <div className="space-y-3">
+      {forceRefreshError && (
+        <p className="text-[11px] text-rose-600 dark:text-rose-400 px-1">
+          {forceRefreshError}
+        </p>
+      )}
       {plugins.map((plugin) => {
         const index = installedPlugins.findIndex(p => p.id === plugin.id);
         const isEnabled = plugin.active !== false;
         const canMoveUp = index > 0;
         const canMoveDown = index < installedPlugins.length - 1;
         const isCustom = !plugin.official;
+        const isWasm = plugin.source === "wasm";
+        const canEditManifest = isCustom || isWasm;
         const cardClass = isCustom
           ? "border border-indigo-200/70 dark:border-indigo-900/40 bg-indigo-50/30 dark:bg-indigo-950/10"
           : `border ${subtleBorder} ${mutedBg}`;
@@ -414,26 +513,16 @@ function PluginSection(props: PluginSectionProps) {
                 </button>
               </div>
               <div className="flex flex-1 min-w-0 items-start gap-3">
-                <div
-                  className={`w-10 h-10 shrink-0 rounded-xl overflow-hidden flex items-center justify-center font-bold text-white text-xs ${
-                    plugin.color?.trim?.().startsWith("bg-") ? plugin.color : ""
-                  }`}
-                  style={plugin.color?.trim?.().startsWith("bg-") ? undefined : { backgroundColor: plugin.color || "#7c3aed" }}
-                >
-                  {plugin.logoImageUrl ? (
-                    <img
-                      src={plugin.logoImageUrl}
-                      alt=""
-                      className="w-full h-full object-cover"
-                      referrerPolicy="no-referrer"
-                    />
-                  ) : (
-                    <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
-                  )}
-                </div>
+                <PluginAvatar plugin={plugin} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold">{plugin.name}</span>
+                    <span
+                      className="text-[10px] px-1.5 py-0.5 rounded font-mono tabular-nums bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+                      title="排序权重（越小越靠前）"
+                    >
+                      sort {typeof plugin.sort === "number" ? plugin.sort : index}
+                    </span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${isCustom ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-300" : "bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500"}`}>
                       {isCustom ? "自定义" : "官方"}
                     </span>
@@ -453,7 +542,7 @@ function PluginSection(props: PluginSectionProps) {
                         </select>
                       </label>
                     )}
-                    {isCustom && (
+                    {canEditManifest && (
                       <button
                         type="button"
                         onClick={() => onEdit?.(plugin)}
@@ -494,9 +583,14 @@ function PluginSection(props: PluginSectionProps) {
                     type="button"
                     disabled={!isEnabled || forceRefreshingId === plugin.id}
                     onClick={() => {
+                      setForceRefreshError(null);
                       setForceRefreshingId(plugin.id);
                       void onForceRefresh(plugin.id)
-                        .catch(console.error)
+                        .catch((err: unknown) => {
+                          const message = err instanceof Error ? err.message : String(err);
+                          setForceRefreshError(`${plugin.name}：${message}`);
+                          console.error(err);
+                        })
                         .finally(() => setForceRefreshingId(null));
                     }}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
@@ -506,7 +600,7 @@ function PluginSection(props: PluginSectionProps) {
                       name="refresh"
                       className={`w-3 h-3 ${forceRefreshingId === plugin.id ? "animate-spin" : ""}`}
                     />
-                    {forceRefreshingId === plugin.id ? "刷新中…" : "强制刷新"}
+                    {forceRefreshingId === plugin.id ? "抓取中…" : "强制刷新"}
                   </button>
                   <button
                     type="button"
@@ -566,15 +660,877 @@ function PluginSection(props: PluginSectionProps) {
   );
 }
 
+function WasmManifestEditorModal({
+  theme,
+  plugin,
+  onClose,
+  onSave,
+}: {
+  theme: ThemeMode;
+  plugin: Plugin;
+  onClose: () => void;
+  onSave: (manifestText: string) => Promise<void>;
+}) {
+  const isDark = theme === "dark";
+  const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+  const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
+  const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
+  const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
+  const inputBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+  const inputText = isDark ? "text-neutral-100 placeholder:text-neutral-500" : "text-neutral-900 placeholder:text-neutral-400";
+
+  const baseManifestRef = useRef<Record<string, unknown>>({});
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"form" | "json">("form");
+  const [jsonText, setJsonText] = useState("");
+  const [isEditingJson, setIsEditingJson] = useState(false);
+
+  const [pluginName, setPluginName] = useState("");
+  const [version, setVersion] = useState("1.0.0");
+  const [mediaType, setMediaType] = useState<NonNullable<InstallRSSPluginRequest["mediaType"]>>("article");
+  const [channels, setChannels] = useState<WasmChannelFormRow[]>([
+    createWasmChannelRow({ label: "默认" }, { idAuto: true }),
+  ]);
+  const [defaultChannel, setDefaultChannel] = useState("");
+  const [refreshInterval, setRefreshInterval] = useState("3600");
+  const [userAgent, setUserAgent] = useState("");
+  const [executionMode, setExecutionMode] = useState("wasm");
+  const [wasmEntry, setWasmEntry] = useState("plugin.wasm");
+  const [wasmTimeoutMs, setWasmTimeoutMs] = useState("30000");
+  const [wasmMaxMemoryMB, setWasmMaxMemoryMB] = useState("64");
+  const [icon, setIcon] = useState<PluginContentType>("text");
+  const [marketCategory, setMarketCategory] = useState<Exclude<PluginMarketCategory, "all">>("blog");
+  const [categoryTag, setCategoryTag] = useState("");
+  const [description, setDescription] = useState("");
+  const [color, setColor] = useState("#7c3aed");
+  const [logoImageUrl, setLogoImageUrl] = useState("");
+
+  const applyManifestToForm = (raw: Record<string, unknown>) => {
+    const config = (raw.config ?? {}) as Record<string, unknown>;
+    const meta = (raw.meta ?? {}) as Record<string, unknown>;
+    const wasm = (config.wasm ?? {}) as Record<string, unknown>;
+
+    setPluginName(typeof raw.name === "string" ? raw.name : "");
+    setVersion(typeof raw.version === "string" ? raw.version : "1.0.0");
+    const nextMediaType = typeof raw.mediaType === "string" ? raw.mediaType : "article";
+    if (nextMediaType === "article" || nextMediaType === "manga" || nextMediaType === "video" || nextMediaType === "audio") {
+      setMediaType(nextMediaType);
+    }
+
+    const rawChannels = Array.isArray(config.channels)
+      ? (config.channels as { id?: string; label?: string; route?: string; params?: Record<string, string>; itemLimit?: number }[])
+      : [];
+    if (rawChannels.length > 0) {
+      setChannels(
+        rawChannels.map((ch, i) =>
+          createWasmChannelRow(
+            {
+              id: String(ch.id ?? `channel-${i + 1}`).trim(),
+              label: String(ch.label ?? ch.id ?? `频道 ${i + 1}`).trim(),
+              route: String(ch.route ?? "").trim(),
+              params: ch.params ? JSON.stringify(ch.params) : "",
+              itemLimit: String(
+                typeof ch.itemLimit === "number" && ch.itemLimit > 0 ? ch.itemLimit : 100,
+              ),
+            },
+            { idAuto: false },
+          ),
+        ),
+      );
+    } else {
+      setChannels([createWasmChannelRow({ label: "默认" }, { idAuto: true })]);
+    }
+
+    setDefaultChannel(typeof config.defaultChannel === "string" ? config.defaultChannel : "");
+    const nextRefresh =
+      typeof config.refreshInterval === "number" && config.refreshInterval > 0
+        ? config.refreshInterval
+        : 3600;
+    setRefreshInterval(String(nextRefresh));
+    setUserAgent(typeof config.userAgent === "string" ? config.userAgent : "");
+    setExecutionMode(typeof config.executionMode === "string" ? config.executionMode : "wasm");
+    setWasmEntry(typeof wasm.entry === "string" ? wasm.entry : "plugin.wasm");
+    setWasmTimeoutMs(
+      String(typeof wasm.timeoutMs === "number" && wasm.timeoutMs > 0 ? wasm.timeoutMs : 30000),
+    );
+    setWasmMaxMemoryMB(
+      String(typeof wasm.maxMemoryMB === "number" && wasm.maxMemoryMB > 0 ? wasm.maxMemoryMB : 64),
+    );
+
+    const nextIcon = typeof meta.icon === "string" ? meta.icon : "text";
+    if (nextIcon === "text" || nextIcon === "image" || nextIcon === "video" || nextIcon === "audio") {
+      setIcon(nextIcon);
+    }
+    const nextMarketCategory =
+      typeof meta.marketCategory === "string" ? meta.marketCategory : "blog";
+    if (
+      nextMarketCategory === "blog" ||
+      nextMarketCategory === "news" ||
+      nextMarketCategory === "manga" ||
+      nextMarketCategory === "video" ||
+      nextMarketCategory === "audio"
+    ) {
+      setMarketCategory(nextMarketCategory);
+    }
+    setCategoryTag(typeof meta.categoryTag === "string" ? meta.categoryTag : "");
+    setDescription(typeof meta.description === "string" ? meta.description : "");
+    const nextColor =
+      typeof meta.color === "string"
+        ? meta.color
+        : typeof meta.iconColor === "string"
+          ? meta.iconColor
+          : "#7c3aed";
+    setColor(nextColor);
+    const nextLogo =
+      typeof meta.logoImageUrl === "string"
+        ? meta.logoImageUrl
+        : typeof meta.iconUrl === "string"
+          ? meta.iconUrl
+          : "";
+    setLogoImageUrl(nextLogo);
+  };
+
+  const buildManifestFromForm = (): Record<string, unknown> => {
+    const manifest = JSON.parse(JSON.stringify(baseManifestRef.current)) as Record<string, unknown>;
+    manifest.name = pluginName.trim() || manifest.name;
+    manifest.version = version.trim() || "1.0.0";
+    manifest.mediaType = mediaType;
+
+    const config = (manifest.config ?? {}) as Record<string, unknown>;
+    config.channels = channels.map(ch => {
+      const parsedLimit = Number.parseInt(ch.itemLimit.trim(), 10);
+      const item: Record<string, unknown> = {
+        id: ch.id.trim(),
+        label: ch.label.trim(),
+        route: ch.route.trim(),
+      };
+      const params = parseWasmChannelParams(ch.params);
+      if (params && Object.keys(params).length > 0) {
+        item.params = params;
+      }
+      if (Number.isFinite(parsedLimit) && parsedLimit > 0) {
+        item.itemLimit = parsedLimit;
+      }
+      return item;
+    });
+    const dc = defaultChannel.trim();
+    if (dc) {
+      config.defaultChannel = dc;
+    } else {
+      delete config.defaultChannel;
+    }
+    const parsedRefresh = Number.parseInt(refreshInterval.trim(), 10);
+    config.refreshInterval =
+      Number.isFinite(parsedRefresh) && parsedRefresh > 0 ? parsedRefresh : 3600;
+    config.userAgent = userAgent.trim();
+    const mode = executionMode.trim();
+    if (mode) {
+      config.executionMode = mode;
+    }
+
+    const wasm = (config.wasm ?? {}) as Record<string, unknown>;
+    wasm.entry = wasmEntry.trim() || "plugin.wasm";
+    const parsedTimeout = Number.parseInt(wasmTimeoutMs.trim(), 10);
+    wasm.timeoutMs = Number.isFinite(parsedTimeout) && parsedTimeout > 0 ? parsedTimeout : 30000;
+    const parsedMemory = Number.parseInt(wasmMaxMemoryMB.trim(), 10);
+    wasm.maxMemoryMB = Number.isFinite(parsedMemory) && parsedMemory > 0 ? parsedMemory : 64;
+    config.wasm = wasm;
+    manifest.config = config;
+
+    const meta = (manifest.meta ?? {}) as Record<string, unknown>;
+    meta.description = description.trim();
+    meta.icon = icon;
+    meta.color = color.trim();
+    meta.marketCategory = marketCategory;
+    meta.categoryTag = categoryTag.trim();
+    const logoUrl = logoImageUrl.trim();
+    if (logoUrl) {
+      meta.logoImageUrl = logoUrl;
+      meta.iconUrl = logoUrl;
+    }
+    manifest.meta = meta;
+
+    baseManifestRef.current = manifest;
+    return manifest;
+  };
+
+  const buildManifestJsonText = () => JSON.stringify(buildManifestFromForm(), null, 2);
+
+  const applyJsonToForm = (input: string): boolean => {
+    if (!input.trim()) return true;
+    try {
+      const raw = JSON.parse(input) as Record<string, unknown>;
+      baseManifestRef.current = raw;
+      applyManifestToForm(raw);
+      setError(null);
+      return true;
+    } catch {
+      setError("manifest JSON 格式错误，请检查配置内容");
+      return false;
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    void fetchPluginManifest(plugin.id)
+      .then(text => {
+        if (cancelled) return;
+        try {
+          const parsed = JSON.parse(text) as Record<string, unknown>;
+          baseManifestRef.current = parsed;
+          applyManifestToForm(parsed);
+          setJsonText(JSON.stringify(parsed, null, 2));
+          setError(null);
+        } catch {
+          setJsonText(text);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [plugin.id]);
+
+  useEffect(() => {
+    if (loading || isEditingJson || viewMode !== "form") return;
+    setJsonText(buildManifestJsonText());
+  }, [
+    loading,
+    isEditingJson,
+    viewMode,
+    pluginName,
+    version,
+    mediaType,
+    channels,
+    defaultChannel,
+    refreshInterval,
+    userAgent,
+    executionMode,
+    wasmEntry,
+    wasmTimeoutMs,
+    wasmMaxMemoryMB,
+    icon,
+    marketCategory,
+    categoryTag,
+    description,
+    color,
+    logoImageUrl,
+  ]);
+
+  const validateBeforeSave = (): string | null => {
+    if (viewMode === "json") {
+      if (!applyJsonToForm(jsonText)) {
+        return "invalid-json";
+      }
+    }
+
+    const normalizedChannels = channels.map(ch => ({
+      id: ch.id.trim(),
+      label: ch.label.trim(),
+      route: ch.route.trim(),
+      params: ch.params,
+    }));
+
+    if (normalizedChannels.length === 0) {
+      return "请至少配置一个频道";
+    }
+    for (const ch of normalizedChannels) {
+      if (!ch.id || !ch.label || !ch.route) {
+        return "每个频道需填写 ID、名称与 route";
+      }
+      if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(ch.id)) {
+        return `频道 ID「${ch.id}」格式无效`;
+      }
+      try {
+        if (ch.params.trim()) {
+          parseWasmChannelParams(ch.params);
+        }
+      } catch (e) {
+        return `频道「${ch.label}」的 params 无效：${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+
+    const dc = defaultChannel.trim();
+    if (dc && !normalizedChannels.some(ch => ch.id === dc)) {
+      return `defaultChannel「${dc}」不在 channels 列表中`;
+    }
+
+    const parsedRefresh = Number.parseInt(refreshInterval.trim(), 10);
+    if (!Number.isFinite(parsedRefresh) || parsedRefresh <= 0) {
+      return "刷新间隔需为正整数（秒）";
+    }
+
+    return null;
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    try {
+      const validationError = validateBeforeSave();
+      if (validationError) {
+        if (validationError !== "invalid-json") {
+          setError(validationError);
+        }
+        return;
+      }
+      const text = buildManifestJsonText();
+      JSON.parse(text);
+      await onSave(text);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
+      <div
+        className={`w-full max-w-6xl h-[690px] rounded-[28px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className={`h-[72px] px-6 flex items-center justify-between border-b ${subtleBorder}`}>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold truncate">编辑插件 manifest — {plugin.name}</h3>
+            <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+              修改 channels、refreshInterval、userAgent、wasm 等配置，支持可视化表单或 JSON 编辑
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <div className={`flex items-center p-1 rounded-2xl ${mutedBg} border ${subtleBorder}`}>
+              <button
+                type="button"
+                onClick={() => setViewMode("form")}
+                className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  viewMode === "form"
+                    ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
+                    : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
+                }`}
+              >
+                可视化配置
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("json")}
+                className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                  viewMode === "json"
+                    ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
+                    : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
+                }`}
+              >
+                JSON 编辑
+              </button>
+            </div>
+
+            <button
+              type="button"
+              onClick={onClose}
+              className={`px-3 py-1.5 text-xs rounded-lg border ${subtleBorder} ${
+                isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+              }`}
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+
+        <div className="h-[calc(100%-140px)] flex min-h-0">
+          <main className="flex-1 min-w-0 min-h-0 flex flex-col">
+            {loading ? (
+              <p className={`text-sm text-center py-16 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                加载 manifest.json…
+              </p>
+            ) : viewMode === "form" ? (
+              <div className="flex-1 min-h-0 overflow-y-auto p-7">
+                <div className="max-w-3xl mx-auto w-full">
+                  <div className="flex items-center gap-2 mb-5">
+                    <div className="w-1 h-4 rounded-full bg-[#5856D6]" />
+                    <h4 className="text-sm font-bold">核心配置</h4>
+                  </div>
+
+                  <div className="space-y-5">
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                          频道 (config.channels)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setChannels(prev => [
+                              ...prev,
+                              createWasmChannelRow({ label: `频道 ${prev.length + 1}` }, { idAuto: true }),
+                            ])
+                          }
+                          className="text-[11px] font-semibold text-[#5856D6] hover:underline"
+                        >
+                          + 添加频道
+                        </button>
+                      </div>
+                      <div className="space-y-3">
+                        {channels.map((ch, index) => (
+                          <div
+                            key={ch._key}
+                            className={`p-4 rounded-2xl border space-y-3 ${subtleBorder} ${mutedBg}`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-semibold">频道 {index + 1}</span>
+                              {channels.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setChannels(prev => prev.filter((_, i) => i !== index))}
+                                  className="text-[11px] text-rose-500 hover:underline"
+                                >
+                                  删除
+                                </button>
+                              )}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                              <input
+                                value={ch.label}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  setChannels(prev =>
+                                    prev.map((row, i) => {
+                                      if (i !== index) return row;
+                                      const slug = slugifyChannelId(v);
+                                      const synced = isWasmChannelIdSyncedWithLabel(row);
+                                      return {
+                                        ...row,
+                                        label: v,
+                                        ...(synced && slug ? { id: slug, idAuto: true } : {}),
+                                      };
+                                    }),
+                                  );
+                                }}
+                                placeholder="显示名称"
+                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                              <input
+                                value={ch.id}
+                                onChange={e => {
+                                  const v = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+                                  setChannels(prev =>
+                                    prev.map((row, i) =>
+                                      i === index ? { ...row, id: v, idAuto: false } : row,
+                                    ),
+                                  );
+                                }}
+                                placeholder="id（根据名称自动生成）"
+                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText} ${
+                                  ch.idAuto ? (isDark ? "text-neutral-400" : "text-neutral-500") : ""
+                                }`}
+                              />
+                            </div>
+                            <input
+                              value={ch.route}
+                              onChange={e => {
+                                const v = e.target.value;
+                                setChannels(prev =>
+                                  prev.map((row, i) => (i === index ? { ...row, route: v } : row)),
+                                );
+                              }}
+                              placeholder="/plugin/route"
+                              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            />
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                                params（JSON 对象，可选）
+                              </label>
+                              <input
+                                value={ch.params}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  setChannels(prev =>
+                                    prev.map((row, i) => (i === index ? { ...row, params: v } : row)),
+                                  );
+                                }}
+                                placeholder='{"category":"frontend"}'
+                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 font-mono ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                                抓取数量上限 itemLimit（默认 100）
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={ch.itemLimit}
+                                onChange={e => {
+                                  const v = e.target.value;
+                                  setChannels(prev =>
+                                    prev.map((row, i) => (i === index ? { ...row, itemLimit: v } : row)),
+                                  );
+                                }}
+                                placeholder="100"
+                                className={`w-full sm:w-40 px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                          默认频道 defaultChannel
+                        </label>
+                        <StyledSelect
+                          value={defaultChannel}
+                          onChange={e => setDefaultChannel(e.target.value)}
+                          className={`${inputBg} ${inputBorder} ${inputText}`}
+                        >
+                          <option value="">（不指定）</option>
+                          {channels.map(ch => (
+                            <option key={ch._key} value={ch.id.trim()}>
+                              {ch.label.trim() || ch.id.trim()}
+                            </option>
+                          ))}
+                        </StyledSelect>
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                          刷新间隔 refreshInterval（秒）
+                        </label>
+                        <input
+                          value={refreshInterval}
+                          onChange={e => setRefreshInterval(e.target.value)}
+                          placeholder="3600"
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                        User-Agent（可选）
+                      </label>
+                      <input
+                        value={userAgent}
+                        onChange={e => setUserAgent(e.target.value)}
+                        placeholder="OrbitReader/0.1"
+                        className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                      />
+                    </div>
+
+                    <div className={`mt-6 p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
+                      <div className="flex items-center gap-2 mb-5">
+                        <div className="w-1 h-4 rounded-full bg-emerald-500" />
+                        <h4 className="text-sm font-bold">WASM 运行时</h4>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-1.5">
+                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                            入口文件 config.wasm.entry
+                          </label>
+                          <input
+                            value={wasmEntry}
+                            onChange={e => setWasmEntry(e.target.value)}
+                            placeholder="main.wasm.br"
+                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                            执行模式 executionMode
+                          </label>
+                          <StyledSelect
+                            value={executionMode}
+                            onChange={e => setExecutionMode(e.target.value)}
+                            className={`${inputBg} ${inputBorder} ${inputText}`}
+                          >
+                            <option value="wasm">wasm</option>
+                            <option value="browser">browser</option>
+                            <option value="hybrid">hybrid</option>
+                          </StyledSelect>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                            超时 timeoutMs（毫秒）
+                          </label>
+                          <input
+                            value={wasmTimeoutMs}
+                            onChange={e => setWasmTimeoutMs(e.target.value)}
+                            placeholder="30000"
+                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                          />
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                            内存上限 maxMemoryMB
+                          </label>
+                          <input
+                            value={wasmMaxMemoryMB}
+                            onChange={e => setWasmMaxMemoryMB(e.target.value)}
+                            placeholder="64"
+                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                          插件名称
+                        </label>
+                        <input
+                          value={pluginName}
+                          onChange={e => setPluginName(e.target.value)}
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                          版本 version
+                        </label>
+                        <input
+                          value={version}
+                          onChange={e => setVersion(e.target.value)}
+                          placeholder="1.0.0"
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                          插件 ID（只读）
+                        </label>
+                        <input
+                          value={plugin.id}
+                          readOnly
+                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none ${inputBg} ${inputBorder} ${
+                            isDark ? "text-neutral-500" : "text-neutral-400"
+                          }`}
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                          媒体类型 mediaType
+                        </label>
+                        <StyledSelect
+                          value={mediaType}
+                          onChange={e =>
+                            setMediaType(
+                              e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>,
+                            )
+                          }
+                          className={`${inputBg} ${inputBorder} ${inputText}`}
+                        >
+                          <option value="article">article</option>
+                          <option value="manga">manga</option>
+                          <option value="video">video</option>
+                          <option value="audio">audio</option>
+                        </StyledSelect>
+                      </div>
+                    </div>
+
+                    <div className={`mt-2 p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
+                      <div className="flex items-center gap-2 mb-5">
+                        <div className="w-1 h-4 rounded-full bg-orange-500" />
+                        <h4 className="text-sm font-bold">品牌与展示</h4>
+                      </div>
+                      <div className="flex flex-col md:flex-row md:items-start gap-6">
+                        <div className="shrink-0 w-full md:w-[200px]">
+                          <PluginAvatar
+                            plugin={{
+                              name: pluginName || plugin.name,
+                              color,
+                              iconUrl: logoImageUrl,
+                              logoImageUrl,
+                            }}
+                            className="w-16 h-16 rounded-2xl shadow-lg"
+                            textClassName="text-2xl font-black"
+                          />
+                          <div className="mt-4 space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              颜色
+                            </label>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="color"
+                                value={/^#([0-9a-fA-F]{6})$/.test(color.trim()) ? color.trim() : "#7c3aed"}
+                                onChange={e => setColor(e.target.value)}
+                                className="h-10 w-12 rounded-xl border border-neutral-200 p-1 bg-white"
+                              />
+                              <input
+                                value={color}
+                                onChange={e => setColor(e.target.value)}
+                                placeholder="#7c3aed 或 bg-blue-500"
+                                className={`flex-1 px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              图标类型
+                            </label>
+                            <StyledSelect
+                              value={icon}
+                              onChange={e => setIcon(e.target.value as PluginContentType)}
+                              className={`${inputBg} ${inputBorder} ${inputText}`}
+                            >
+                              <option value="text">文章适应排版</option>
+                              <option value="image">漫画/图片</option>
+                              <option value="video">视频</option>
+                              <option value="audio">音频</option>
+                            </StyledSelect>
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              排版分类大区
+                            </label>
+                            <StyledSelect
+                              value={marketCategory}
+                              onChange={e =>
+                                setMarketCategory(
+                                  e.target.value as Exclude<PluginMarketCategory, "all">,
+                                )
+                              }
+                              className={`${inputBg} ${inputBorder} ${inputText}`}
+                            >
+                              <option value="blog">个人博客</option>
+                              <option value="news">新闻资讯</option>
+                              <option value="manga">二次元漫画</option>
+                              <option value="video">流媒体/视频</option>
+                              <option value="audio">有声播客</option>
+                            </StyledSelect>
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              分类标签
+                            </label>
+                            <input
+                              value={categoryTag}
+                              onChange={e => setCategoryTag(e.target.value)}
+                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            />
+                          </div>
+                          <div className="space-y-1.5 sm:col-span-2">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              图标图片 URL（可选）
+                            </label>
+                            <input
+                              value={logoImageUrl}
+                              onChange={e => setLogoImageUrl(e.target.value)}
+                              placeholder="https://example.com/icon.png"
+                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            />
+                          </div>
+                          <div className="space-y-1.5 sm:col-span-2">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              描述 description
+                            </label>
+                            <input
+                              value={description}
+                              onChange={e => setDescription(e.target.value)}
+                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {error && <p className="text-xs text-rose-500 mt-2">{error}</p>}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 min-h-0 overflow-hidden p-7">
+                <div className={`h-full rounded-[22px] overflow-hidden border ${subtleBorder} ${isDark ? "bg-[#0b0f12]" : "bg-neutral-950"}`}>
+                  <div className={`px-5 py-3 border-b ${isDark ? "border-neutral-800" : "border-neutral-900"} text-xs flex items-center justify-between`}>
+                    <span className={isDark ? "text-neutral-400" : "text-neutral-400"}>manifest.json</span>
+                    <span className="text-emerald-400">● WASM 配置</span>
+                  </div>
+                  <textarea
+                    value={jsonText}
+                    onFocus={() => setIsEditingJson(true)}
+                    onChange={e => {
+                      const next = e.target.value;
+                      setJsonText(next);
+                      applyJsonToForm(next);
+                    }}
+                    onBlur={() => {
+                      setIsEditingJson(false);
+                      if (applyJsonToForm(jsonText)) {
+                        setJsonText(buildManifestJsonText());
+                      }
+                    }}
+                    spellCheck={false}
+                    className="w-full h-[calc(100%-48px)] bg-transparent p-5 text-[12px] leading-6 font-mono text-[#58f5d3] resize-none outline-none"
+                  />
+                </div>
+                {error && <p className="text-xs text-rose-500 mt-3">{error}</p>}
+              </div>
+            )}
+          </main>
+        </div>
+
+        <div className={`h-[68px] px-8 flex items-center justify-between border-t ${subtleBorder}`}>
+          <div className={`text-[11px] ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+            {viewMode === "json"
+              ? "提示：JSON 模式会绕过部分表单校验，保存前请确认语法正确。"
+              : "保存后会立即同步到运行时插件目录。"}
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={onClose}
+              className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} ${
+                isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+              }`}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              disabled={loading || saving}
+              onClick={() => {
+                void handleSave();
+              }}
+              className={`px-5 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY} disabled:opacity-50 disabled:cursor-not-allowed`}
+            >
+              {saving ? "保存中…" : "保存 manifest"}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ImportPluginModal({
   theme,
   onClose,
   onImport,
+  onOrbitImport,
   initialPlugin,
 }: {
   theme: ThemeMode;
   onClose: () => void;
   onImport: (payload: InstallRSSPluginRequest) => void;
+  onOrbitImport?: (file: File) => Promise<void>;
   initialPlugin?: Plugin | null;
 }) {
   const isDark = theme === "dark";
@@ -606,6 +1562,10 @@ function ImportPluginModal({
   const [jsonText, setJsonText] = useState("");
   const [isEditingJson, setIsEditingJson] = useState(false);
   const [viewMode, setViewMode] = useState<"form" | "json">("form");
+  const [importSource, setImportSource] = useState<"rss" | "wasm">("rss");
+  const [orbitFile, setOrbitFile] = useState<File | null>(null);
+  const [isInstallingOrbit, setIsInstallingOrbit] = useState(false);
+  const orbitFileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
 
   const logoLetter = pluginName.trim().slice(0, 1) || "R";
@@ -937,6 +1897,25 @@ function ImportPluginModal({
     onClose();
   };
 
+  const handleOrbitInstall = async () => {
+    if (!orbitFile || !onOrbitImport) {
+      setError("请先选择 .orbit 插件包");
+      return;
+    }
+    setIsInstallingOrbit(true);
+    setError(null);
+    try {
+      await onOrbitImport(orbitFile);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsInstallingOrbit(false);
+    }
+  };
+
+  const isWasmImport = importSource === "wasm" && !initialPlugin;
+
   return (
     <div className="fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
       <div
@@ -946,38 +1925,44 @@ function ImportPluginModal({
         <div className={`h-[72px] px-6 flex items-center justify-between border-b ${subtleBorder}`}>
           <div className="min-w-0">
             <h3 className="text-sm font-semibold truncate">
-              {initialPlugin ? "编辑 RSS 插件" : "导入插件"}
+              {initialPlugin ? "编辑 RSS 插件" : isWasmImport ? "导入 WASM 插件" : "导入插件"}
             </h3>
             <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-              参考 manifest 结构配置 source/config/meta（当前仅支持 RSS）
+              {initialPlugin
+                ? "修改 RSS 插件配置，支持可视化表单或 JSON 编辑"
+                : isWasmImport
+                  ? "上传 .orbit 官方插件包，系统将自动解压并导入 manifest"
+                  : "RSS 可视化导入，或从左侧切换 WASM 官方插件"}
             </p>
           </div>
 
           <div className="flex items-center gap-2">
-            <div className={`flex items-center p-1 rounded-2xl ${mutedBg} border ${subtleBorder}`}>
-              <button
-                type="button"
-                onClick={() => setViewMode("form")}
-                className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                  viewMode === "form"
-                    ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
-                    : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
-                }`}
-              >
-                可视化配置
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode("json")}
-                className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
-                  viewMode === "json"
-                    ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
-                    : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
-                }`}
-              >
-                JSON 编辑
-              </button>
-            </div>
+            {!isWasmImport ? (
+              <div className={`flex items-center p-1 rounded-2xl ${mutedBg} border ${subtleBorder}`}>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("form")}
+                  className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                    viewMode === "form"
+                      ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
+                      : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
+                  }`}
+                >
+                  可视化配置
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("json")}
+                  className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
+                    viewMode === "json"
+                      ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
+                      : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
+                  }`}
+                >
+                  JSON 编辑
+                </button>
+              </div>
+            ) : null}
 
             <button
               type="button"
@@ -992,15 +1977,22 @@ function ImportPluginModal({
         </div>
 
         <div className="h-[calc(100%-140px)] flex min-h-0">
-          {/* Left: Source selector (Phase 1 RSS only) */}
+          {/* Left: Source selector (Phase 1 RSS only) — hidden in edit mode */}
+          {!initialPlugin ? (
           <aside className={`w-72 shrink-0 border-r ${subtleBorder} p-5 flex flex-col ${isDark ? "bg-neutral-950/10" : "bg-white"}`}>
             <nav className="space-y-2">
               <button
                 type="button"
+                onClick={() => {
+                  setImportSource("rss");
+                  setError(null);
+                }}
                 className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-colors ${
-                  isDark
-                    ? "border-[#5856D6]/25 bg-[#5856D6]/10 text-neutral-100"
-                    : "border-[#5856D6]/25 bg-[#5856D6]/5 text-neutral-900"
+                  importSource === "rss" || initialPlugin
+                    ? isDark
+                      ? "border-[#5856D6]/25 bg-[#5856D6]/10 text-neutral-100"
+                      : "border-[#5856D6]/25 bg-[#5856D6]/5 text-neutral-900"
+                    : `${subtleBorder} ${isDark ? "hover:bg-neutral-900/40 text-neutral-300" : "hover:bg-neutral-50 text-neutral-700"}`
                 }`}
               >
                 <div className={`p-2.5 rounded-xl ${isDark ? "bg-[#5856D6]/25" : "bg-[#5856D6]"} `}>
@@ -1010,10 +2002,44 @@ function ImportPluginModal({
                   <p className="text-sm font-semibold truncate">RSS 订阅源</p>
                   <p className={`text-[11px] mt-0.5 truncate ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>通过 `config.channels` 拉取</p>
                 </div>
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${isDark ? "bg-neutral-900/60 text-neutral-300" : "bg-white text-neutral-600 border border-neutral-200"}`}>
-                  已启用
-                </span>
+                {(importSource === "rss" || initialPlugin) ? (
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${isDark ? "bg-neutral-900/60 text-neutral-300" : "bg-white text-neutral-600 border border-neutral-200"}`}>
+                    已启用
+                  </span>
+                ) : null}
               </button>
+
+              {onOrbitImport && !initialPlugin ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImportSource("wasm");
+                    setError(null);
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-colors ${
+                    importSource === "wasm"
+                      ? isDark
+                        ? "border-emerald-900/40 bg-emerald-950/20 text-neutral-100"
+                        : "border-emerald-200 bg-emerald-50/60 text-neutral-900"
+                      : `${subtleBorder} ${isDark ? "hover:bg-neutral-900/40 text-neutral-300" : "hover:bg-neutral-50 text-neutral-700"}`
+                  }`}
+                >
+                  <div className={`p-2.5 rounded-xl ${isDark ? "bg-emerald-900/40" : "bg-emerald-500"}`}>
+                    <Icon name="puzzle" className={`w-4 h-4 ${isDark ? "text-emerald-300" : "text-white"}`} />
+                  </div>
+                  <div className="flex-1 min-w-0 text-left">
+                    <p className="text-sm font-semibold truncate">WASM 官方插件</p>
+                    <p className={`text-[11px] mt-0.5 truncate ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                      导入 .orbit 包（manifest + wasm）
+                    </p>
+                  </div>
+                  {importSource === "wasm" ? (
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${isDark ? "bg-neutral-900/60 text-neutral-300" : "bg-white text-neutral-600 border border-neutral-200"}`}>
+                      当前
+                    </span>
+                  ) : null}
+                </button>
+              ) : null}
 
               <div className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border ${subtleBorder} ${isDark ? "bg-neutral-900/40 text-neutral-500" : "bg-neutral-50 text-neutral-400"}`}>
                 <div className={`p-2.5 rounded-xl ${isDark ? "bg-neutral-800" : "bg-neutral-200"}`}>
@@ -1035,16 +2061,77 @@ function ImportPluginModal({
                 <p className="text-xs font-semibold">提示</p>
               </div>
               <p className={`text-[11px] mt-2 leading-relaxed ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                右侧 JSON 会随表单实时生成；你也可以切到 JSON 模式直接编辑，失焦后会自动回填并格式化。
+                {isWasmImport
+                  ? "在右侧选择 .orbit 文件后点击安装，系统将自动解压 manifest 与 wasm 主文件。"
+                  : "右侧 JSON 会随表单实时生成；你也可以切到 JSON 模式直接编辑，失焦后会自动回填并格式化。"}
               </p>
             </div>
           </aside>
+          ) : null}
 
           {/* Right: Main workspace */}
           <main className="flex-1 min-w-0 min-h-0 flex flex-col">
-            {viewMode === "form" ? (
+            {isWasmImport ? (
               <div className="flex-1 min-h-0 overflow-y-auto p-7">
-                <div className="max-w-3xl">
+                <div className="max-w-2xl mx-auto h-full flex flex-col items-center justify-center text-center">
+                  <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-5 ${isDark ? "bg-emerald-900/30" : "bg-emerald-50"}`}>
+                    <Icon name="puzzle" className={`w-8 h-8 ${isDark ? "text-emerald-400" : "text-emerald-600"}`} />
+                  </div>
+                  <h4 className="text-sm font-bold mb-2">上传 WASM 官方插件包</h4>
+                  <p className={`text-[11px] leading-relaxed max-w-md mb-6 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                    支持 `.orbit` 格式（ZIP 压缩包），需包含 `manifest.json`、`.wasm.br` 主文件及校验信息。
+                  </p>
+
+                  <input
+                    ref={orbitFileInputRef}
+                    type="file"
+                    accept=".orbit,application/zip"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setOrbitFile(file);
+                      setError(null);
+                      e.target.value = "";
+                    }}
+                  />
+
+                  <div className={`w-full max-w-md rounded-2xl border border-dashed p-6 mb-4 ${subtleBorder} ${mutedBg}`}>
+                    {orbitFile ? (
+                      <div className="space-y-2">
+                        <p className={`text-xs font-semibold ${isDark ? "text-neutral-200" : "text-neutral-800"}`}>
+                          {orbitFile.name}
+                        </p>
+                        <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                          {(orbitFile.size / 1024).toFixed(1)} KB
+                        </p>
+                      </div>
+                    ) : (
+                      <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                        尚未选择插件包
+                      </p>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => orbitFileInputRef.current?.click()}
+                    className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-semibold border ${subtleBorder} ${
+                      isDark
+                        ? "text-neutral-200 hover:bg-neutral-900/50"
+                        : "text-neutral-700 hover:bg-white"
+                    }`}
+                  >
+                    <Icon name="download" className="w-4 h-4" />
+                    选择 .orbit 文件
+                  </button>
+
+                  {error ? <p className="text-xs text-rose-500 mt-4">{error}</p> : null}
+                </div>
+              </div>
+            ) : viewMode === "form" ? (
+              <div className="flex-1 min-h-0 overflow-y-auto p-7">
+                <div className="max-w-3xl mx-auto w-full">
                   <div className="flex items-center gap-2 mb-5">
                     <div className="w-1 h-4 rounded-full bg-[#5856D6]" />
                     <h4 className="text-sm font-bold">核心配置</h4>
@@ -1415,7 +2502,11 @@ function ImportPluginModal({
 
         <div className={`h-[68px] px-8 flex items-center justify-between border-t ${subtleBorder}`}>
           <div className={`text-[11px] ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-            {viewMode === "json" ? "提示：JSON 模式会绕过部分表单校验，保存前请确认语法正确。" : "保存后会立即同步到运行时插件目录。"}
+            {isWasmImport
+              ? "安装后可在「已安装插件」中管理、编辑 manifest 配置。"
+              : viewMode === "json"
+                ? "提示：JSON 模式会绕过部分表单校验，保存前请确认语法正确。"
+                : "保存后会立即同步到运行时插件目录。"}
           </div>
           <div className="flex items-center gap-3">
             <button
@@ -1427,9 +2518,22 @@ function ImportPluginModal({
             >
               取消
             </button>
-            <button type="button" onClick={handleSubmit} className={`px-5 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY}`}>
-              保存并同步
-            </button>
+            {isWasmImport ? (
+              <button
+                type="button"
+                disabled={!orbitFile || isInstallingOrbit}
+                onClick={() => {
+                  void handleOrbitInstall();
+                }}
+                className={`px-5 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY} disabled:opacity-50 disabled:cursor-not-allowed`}
+              >
+                {isInstallingOrbit ? "安装中…" : "安装插件"}
+              </button>
+            ) : (
+              <button type="button" onClick={handleSubmit} className={`px-5 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY}`}>
+                保存并同步
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -1762,9 +2866,11 @@ export function PluginManagerModal({
   groupedPluginsForManage,
   onClose,
   onInstall,
+  onSaveManifest,
   onUninstall,
   onToggleActive,
   onMove,
+  onReorder,
   onImport,
   onRefresh,
   onForceRefresh,
@@ -1781,6 +2887,9 @@ export function PluginManagerModal({
   const [marketSearch, setMarketSearch] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
   const [editingPlugin, setEditingPlugin] = useState<Plugin | null>(null);
+  const [editingWasmPlugin, setEditingWasmPlugin] = useState<Plugin | null>(null);
+  const [installingMarketId, setInstallingMarketId] = useState<string | null>(null);
+  const [installError, setInstallError] = useState<string | null>(null);
   const [importTargetGroupId, setImportTargetGroupId] = useState<string | null>(null);
   const [showGroupManager, setShowGroupManager] = useState(false);
   const [activeManageGroupId, setActiveManageGroupId] = useState<string>(
@@ -1996,6 +3105,9 @@ export function PluginManagerModal({
                     </div>
                     <span className="text-[11px] text-neutral-400 whitespace-nowrap shrink-0">发现 {marketTotal} 个获取接口</span>
                   </div>
+                  {installError ? (
+                    <p className="mt-2 text-[11px] text-rose-500">{installError}</p>
+                  ) : null}
                 </div>
                 <div className={`flex-1 overflow-y-auto px-6 py-5 ${isDark ? "bg-neutral-950/30" : "bg-neutral-100/80"}`}>
                   {marketLoading ? (
@@ -2004,15 +3116,31 @@ export function PluginManagerModal({
                     <p className="text-sm text-neutral-400 text-center py-16">暂无匹配插件</p>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {marketPlugins.map(plugin => (
-                        <MarketPluginCard
-                          key={plugin.id}
-                          plugin={plugin}
-                          categoryLabel={marketCategoryLabels.get(String(plugin.categoryId))}
-                          subtleBorder={subtleBorder}
-                          onInstall={onInstall}
-                        />
-                      ))}
+                      {marketPlugins.map(plugin => {
+                        const installed = findInstalledMarketPlugin(plugin, installedPlugins);
+                        return (
+                          <MarketPluginCard
+                            key={plugin.id}
+                            plugin={plugin}
+                            categoryLabel={marketCategoryLabels.get(String(plugin.categoryId))}
+                            subtleBorder={subtleBorder}
+                            installedPlugin={installed}
+                            installing={installingMarketId === plugin.id}
+                            onInstall={async (marketId) => {
+                              setInstallError(null);
+                              setInstallingMarketId(marketId);
+                              try {
+                                await onInstall(marketId);
+                              } catch (err) {
+                                setInstallError(err instanceof Error ? err.message : String(err));
+                                throw err;
+                              } finally {
+                                setInstallingMarketId(null);
+                              }
+                            }}
+                          />
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -2109,12 +3237,17 @@ export function PluginManagerModal({
                       inputBorder={inputBorder}
                       pluginGroups={pluginGroups}
                       onMove={onMove}
+                      onReorder={onReorder}
                       onToggleActive={onToggleActive}
                       onUninstall={onUninstall}
                       onForceRefresh={onForceRefresh}
                       onAssignGroup={onAssignPluginGroup}
                       resolveGroupId={resolveGroupId}
                       onEdit={(plugin) => {
+                        if (plugin.source === "wasm") {
+                          setEditingWasmPlugin(plugin);
+                          return;
+                        }
                         setEditingPlugin(plugin);
                         setImportTargetGroupId(null);
                         setShowImportModal(true);
@@ -2166,7 +3299,29 @@ export function PluginManagerModal({
             setImportTargetGroupId(null);
             setActiveTab("manage");
           }}
+          onOrbitImport={async (file) => {
+            const plugin = await installOrbitPackage(file);
+            onRefresh();
+            if (importTargetGroupId) {
+              onAssignPluginGroup(plugin.id, importTargetGroupId);
+            }
+            setShowImportModal(false);
+            setImportTargetGroupId(null);
+            setActiveTab("manage");
+          }}
           initialPlugin={editingPlugin}
+        />
+      )}
+
+      {editingWasmPlugin && (
+        <WasmManifestEditorModal
+          theme={theme}
+          plugin={editingWasmPlugin}
+          onClose={() => setEditingWasmPlugin(null)}
+          onSave={async (manifestText) => {
+            await onSaveManifest(editingWasmPlugin.id, manifestText);
+            setEditingWasmPlugin(null);
+          }}
         />
       )}
     </div>

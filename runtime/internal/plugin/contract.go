@@ -73,6 +73,8 @@ type ManifestMeta struct {
 	Color          string `json:"color"`
 	LogoText       string `json:"logoText"`
 	LogoImageURL   string `json:"logoImageUrl"`
+	IconURL        string `json:"iconUrl"`   // alias used by official packages
+	IconColor      string `json:"iconColor"` // alias used by official packages
 	MarketCategory string `json:"marketCategory"`
 	CategoryTag    string `json:"categoryTag"`
 	Official       bool   `json:"official"`

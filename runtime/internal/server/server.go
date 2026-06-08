@@ -32,7 +32,7 @@ func New(st *store.Store, reg *plugin.Registry) *Server {
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -46,8 +46,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/v1/status", s.handleStatus)
 	s.mux.HandleFunc("/v1/plugin-groups", s.handlePluginGroups)
+	s.mux.HandleFunc("/v1/plugins/install-orbit", s.handleInstallOrbit)
+	s.mux.HandleFunc("/v1/plugins/market/", s.handlePluginsMarket)
 	s.mux.HandleFunc("/v1/plugins/market", s.handlePluginsMarket)
 	s.mux.HandleFunc("/v1/plugins/resync", s.handlePluginsResync)
+	s.mux.HandleFunc("/v1/plugins/order", s.handleReorderPlugins)
 	s.mux.HandleFunc("/v1/plugins/", s.handlePluginByID)
 	s.mux.HandleFunc("/v1/plugins", s.handlePlugins)
 	s.mux.HandleFunc("/v1/feed", s.handleFeed)

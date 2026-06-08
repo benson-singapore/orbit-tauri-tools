@@ -1,12 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
+import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { dedupeCoverImageFromContent } from "@/lib/articleContent";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem, fetchFeedUnread } from "@/lib/feed";
+import {
+  persistIgnoredArticleIds,
+  readIgnoredArticleIds,
+} from "@/lib/ignoredArticles";
+import {
+  READER_FONT_SCALE_DEFAULT,
+  READER_FONT_SCALE_MAX,
+  READER_FONT_SCALE_MIN,
+  READER_FONT_SCALE_STEP,
+  clampReaderFontScale,
+  persistReaderFontScale,
+  readStoredReaderFontScale,
+} from "@/lib/readerFontScale";
 import { useTitlebarDrag } from "@/hooks/useTitlebarDrag";
 import { useTitlebarEnv } from "@/hooks/useTitlebarEnv";
 import { useUiZoom } from "@/hooks/useUiZoom";
@@ -77,7 +91,9 @@ export default function App() {
     togglePluginActive: orbitTogglePluginActive,
     removePlugin: orbitRemovePlugin,
     movePlugin: orbitMovePlugin,
+    reorderPlugins: orbitReorderPlugins,
     installOfficialPlugin: orbitInstallOfficialPlugin,
+    savePluginManifest: orbitSavePluginManifest,
     forceRefreshPlugin: orbitForceRefreshPlugin,
   } = useOrbitData(
     activePlugin,
@@ -108,6 +124,7 @@ export default function App() {
   }, [activePluginGroupId, pluginGroups, sidebarPluginGroups]);
 
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
+  const [ignoredIds, setIgnoredIds] = useState<Set<string>>(() => readIgnoredArticleIds());
   const articlesWithBookmarks = useMemo(
     () =>
       articles.map(item => ({
@@ -115,6 +132,10 @@ export default function App() {
         isBookmarked: bookmarkedIds.has(item.id),
       })),
     [articles, bookmarkedIds],
+  );
+  const visibleArticles = useMemo(
+    () => articlesWithBookmarks.filter(item => !ignoredIds.has(item.id)),
+    [articlesWithBookmarks, ignoredIds],
   );
 
   const [selectedItem, setSelectedItem] = useState<Article | null>(null);
@@ -170,19 +191,33 @@ export default function App() {
   }, [unreadTotal, activePlugin, activePluginGroupId]);
 
   useEffect(() => {
-    if (articlesWithBookmarks.length === 0) {
+    if (visibleArticles.length === 0) {
+      setSelectedItem(null);
       return;
     }
     setSelectedItem(prev => {
-      if (prev && articlesWithBookmarks.some(a => a.id === prev.id)) {
-        return articlesWithBookmarks.find(a => a.id === prev.id) ?? prev;
+      if (prev && visibleArticles.some(a => a.id === prev.id)) {
+        return visibleArticles.find(a => a.id === prev.id) ?? prev;
       }
-      return articlesWithBookmarks[0] ?? null;
+      return visibleArticles[0] ?? null;
     });
-  }, [articlesWithBookmarks]);
+  }, [visibleArticles]);
 
   const [focusMode, setFocusMode] = useState(false);
   const [dimmerMode, setDimmerMode] = useState(false);
+  const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
+
+  useEffect(() => {
+    setReaderFontScale(readStoredReaderFontScale());
+  }, []);
+
+  const bumpReaderFontScale = useCallback((direction: -1 | 1) => {
+    setReaderFontScale((prev) => {
+      const next = clampReaderFontScale(prev + direction * READER_FONT_SCALE_STEP);
+      persistReaderFontScale(next);
+      return next;
+    });
+  }, []);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
 
   // Audio Player State
@@ -191,6 +226,30 @@ export default function App() {
 
   // Image Slider Index
   const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [coverImageFailed, setCoverImageFailed] = useState(false);
+  const [failedThumbnailIds, setFailedThumbnailIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setCoverImageFailed(false);
+  }, [selectedItem?.id, selectedItem?.image]);
+
+  useEffect(() => {
+    setFailedThumbnailIds(new Set());
+  }, [articles]);
+
+  const showArticleMedia = useMemo(() => {
+    if (!selectedItem) return false;
+    if (selectedItem.type === "text") {
+      return Boolean(selectedItem.image?.trim()) && !coverImageFailed;
+    }
+    if (selectedItem.type === "video" || selectedItem.type === "audio") {
+      return true;
+    }
+    if (selectedItem.type === "image") {
+      return Boolean(selectedItem.galleryImages?.length);
+    }
+    return false;
+  }, [selectedItem, coverImageFailed]);
 
   const selectedItemDisplayContent = useMemo(() => {
     if (!selectedItem?.content?.trim()) return "";
@@ -205,7 +264,7 @@ export default function App() {
   }, [selectedItemDisplayContent, theme]);
 
   const filteredArticles = useMemo(() => {
-    return articlesWithBookmarks.filter(item => {
+    return visibleArticles.filter(item => {
       // Filter by custom left-side tabs
       if (activeTab === 'bookmarks' && !item.isBookmarked) {
         return false;
@@ -217,7 +276,7 @@ export default function App() {
 
       return true;
     });
-  }, [articlesWithBookmarks, activeTab]);
+  }, [visibleArticles, activeTab]);
 
   const pluginById = useMemo(
     () => new Map(myPlugins.map(plugin => [plugin.id, plugin] as const)),
@@ -225,11 +284,6 @@ export default function App() {
   );
 
   const selectedPluginMeta = selectedItem ? pluginById.get(selectedItem.pluginId) : undefined;
-  const selectedPluginBadgeText =
-    selectedPluginMeta?.logoText?.trim()
-    || selectedPluginMeta?.name?.trim().slice(0, 1)
-    || selectedItem?.pluginName.trim().slice(0, 1)
-    || "★";
 
   const activePluginChannels = useMemo(() => {
     if (activePlugin === "all") return [];
@@ -311,14 +365,21 @@ export default function App() {
     }
   };
 
-  const handleInstallPlugin = (newPlugin: Plugin) => {
-    void orbitInstallOfficialPlugin(newPlugin.id)
-      .then(() => reload())
-      .catch(console.error);
+  const handleIgnoreArticle = (id: string) => {
+    setIgnoredIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      persistIgnoredArticleIds(next);
+      return next;
+    });
   };
 
-  const handleUninstallPlugin = (id: string) => {
-    void orbitRemovePlugin(id).catch(console.error);
+  const handleInstallPlugin = async (marketId: string) => {
+    await orbitInstallOfficialPlugin(marketId);
+  };
+
+  const handleUninstallPlugin = async (id: string) => {
+    await orbitRemovePlugin(id);
     if (activePlugin === id) {
       const groupId = getPluginGroupId(id);
       selectGroupAll(groupId);
@@ -337,6 +398,10 @@ export default function App() {
 
   const handleMovePlugin = (id: string, direction: "up" | "down") => {
     orbitMovePlugin(id, direction);
+  };
+
+  const handleReorderPlugins = (orderedIds: string[]) => {
+    orbitReorderPlugins(orderedIds);
   };
 
   const handleImportCustomPlugin = (
@@ -671,27 +736,11 @@ export default function App() {
                     }`}
                     title={plugin.name}
                   >
-                    <div
-                      className={`w-5 h-5 rounded-md overflow-hidden flex items-center justify-center text-[10px] font-bold text-white ${
-                        plugin.color?.trim?.().startsWith("bg-") ? plugin.color : ""
-                      }`}
-                      style={
-                        plugin.color?.trim?.().startsWith("bg-")
-                          ? undefined
-                          : { backgroundColor: plugin.color || "#7c3aed" }
-                      }
-                    >
-                      {plugin.logoImageUrl ? (
-                        <img
-                          src={plugin.logoImageUrl}
-                          alt=""
-                          className="w-full h-full object-cover"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <span>{(plugin.name || "").trim().slice(0, 1) || "★"}</span>
-                      )}
-                    </div>
+                    <PluginAvatar
+                      plugin={plugin}
+                      className="w-5 h-5 rounded-md"
+                      textClassName="text-[10px]"
+                    />
                     {!isSidebarCollapsed && (
                       <div className="flex-1 flex items-center justify-between min-w-0">
                         <span className="truncate">{plugin.name}</span>
@@ -790,6 +839,7 @@ export default function App() {
               onUninstall={handleUninstallPlugin}
               onToggleActive={handleTogglePluginActive}
               onMove={handleMovePlugin}
+              onReorder={handleReorderPlugins}
               onImport={handleImportCustomPlugin}
               onRefresh={() => {
                 void reload().catch(console.error);
@@ -797,6 +847,10 @@ export default function App() {
               onForceRefresh={async (pluginId) => {
                 await orbitForceRefreshPlugin(pluginId);
                 await refreshGroupUnreadCounts();
+              }}
+              onSaveManifest={async (pluginId, manifestText) => {
+                await orbitSavePluginManifest(pluginId, manifestText);
+                await reload();
               }}
               onAssignPluginGroup={assignPluginGroup}
               onAddPluginGroup={addPluginGroup}
@@ -940,12 +994,6 @@ export default function App() {
                     const isSelected = selectedItem && selectedItem.id === item.id;
                     const isUnread = !item.isRead;
                     const pluginMeta = pluginById.get(item.pluginId);
-                    const badgeText = (
-                      pluginMeta?.logoText?.trim()
-                      || pluginMeta?.name?.trim().slice(0, 1)
-                      || item.pluginName.trim().slice(0, 1)
-                      || "★"
-                    );
                     return (
                       <div 
                         key={item.id}
@@ -960,23 +1008,15 @@ export default function App() {
                           <div className="flex-1 min-w-0">
                             {/* Platform Tag & Resource Type Icon */}
                             <div className="flex items-center gap-1.5 mb-1">
-                              <div
-                                className={`w-2.5 h-2.5 rounded-full overflow-hidden flex items-center justify-center text-[5px] text-white ${
-                                  pluginMeta?.color?.trim?.().startsWith("bg-") ? pluginMeta.color : "bg-neutral-800"
-                                }`}
-                                style={pluginMeta?.color?.trim?.().startsWith("bg-") ? undefined : { backgroundColor: pluginMeta?.color || "#262626" }}
-                              >
-                                {pluginMeta?.logoImageUrl ? (
-                                  <img
-                                    src={pluginMeta.logoImageUrl}
-                                    alt=""
-                                    className="w-full h-full object-cover"
-                                    referrerPolicy="no-referrer"
-                                  />
-                                ) : (
-                                  <span>{badgeText}</span>
-                                )}
-                              </div>
+                              {pluginMeta ? (
+                                <PluginAvatar
+                                  plugin={pluginMeta}
+                                  className="w-2.5 h-2.5 rounded-full"
+                                  textClassName="text-[5px]"
+                                />
+                              ) : (
+                                <div className="w-2.5 h-2.5 rounded-full bg-neutral-800" />
+                              )}
                               <span className="text-[11px] font-medium text-neutral-400 dark:text-neutral-500">{item.pluginName}</span>
                               <span className="text-[10px] text-neutral-300">•</span>
                               <div className="text-neutral-400 group-hover:text-indigo-600 transition-colors">
@@ -1003,15 +1043,14 @@ export default function App() {
                             />
                           )}
 
-                          {item.image && (
+                          {item.image?.trim() && !failedThumbnailIds.has(item.id) && (
                             <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-neutral-100 relative">
                               <img 
                                 src={item.image} 
                                 alt="Thumbnail" 
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                                onError={(e) => {
-                                  e.currentTarget.src =
-                                    "https://placehold.co/100x100/eaeaea/999999?text=Cover";
+                                onError={() => {
+                                  setFailedThumbnailIds(prev => new Set(prev).add(item.id));
                                 }}
                               />
                               {/* Overlay media badge */}
@@ -1033,12 +1072,23 @@ export default function App() {
                           </div>
                           <div className="flex items-center gap-2">
                             <span>{item.reads}</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleIgnoreArticle(item.id);
+                              }}
+                              className="p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full"
+                              title="忽略此文章"
+                            >
+                              <Icon name="eye-off" className="w-3 h-3 text-neutral-400" />
+                            </button>
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleBookmarkToggle(item.id);
                               }}
                               className="p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full"
+                              title="收藏"
                             >
                               <Icon name="bookmark" className="w-3 h-3 text-neutral-400" active={item.isBookmarked} />
                             </button>
@@ -1086,27 +1136,13 @@ export default function App() {
                     <div className="flex items-center gap-2 p-2.5">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-1 rounded-lg shrink-0 inline-flex items-center gap-1.5">
-                          <span
-                            className={`w-4 h-4 rounded-md overflow-hidden flex items-center justify-center text-[8px] text-white shrink-0 ${
-                              selectedPluginMeta?.color?.trim?.().startsWith("bg-") ? selectedPluginMeta.color : ""
-                            }`}
-                            style={
-                              selectedPluginMeta?.color?.trim?.().startsWith("bg-")
-                                ? undefined
-                                : { backgroundColor: selectedPluginMeta?.color || "#4f46e5" }
-                            }
-                          >
-                            {selectedPluginMeta?.logoImageUrl ? (
-                              <img
-                                src={selectedPluginMeta.logoImageUrl}
-                                alt=""
-                                className="w-full h-full object-cover"
-                                referrerPolicy="no-referrer"
-                              />
-                            ) : (
-                              <span>{selectedPluginBadgeText}</span>
-                            )}
-                          </span>
+                          {selectedPluginMeta ? (
+                            <PluginAvatar
+                              plugin={selectedPluginMeta}
+                              className="w-4 h-4 rounded-md"
+                              textClassName="text-[8px]"
+                            />
+                          ) : null}
                           {selectedItem.pluginName}
                         </span>
                         <span className="text-xs text-neutral-400 truncate">
@@ -1115,6 +1151,29 @@ export default function App() {
                       </div>
 
                       <div className="flex items-center justify-end gap-1 shrink-0 ml-auto">
+                        <div className="flex items-center gap-0.5 mr-0.5">
+                          <button
+                            type="button"
+                            onClick={() => bumpReaderFontScale(-1)}
+                            disabled={readerFontScale <= READER_FONT_SCALE_MIN}
+                            className="w-7 h-7 rounded-lg text-sm font-medium flex items-center justify-center transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 disabled:opacity-30 disabled:pointer-events-none"
+                            title="减小字号"
+                            aria-label="减小字号"
+                          >
+                            −
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => bumpReaderFontScale(1)}
+                            disabled={readerFontScale >= READER_FONT_SCALE_MAX}
+                            className="w-7 h-7 rounded-lg text-sm font-medium flex items-center justify-center transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 disabled:opacity-30 disabled:pointer-events-none"
+                            title="增大字号"
+                            aria-label="增大字号"
+                          >
+                            +
+                          </button>
+                        </div>
+
                         <button
                           onClick={() => setFocusMode(!focusMode)}
                           className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all ${
@@ -1157,6 +1216,14 @@ export default function App() {
                         ) : null}
 
                         <button
+                          onClick={() => handleIgnoreArticle(selectedItem.id)}
+                          className="p-1.5 rounded-lg transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
+                          title="忽略此文章"
+                        >
+                          <Icon name="eye-off" className="w-3.5 h-3.5" />
+                        </button>
+
+                        <button
                           onClick={() => handleBookmarkToggle(selectedItem.id)}
                           className={`p-1.5 rounded-lg transition-all ${
                             selectedItem.isBookmarked
@@ -1176,7 +1243,10 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="space-y-6">
+                <div
+                  className="article-reader space-y-6"
+                  style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
+                >
                 {aiSummary && (
                   <div className="relative p-5 rounded-2xl bg-gradient-to-br from-indigo-500/10 via-purple-500/10 to-pink-500/10 border border-indigo-100 dark:border-indigo-900/30 text-sm leading-relaxed text-indigo-900 dark:text-indigo-300">
                     <button 
@@ -1195,23 +1265,21 @@ export default function App() {
 
                 {/* Article Header (Title, Subinfo) */}
                 <div className="space-y-4">
-                  <h1 className="text-2xl md:text-3.5xl font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight">
+                  <h1 className="article-reader-title font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight">
                     {selectedItem.title}
                   </h1>
 
                   {/* Dynamic Interactive Media Section (Based on Resource Type) */}
+                  {showArticleMedia && (
                   <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                     
                     {/* Type 1: Standard Article Main Image */}
-                    {selectedItem.type === 'text' && selectedItem.image && (
+                    {selectedItem.type === 'text' && selectedItem.image?.trim() && (
                       <img 
                         src={selectedItem.image} 
                         alt="Article Cover" 
                         className="w-full h-auto max-h-[380px] object-cover"
-                        onError={(e) => {
-                          e.currentTarget.src =
-                            "https://placehold.co/800x400/eaeaea/999999?text=Cover";
-                        }}
+                        onError={() => setCoverImageFailed(true)}
                       />
                     )}
 
@@ -1332,6 +1400,7 @@ export default function App() {
                     )}
 
                   </div>
+                  )}
 
                 </div>
 

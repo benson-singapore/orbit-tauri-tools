@@ -103,25 +103,68 @@ func rowToFeedItem(row store.FeedItemRow, includeContent bool) FeedItem {
 	return item
 }
 
+func rowNeedsContentBackfill(row store.FeedItemRow) bool {
+	if !articleRowExpectsContent(row) {
+		return false
+	}
+	if row.PayloadJSON == "" {
+		return true
+	}
+	var payload struct {
+		Content string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
+		return true
+	}
+	return strings.TrimSpace(payload.Content) == ""
+}
+
+func articleRowExpectsContent(row store.FeedItemRow) bool {
+	if strings.TrimSpace(row.Title) == "" {
+		return false
+	}
+	switch strings.TrimSpace(row.MediaType) {
+	case "", "text":
+		return true
+	default:
+		return false
+	}
+}
+
 func rowsNeedContentBackfill(rows []store.FeedItemRow) bool {
 	for _, row := range rows {
-		if strings.TrimSpace(row.Summary) == "" {
-			continue
-		}
-		if row.PayloadJSON == "" {
-			return true
-		}
-		var payload struct {
-			Content string `json:"content"`
-		}
-		if err := json.Unmarshal([]byte(row.PayloadJSON), &payload); err != nil {
-			return true
-		}
-		if strings.TrimSpace(payload.Content) == "" {
+		if rowNeedsContentBackfill(row) {
 			return true
 		}
 	}
 	return false
+}
+
+func (r *Registry) preserveExistingArticleContent(ctx context.Context, items []FeedItem) {
+	for i := range items {
+		if strings.TrimSpace(items[i].Content) != "" {
+			continue
+		}
+		existing, err := r.store.GetFeedItem(ctx, items[i].ID)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(existing.Summary) != "" && strings.TrimSpace(items[i].Summary) == "" {
+			items[i].Summary = existing.Summary
+		}
+		if existing.PayloadJSON == "" {
+			continue
+		}
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := json.Unmarshal([]byte(existing.PayloadJSON), &payload); err != nil {
+			continue
+		}
+		if strings.TrimSpace(payload.Content) != "" {
+			items[i].Content = payload.Content
+		}
+	}
 }
 
 func (r *Registry) persistFeedItemsForChannel(
@@ -131,6 +174,7 @@ func (r *Registry) persistFeedItemsForChannel(
 	fetchedAt int64,
 	itemLimit int,
 ) error {
+	r.preserveExistingArticleContent(ctx, items)
 	rows := make([]store.FeedItemRow, 0, len(items))
 	for _, item := range items {
 		row, err := feedItemToRow(item, channelID)
@@ -166,6 +210,22 @@ func (r *Registry) GetFeedItem(ctx context.Context, id string) (*FeedItem, error
 	if item.PluginName == "" {
 		if rec, ok := r.Get(item.PluginID); ok {
 			item.PluginName = rec.Name
+		}
+	}
+	if strings.TrimSpace(item.Content) == "" && rowNeedsContentBackfill(*row) {
+		if rec, ok := r.Get(item.PluginID); ok && rec.Active {
+			channelID := item.ChannelID
+			if channelID == "" {
+				channelID = row.ChannelID
+			}
+			if _, refreshErr := r.RefreshPlugin(ctx, item.PluginID, channelID); refreshErr == nil {
+				if updated, err := r.store.GetFeedItem(ctx, id); err == nil {
+					item = rowToFeedItem(*updated, true)
+					if item.PluginName == "" {
+						item.PluginName = rec.Name
+					}
+				}
+			}
 		}
 	}
 	return &item, nil

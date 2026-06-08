@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andybalholm/brotli"
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
@@ -76,6 +77,22 @@ type hostHTTPResponse struct {
 	Error  string            `json:"error,omitempty"`
 }
 
+func loadWasmBinary(path string) ([]byte, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasSuffix(strings.ToLower(path), ".br") {
+		r := brotli.NewReader(bytes.NewReader(raw))
+		decompressed, err := io.ReadAll(io.LimitReader(r, 64<<20))
+		if err != nil {
+			return nil, fmt.Errorf("decompress brotli wasm: %w", err)
+		}
+		return decompressed, nil
+	}
+	return raw, nil
+}
+
 func (e *WASMExecutor) FetchChannel(ctx context.Context, pluginDir string, rec *PluginRecord, ch *FeedChannel) ([]FeedItem, error) {
 	if rec == nil || ch == nil {
 		return nil, fmt.Errorf("plugin and channel are required")
@@ -85,7 +102,7 @@ func (e *WASMExecutor) FetchChannel(ctx context.Context, pluginDir string, rec *
 		entry = DefaultWasmConfig().Entry
 	}
 	wasmPath := filepath.Join(pluginDir, entry)
-	data, err := os.ReadFile(wasmPath)
+	data, err := loadWasmBinary(wasmPath)
 	if err != nil {
 		return nil, fmt.Errorf("read wasm: %w", err)
 	}

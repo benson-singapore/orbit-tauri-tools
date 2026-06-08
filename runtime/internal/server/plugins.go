@@ -2,12 +2,38 @@ package server
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
 
+	"github.com/orbit-tauri-tools/runtime/internal/market"
 	"github.com/orbit-tauri-tools/runtime/internal/plugin"
 )
+
+func (s *Server) handleReorderPlugins(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPut {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+		return
+	}
+
+	var body struct {
+		OrderedIDs []string `json:"orderedIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody("invalid JSON body"))
+		return
+	}
+	if len(body.OrderedIDs) == 0 {
+		writeJSON(w, http.StatusBadRequest, errorBody("orderedIds is required"))
+		return
+	}
+	if err := s.registry.ReorderPlugins(r.Context(), body.OrderedIDs); err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
 
 func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -30,11 +56,13 @@ type pluginView struct {
 	UserAgent       string               `json:"userAgent,omitempty"`
 	LogoText        string               `json:"logoText,omitempty"`
 	LogoImageURL    string               `json:"logoImageUrl,omitempty"`
+	IconURL         string               `json:"iconUrl,omitempty"`
 	Color           string               `json:"color"`
 	MarketCategory  string               `json:"marketCategory,omitempty"`
 	CategoryTag     string               `json:"categoryTag,omitempty"`
 	Official        bool                 `json:"official,omitempty"`
 	Source          string               `json:"source"`
+	Sort            int                  `json:"sort"`
 	LastError       string               `json:"lastError,omitempty"`
 }
 
@@ -56,11 +84,13 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		UserAgent:       rec.Config.UserAgent,
 		LogoText:        rec.Meta.LogoText,
 		LogoImageURL:    rec.Meta.LogoImageURL,
+		IconURL:         rec.Meta.IconURL,
 		Color:           rec.Meta.Color,
 		MarketCategory:  rec.Meta.MarketCategory,
 		CategoryTag:     rec.Meta.CategoryTag,
 		Official:        rec.Meta.Official,
 		Source:          rec.Source,
+		Sort:            rec.SortOrder,
 		LastError:       rec.LastError,
 	}
 }
@@ -164,7 +194,74 @@ func (s *Server) handleInstallPlugin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, map[string]any{"plugin": rec})
 }
 
+func (s *Server) handleInstallOrbit(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+		return
+	}
+
+	var data []byte
+	var err error
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "multipart/form-data") {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("invalid multipart form"))
+			return
+		}
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("file field is required"))
+			return
+		}
+		defer file.Close()
+		data, err = io.ReadAll(io.LimitReader(file, 32<<20))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("read file failed"))
+			return
+		}
+	} else {
+		data, err = io.ReadAll(io.LimitReader(r.Body, 32<<20))
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("read body failed"))
+			return
+		}
+	}
+
+	rec, err := s.registry.InstallOrbit(r.Context(), data)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"plugin": pluginRecordToView(rec)})
+}
+
 func (s *Server) handlePluginsMarket(w http.ResponseWriter, r *http.Request) {
+	rest := strings.TrimPrefix(r.URL.Path, "/v1/plugins/market/")
+	if rest != "" && rest != r.URL.Path {
+		if strings.HasSuffix(rest, "/install") && r.Method == http.MethodPost {
+			marketID := strings.TrimSuffix(rest, "/install")
+			marketID = strings.TrimSuffix(marketID, "/")
+			if marketID == "" {
+				writeJSON(w, http.StatusBadRequest, errorBody("market plugin id is required"))
+				return
+			}
+			client := market.NewClient()
+			rec, err := s.registry.InstallOrbitFromMarket(
+				r.Context(),
+				client.DownloadOrbitPackage,
+				marketID,
+			)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+				return
+			}
+			writeJSON(w, http.StatusCreated, map[string]any{"plugin": pluginRecordToView(rec)})
+			return
+		}
+		writeJSON(w, http.StatusNotFound, errorBody("not found"))
+		return
+	}
+
 	if r.Method != http.MethodGet {
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
 		return
@@ -194,6 +291,42 @@ func (s *Server) handlePluginByID(w http.ResponseWriter, r *http.Request) {
 
 	if strings.Contains(rest, "/assets/") {
 		s.handlePluginAsset(w, r, rest)
+		return
+	}
+
+	if strings.HasSuffix(rest, "/manifest") {
+		id := strings.TrimSuffix(rest, "/manifest")
+		id = strings.TrimSuffix(id, "/")
+		switch r.Method {
+		case http.MethodGet:
+			data, err := s.registry.GetManifestJSON(id)
+			if err != nil {
+				writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(data)
+		case http.MethodPut:
+			body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody("read body failed"))
+				return
+			}
+			m, err := plugin.ParseManifestBytes(body)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+				return
+			}
+			rec, err := s.registry.UpdateManifest(r.Context(), id, m)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"plugin": pluginRecordToView(rec)})
+		default:
+			writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+		}
 		return
 	}
 

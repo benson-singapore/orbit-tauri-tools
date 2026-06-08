@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +23,7 @@ type Registry struct {
 	records   map[string]*PluginRecord
 	pluginDir        map[string]string // plugin id -> absolute package dir
 	bundledOnDisk    map[string]manifestOnDisk
+	refreshMu        sync.Map          // plugin id -> *sync.Mutex
 }
 
 func NewRegistry(st *store.Store) *Registry {
@@ -161,13 +161,12 @@ func (r *Registry) scanDir(root string, out map[string]manifestOnDisk) error {
 		if err != nil {
 			return fmt.Errorf("read %s: %w", manifestPath, err)
 		}
-		var m Manifest
-		if err := json.Unmarshal(data, &m); err != nil {
+		m, err := ParseManifestBytes(data)
+		if err != nil {
 			return fmt.Errorf("parse %s: %w", manifestPath, err)
 		}
-		MigrateManifestConfig(&m.Config)
 		pluginDir := filepath.Join(root, ent.Name())
-		if err := ValidateManifestOnDisk(pluginDir, &m); err != nil {
+		if err := ValidateManifestOnDisk(pluginDir, m); err != nil {
 			return fmt.Errorf("%s: %w", manifestPath, err)
 		}
 		bundled := filepath.Clean(root) != userDir
@@ -175,11 +174,11 @@ func (r *Registry) scanDir(root string, out map[string]manifestOnDisk) error {
 		if prev, ok := out[m.ID]; ok {
 			// Later dirs override earlier; user dir wins over bundled.
 			if prev.bundled && !bundled {
-				out[m.ID] = manifestOnDisk{manifest: &m, bundled: bundled, dir: dir}
+				out[m.ID] = manifestOnDisk{manifest: m, bundled: bundled, dir: dir}
 			}
 			continue
 		}
-		out[m.ID] = manifestOnDisk{manifest: &m, bundled: bundled, dir: dir}
+		out[m.ID] = manifestOnDisk{manifest: m, bundled: bundled, dir: dir}
 	}
 	return nil
 }
@@ -251,6 +250,15 @@ func (r *Registry) ListMarketPlugins() []*PluginRecord {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// InstallOrbitFromMarket downloads a .orbit package from the remote market API and installs it.
+func (r *Registry) InstallOrbitFromMarket(ctx context.Context, marketDownloader func(context.Context, string) ([]byte, error), marketID string) (*PluginRecord, error) {
+	data, err := marketDownloader(ctx, marketID)
+	if err != nil {
+		return nil, err
+	}
+	return r.InstallOrbit(ctx, data)
 }
 
 // InstallBundled registers a bundled official plugin from disk into SQLite.
@@ -338,6 +346,37 @@ func (r *Registry) List() []*PluginRecord {
 		return out[i].Name < out[j].Name
 	})
 	return out
+}
+
+func (r *Registry) ReorderPlugins(ctx context.Context, orderedIDs []string) error {
+	if len(orderedIDs) == 0 {
+		return nil
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	seen := make(map[string]struct{}, len(orderedIDs))
+	for i, id := range orderedIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return fmt.Errorf("empty plugin id in order list")
+		}
+		if _, dup := seen[id]; dup {
+			return fmt.Errorf("duplicate plugin id in order list: %s", id)
+		}
+		seen[id] = struct{}{}
+
+		rec, ok := r.records[id]
+		if !ok {
+			return fmt.Errorf("plugin not found: %s", id)
+		}
+		rec.SortOrder = i
+		if err := r.upsertPlugin(ctx, rec); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *Registry) Get(id string) (*PluginRecord, bool) {
@@ -441,6 +480,7 @@ func (r *Registry) InstallRSS(ctx context.Context, opts InstallRSSOptions) (*Plu
 		return nil, err
 	}
 	r.setRecord(rec)
+	r.ScheduleInitialRefresh(id)
 	return cloneRecord(rec), nil
 }
 
@@ -492,6 +532,10 @@ func (r *Registry) ForceRefreshPlugin(ctx context.Context, pluginID, channelID s
 }
 
 func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string) ([]FeedItem, error) {
+	mu := r.pluginRefreshMutex(pluginID)
+	mu.Lock()
+	defer mu.Unlock()
+
 	rec, ok := r.Get(pluginID)
 	if !ok {
 		return nil, fmt.Errorf("plugin not found: %s", pluginID)
@@ -499,6 +543,9 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 	if !rec.Active {
 		return nil, fmt.Errorf("plugin is disabled: %s", pluginID)
 	}
+	runCtx, cancel := r.detachRefreshContext(ctx, rec, channelID)
+	defer cancel()
+	ctx = runCtx
 	if rec.Source != SourceRSS && rec.Source != SourceWASM {
 		return nil, fmt.Errorf("unsupported plugin source: %s", rec.Source)
 	}
@@ -605,7 +652,6 @@ func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord
 func (r *Registry) Feed(
 	ctx context.Context,
 	pluginID, channelID, contentType, search string,
-	refresh bool,
 	scopePluginIDs []string,
 ) ([]FeedItem, error) {
 	recs := r.List()
@@ -649,24 +695,9 @@ func (r *Registry) Feed(
 			effectiveChannel = ""
 		}
 
-		items, needsBackfill, err := r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel, search)
+		items, _, err := r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel, search)
 		if err != nil {
 			return nil, err
-		}
-
-		stale := refresh || (search == "" && (r.isStale(rec) || needsBackfill))
-		if stale {
-			if _, err := r.RefreshPlugin(ctx, rec.ID, effectiveChannel); err != nil {
-				if len(items) == 0 {
-					return nil, err
-				}
-				all = append(all, items...)
-				continue
-			}
-			items, _, err = r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel, search)
-			if err != nil {
-				return nil, err
-			}
 		}
 		all = append(all, items...)
 	}

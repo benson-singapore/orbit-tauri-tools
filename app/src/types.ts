@@ -110,11 +110,13 @@ export interface Plugin {
   userAgent?: string;
   logoText?: string;
   logoImageUrl?: string;
+  iconUrl?: string;
   color: string;
   marketCategory?: Exclude<PluginMarketCategory, "all">;
   categoryTag?: string;
   official?: boolean;
   source?: string;
+  sort?: number;
   lastError?: string;
 }
 
