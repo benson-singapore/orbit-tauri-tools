@@ -292,9 +292,10 @@ export default function App() {
 
   const showPluginChannelBar = activePluginChannels.length > 1;
 
-  const toggleTheme = () => {
-    setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  };
+  // TODO: 暗色主题待完善后恢复切换入口
+  // const toggleTheme = () => {
+  //   setTheme(prev => prev === 'light' ? 'dark' : 'light');
+  // };
 
   const handleSidebarRefresh = () => {
     if (isSidebarRefreshing) return;
@@ -503,14 +504,7 @@ export default function App() {
             <span className="hidden sm:inline">对调左右布局</span>
           </button>
 
-          {/* Theme Switcher */}
-          <button 
-            onClick={toggleTheme}
-            className={`p-1.5 rounded-lg transition-colors duration-200 ${theme === 'dark' ? 'hover:bg-neutral-800 text-yellow-400' : 'hover:bg-neutral-100 text-neutral-600'}`}
-            title={theme === 'dark' ? "切换为白昼模式" : "切换为暗夜模式"}
-          >
-            <Icon name={theme === 'dark' ? "sun" : "moon"} className="w-3.5 h-3.5" />
-          </button>
+          {/* Theme Switcher — 暂时隐藏，暗色主题待完善后恢复 */}
 
           {/* Plugin Install Quick Button */}
           <button 

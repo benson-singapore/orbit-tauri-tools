@@ -518,10 +518,13 @@ function PluginSection(props: PluginSectionProps) {
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold">{plugin.name}</span>
                     <span
-                      className="text-[10px] px-1.5 py-0.5 rounded font-mono tabular-nums bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
-                      title="排序权重（越小越靠前）"
+                      className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
+                        isWasm
+                          ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                          : "bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300"
+                      }`}
                     >
-                      sort {typeof plugin.sort === "number" ? plugin.sort : index}
+                      {isWasm ? "WASM" : "RSS"}
                     </span>
                     <span className={`text-[10px] px-1.5 py-0.5 rounded ${isCustom ? "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/50 dark:text-indigo-300" : "bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500"}`}>
                       {isCustom ? "自定义" : "官方"}
