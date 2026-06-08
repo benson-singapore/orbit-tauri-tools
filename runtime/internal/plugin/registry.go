@@ -258,7 +258,52 @@ func (r *Registry) InstallOrbitFromMarket(ctx context.Context, marketDownloader 
 	if err != nil {
 		return nil, err
 	}
-	return r.InstallOrbit(ctx, data)
+	rec, err := r.InstallOrbit(ctx, data)
+	if err != nil {
+		return nil, err
+	}
+	marketID = strings.TrimSpace(marketID)
+	if marketID == "" {
+		return rec, nil
+	}
+	if rec.Meta.MarketID == marketID {
+		return rec, nil
+	}
+	rec.Meta.MarketID = marketID
+	return r.UpdateManifest(ctx, rec.ID, &rec.Manifest)
+}
+
+// UpdateOrbitFromMarket downloads a newer .orbit package and updates wasm while merging manifest.
+func (r *Registry) UpdateOrbitFromMarket(ctx context.Context, marketDownloader func(context.Context, string) ([]byte, error), marketID, pluginID string) (*PluginRecord, error) {
+	pluginID = strings.TrimSpace(pluginID)
+	if pluginID == "" {
+		return nil, fmt.Errorf("pluginId is required")
+	}
+	rec, ok := r.Get(pluginID)
+	if !ok {
+		return nil, fmt.Errorf("plugin not found: %s", pluginID)
+	}
+	if rec.Bundled {
+		return nil, fmt.Errorf("cannot update bundled plugin: %s", pluginID)
+	}
+	if rec.Source != SourceWASM {
+		return nil, fmt.Errorf("only wasm plugins can be updated from market: %s", pluginID)
+	}
+
+	data, err := marketDownloader(ctx, marketID)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := r.updateOrbitPackage(ctx, pluginID, data)
+	if err != nil {
+		return nil, err
+	}
+	marketID = strings.TrimSpace(marketID)
+	if marketID != "" && updated.Meta.MarketID != marketID {
+		updated.Meta.MarketID = marketID
+		return r.UpdateManifest(ctx, updated.ID, &updated.Manifest)
+	}
+	return updated, nil
 }
 
 // InstallBundled registers a bundled official plugin from disk into SQLite.

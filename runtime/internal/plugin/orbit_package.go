@@ -109,10 +109,72 @@ func (r *Registry) GetManifestJSON(id string) ([]byte, error) {
 	return data, nil
 }
 
-func extractOrbitPackage(data []byte) (*Manifest, string, error) {
+func (r *Registry) updateOrbitPackage(ctx context.Context, pluginID string, data []byte) (*PluginRecord, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("empty orbit package")
+	}
+	if len(data) > maxOrbitPackageBytes {
+		return nil, fmt.Errorf("orbit package exceeds %d bytes", maxOrbitPackageBytes)
+	}
+
+	zr, incomingManifest, incomingManifestRaw, err := parseOrbitZip(data)
+	if err != nil {
+		return nil, err
+	}
+
+	dir, ok := r.getPluginDir(pluginID)
+	if !ok {
+		userDir, err := UserPluginsDir()
+		if err != nil {
+			return nil, err
+		}
+		dir = filepath.Join(userDir, pluginID)
+	}
+
+	existingRaw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read existing manifest: %w", err)
+	}
+
+	mergedRaw, err := mergeManifestForUpdate(existingRaw, incomingManifestRaw)
+	if err != nil {
+		return nil, err
+	}
+	merged, err := ParseManifestBytes(mergedRaw)
+	if err != nil {
+		return nil, err
+	}
+	merged.ID = pluginID
+
+	if err := extractWasmFilesFromZip(zr, dir, incomingManifest); err != nil {
+		return nil, err
+	}
+	if err := SaveManifest(dir, merged); err != nil {
+		return nil, err
+	}
+	if err := ValidateManifestOnDisk(dir, merged); err != nil {
+		return nil, err
+	}
+
+	rec, ok := r.Get(pluginID)
+	if !ok {
+		return nil, fmt.Errorf("plugin not found: %s", pluginID)
+	}
+	rec.Manifest = *merged
+	rec.Manifest.Bundled = false
+	if err := r.upsertPlugin(ctx, rec); err != nil {
+		return nil, err
+	}
+	r.setRecord(rec)
+	r.setPluginDir(pluginID, dir)
+	r.ScheduleForceRefresh(pluginID)
+	return cloneRecord(rec), nil
+}
+
+func parseOrbitZip(data []byte) (*zip.Reader, *Manifest, []byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return nil, "", fmt.Errorf("open orbit zip: %w", err)
+		return nil, nil, nil, fmt.Errorf("open orbit zip: %w", err)
 	}
 
 	entries := make(map[string]*zip.File)
@@ -130,14 +192,22 @@ func extractOrbitPackage(data []byte) (*Manifest, string, error) {
 
 	manifestFile, ok := entries["manifest.json"]
 	if !ok {
-		return nil, "", fmt.Errorf("manifest.json not found in orbit package")
+		return nil, nil, nil, fmt.Errorf("manifest.json not found in orbit package")
 	}
 	manifestData, err := readZipEntry(manifestFile)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, nil, err
 	}
 
 	m, err := ParseManifestBytes(manifestData)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return zr, m, manifestData, nil
+}
+
+func extractOrbitPackage(data []byte) (*Manifest, string, error) {
+	zr, m, manifestData, err := parseOrbitZip(data)
 	if err != nil {
 		return nil, "", err
 	}
@@ -179,11 +249,16 @@ func extractOrbitPackage(data []byte) (*Manifest, string, error) {
 		written[rel] = struct{}{}
 	}
 
-	if checksumsFile, ok := entries["checksums.txt"]; ok {
-		if err := verifyChecksums(pluginDir, checksumsFile); err != nil {
+	for _, f := range zr.File {
+		rel := strings.TrimPrefix(filepath.ToSlash(f.Name), "./")
+		if rel != "checksums.txt" && filepath.Base(rel) != "checksums.txt" {
+			continue
+		}
+		if err := verifyChecksums(pluginDir, f); err != nil {
 			_ = os.RemoveAll(pluginDir)
 			return nil, "", err
 		}
+		break
 	}
 
 	if err := ValidateManifestOnDisk(pluginDir, m); err != nil {
@@ -247,6 +322,43 @@ func verifyChecksums(pluginDir string, checksumsFile *zip.File) error {
 		}
 	}
 	return nil
+}
+
+func extractWasmFilesFromZip(zr *zip.Reader, pluginDir string, m *Manifest) error {
+	written := make(map[string]struct{})
+	for _, f := range zr.File {
+		rel := strings.TrimPrefix(filepath.ToSlash(f.Name), "./")
+		if rel == "" || strings.HasSuffix(rel, "/") {
+			continue
+		}
+		if rel == "manifest.json" || rel == "checksums.txt" {
+			continue
+		}
+		if !isWasmPackageFile(rel, m) {
+			continue
+		}
+		if _, ok := written[rel]; ok {
+			continue
+		}
+		dest := filepath.Join(pluginDir, filepath.FromSlash(rel))
+		if err := extractZipEntryTo(f, dest); err != nil {
+			return err
+		}
+		written[rel] = struct{}{}
+	}
+	return nil
+}
+
+func isWasmPackageFile(rel string, m *Manifest) bool {
+	lower := strings.ToLower(rel)
+	if strings.HasSuffix(lower, ".wasm") || strings.HasSuffix(lower, ".wasm.br") {
+		return true
+	}
+	entry := strings.TrimSpace(m.Config.Wasm.Entry)
+	if entry == "" {
+		return false
+	}
+	return rel == entry || filepath.Base(rel) == entry || filepath.Base(rel) == filepath.Base(entry)
 }
 
 func parseChecksumLine(line string) (fileName, expected string, ok bool) {

@@ -187,6 +187,26 @@ export async function installMarketPlugin(marketId: string): Promise<Plugin> {
   return data.plugin;
 }
 
+export async function updateMarketPlugin(
+  marketId: string,
+  pluginId: string,
+): Promise<Plugin> {
+  const base = await apiBase();
+  const res = await fetch(
+    `${base}/v1/plugins/market/${encodeURIComponent(marketId)}/update`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pluginId }),
+    },
+  );
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const data = (await res.json()) as { plugin: Plugin };
+  return data.plugin;
+}
+
 export async function installOrbitPackage(data: ArrayBuffer | Blob): Promise<Plugin> {
   const base = await apiBase();
   const body = data instanceof Blob ? data : new Blob([data], { type: "application/zip" });

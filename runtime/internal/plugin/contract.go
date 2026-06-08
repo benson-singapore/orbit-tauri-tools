@@ -78,6 +78,7 @@ type ManifestMeta struct {
 	MarketCategory string `json:"marketCategory"`
 	CategoryTag    string `json:"categoryTag"`
 	Official       bool   `json:"official"`
+	MarketID       string `json:"marketId,omitempty"`
 }
 
 type InstallRSSOptions struct {

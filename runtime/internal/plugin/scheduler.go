@@ -49,11 +49,26 @@ func (r *Registry) refreshStalePlugins(ctx context.Context) {
 
 // ScheduleInitialRefresh runs the first fetch asynchronously after a plugin is installed.
 func (r *Registry) ScheduleInitialRefresh(pluginID string) {
+	r.schedulePluginRefresh(pluginID, false)
+}
+
+// ScheduleForceRefresh clears cached feed items and re-fetches asynchronously after a plugin update.
+func (r *Registry) ScheduleForceRefresh(pluginID string) {
+	r.schedulePluginRefresh(pluginID, true)
+}
+
+func (r *Registry) schedulePluginRefresh(pluginID string, force bool) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		if _, err := r.RefreshPlugin(ctx, pluginID, ""); err != nil {
-			log.Printf("initial feed refresh %s: %v", pluginID, err)
+		var err error
+		if force {
+			_, err = r.ForceRefreshPlugin(ctx, pluginID, "")
+		} else {
+			_, err = r.RefreshPlugin(ctx, pluginID, "")
+		}
+		if err != nil {
+			log.Printf("scheduled feed refresh %s: %v", pluginID, err)
 		}
 	}()
 }

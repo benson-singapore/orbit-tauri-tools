@@ -129,6 +129,7 @@ interface PluginManagerModalProps {
   groupedPluginsForManage: { group: PluginSidebarGroup; plugins: Plugin[] }[];
   onClose: () => void;
   onInstall: (marketId: string) => Promise<void>;
+  onUpdate: (marketId: string, pluginId: string) => Promise<void>;
   onSaveManifest: (pluginId: string, manifestText: string) => Promise<void>;
   onUninstall: (id: string) => void | Promise<void>;
   onToggleActive: (id: string) => void;
@@ -150,6 +151,8 @@ const TABS: { id: Extract<PluginManagerTab, "market" | "manage">; label: string;
   { id: "market", label: "插件市场", icon: "sparkles" },
   { id: "manage", label: "已安装插件", icon: "puzzle" },
 ];
+
+const MARKET_CATEGORY_UPDATES = "updates";
 
 function StyledSelect({
   value,
@@ -234,12 +237,76 @@ function findInstalledMarketPlugin(
 ): Plugin | undefined {
   const name = marketItem.name.trim().toLowerCase();
   const logo = marketItem.logoUrl?.trim();
+  const marketId = marketItem.id.trim();
   return installedPlugins.find(item => {
     if (item.id === "all") return false;
+    if (marketId && item.marketId?.trim() === marketId) return true;
     if (item.name.trim().toLowerCase() === name) return true;
     if (logo && item.logoImageUrl?.trim() === logo) return true;
     return false;
   });
+}
+
+function pluginNeedsUpdate(installed: Plugin, market: MarketPluginItem): boolean {
+  const installedVersion = installed.version?.trim() || "0.0.0";
+  const marketVersion = market.version?.trim() || "0.0.0";
+  return installedVersion !== marketVersion;
+}
+
+function MarketPluginTagsRow({
+  categoryLabel,
+  featuredTagClass,
+  zhTags,
+}: {
+  categoryLabel?: string;
+  featuredTagClass: string;
+  zhTags: string[];
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const sync = () => setOverflowing(el.scrollWidth > el.clientWidth + 1);
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [categoryLabel, zhTags]);
+
+  const hasTags = Boolean(categoryLabel) || zhTags.length > 0;
+  if (!hasTags) return null;
+
+  return (
+    <div className="flex items-center gap-0.5 mt-1.5 min-w-0">
+      <div
+        ref={scrollRef}
+        className="flex items-center gap-1 min-w-0 overflow-hidden flex-nowrap"
+      >
+        {categoryLabel ? (
+          <span
+            className={`inline-flex shrink-0 items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border ${featuredTagClass}`}
+          >
+            {categoryLabel}
+          </span>
+        ) : null}
+        {zhTags.map(tag => (
+          <span
+            key={tag}
+            className="shrink-0 text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
+          >
+            {tag}
+          </span>
+        ))}
+      </div>
+      {overflowing ? (
+        <span className="shrink-0 text-[10px] text-neutral-400 leading-none" aria-hidden>
+          …
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function MarketPluginCard({
@@ -247,15 +314,19 @@ function MarketPluginCard({
   categoryLabel,
   subtleBorder,
   installedPlugin,
+  needsUpdate,
   installing,
   onInstall,
+  onUpdate,
 }: {
   plugin: MarketPluginItem;
   categoryLabel?: string;
   subtleBorder: string;
   installedPlugin?: Plugin;
+  needsUpdate: boolean;
   installing: boolean;
   onInstall: (marketId: string) => Promise<void>;
+  onUpdate: (marketId: string, pluginId: string) => Promise<void>;
 }) {
   const color = plugin.colorClass?.trim() || plugin.accentColor || "#7c3aed";
   const useBgClass = color.startsWith("bg-");
@@ -287,24 +358,25 @@ function MarketPluginCard({
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <h3 className="text-xs font-bold leading-snug text-neutral-900 dark:text-white">{plugin.name}</h3>
-          <div className="flex flex-wrap items-center gap-1 mt-1.5">
-            {categoryLabel ? (
+          <h3 className="text-xs font-bold leading-snug text-neutral-900 dark:text-white flex items-center gap-1.5 min-w-0">
+            <span className="truncate">{plugin.name}</span>
+            {plugin.version?.trim() ? (
               <span
-                className={`inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border ${featuredTagClass}`}
+                className={`shrink-0 text-[10px] font-medium ${
+                  needsUpdate
+                    ? "text-amber-600 dark:text-amber-400"
+                    : "text-neutral-400 dark:text-neutral-500"
+                }`}
               >
-                {categoryLabel}
+                v{plugin.version.trim()}
               </span>
             ) : null}
-            {zhTags.map(tag => (
-              <span
-                key={tag}
-                className="text-[10px] px-1.5 py-0.5 rounded-md bg-neutral-100 text-neutral-500 dark:bg-neutral-800 dark:text-neutral-400"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
+          </h3>
+          <MarketPluginTagsRow
+            categoryLabel={categoryLabel}
+            featuredTagClass={featuredTagClass}
+            zhTags={zhTags}
+          />
         </div>
       </div>
 
@@ -344,14 +416,28 @@ function MarketPluginCard({
           <span />
         )}
         {installedPlugin ? (
-          <button
-            type="button"
-            disabled
-            className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-900/50 cursor-not-allowed"
-          >
-            <Icon name="check" className="w-3 h-3" />
-            已安装
-          </button>
+          needsUpdate ? (
+            <button
+              type="button"
+              disabled={installing}
+              onClick={() => {
+                void onUpdate(plugin.id, installedPlugin.id).catch(console.error);
+              }}
+              className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900/50 dark:hover:bg-amber-950/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Icon name="refresh" className={`w-3 h-3 ${installing ? "animate-spin" : ""}`} />
+              {installing ? "更新中…" : "插件更新"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled
+              className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-400 dark:border-emerald-900/50 cursor-not-allowed"
+            >
+              <Icon name="check" className="w-3 h-3" />
+              已安装
+            </button>
+          )
         ) : (
           <button
             type="button"
@@ -2869,6 +2955,7 @@ export function PluginManagerModal({
   groupedPluginsForManage,
   onClose,
   onInstall,
+  onUpdate,
   onSaveManifest,
   onUninstall,
   onToggleActive,
@@ -2933,6 +3020,7 @@ export function PluginManagerModal({
     { id: "all", label: "全部官方精选" },
   ]);
   const [marketGroupsLoading, setMarketGroupsLoading] = useState(false);
+  const [marketPluginsForCount, setMarketPluginsForCount] = useState<MarketPluginItem[]>([]);
 
   useEffect(() => {
     if (activeTab !== "market") {
@@ -2977,9 +3065,54 @@ export function PluginManagerModal({
       return;
     }
     let cancelled = false;
+    void fetchMarketPlugins({ category: "all", pageSize: 50 })
+      .then(({ items }) => {
+        if (!cancelled) {
+          setMarketPluginsForCount(items);
+        }
+      })
+      .catch(err => {
+        if (!cancelled) {
+          console.error("load market plugins for update count failed", err);
+          setMarketPluginsForCount([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab]);
+
+  const pendingUpdateCount = useMemo(
+    () =>
+      marketPluginsForCount.filter(item => {
+        const installed = findInstalledMarketPlugin(item, installedPlugins);
+        return installed && pluginNeedsUpdate(installed, item);
+      }).length,
+    [marketPluginsForCount, installedPlugins],
+  );
+
+  const displayedMarketPlugins = useMemo(() => {
+    if (marketCategory !== MARKET_CATEGORY_UPDATES) {
+      return marketPlugins;
+    }
+    return marketPlugins.filter(item => {
+      const installed = findInstalledMarketPlugin(item, installedPlugins);
+      return installed && pluginNeedsUpdate(installed, item);
+    });
+  }, [marketCategory, marketPlugins, installedPlugins]);
+
+  const displayedMarketTotal = marketCategory === MARKET_CATEGORY_UPDATES
+    ? displayedMarketPlugins.length
+    : marketTotal;
+
+  useEffect(() => {
+    if (activeTab !== "market") {
+      return;
+    }
+    let cancelled = false;
     setMarketLoading(true);
     void fetchMarketPlugins({
-      category: marketCategory,
+      category: marketCategory === MARKET_CATEGORY_UPDATES ? "all" : marketCategory,
       sort: marketSort,
       search: debouncedMarketSearch,
       pageSize: 50,
@@ -3057,9 +3190,9 @@ export function PluginManagerModal({
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           {activeTab === "market" && (
             <div className="flex-1 min-h-0 flex">
-              <aside className={`w-52 shrink-0 border-r ${subtleBorder} px-4 py-5 overflow-y-auto`}>
+              <aside className={`w-52 shrink-0 border-r ${subtleBorder} px-4 py-5 overflow-y-auto flex flex-col`}>
                 <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-3 mb-3">插件分组</p>
-                <nav className="space-y-0.5">
+                <nav className="space-y-0.5 flex-1 min-h-0">
                   {marketGroupsLoading && marketGroups.length <= 1 ? (
                     <p className="px-3 py-2 text-xs text-neutral-400">加载分组…</p>
                   ) : (
@@ -3078,6 +3211,31 @@ export function PluginManagerModal({
                     ))
                   )}
                 </nav>
+                <div className={`mt-4 pt-4 border-t ${subtleBorder}`}>
+                  <button
+                    type="button"
+                    onClick={() => setMarketCategory(MARKET_CATEGORY_UPDATES)}
+                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-colors ${
+                      marketCategory === MARKET_CATEGORY_UPDATES
+                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
+                        : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+                    }`}
+                  >
+                    <Icon name="refresh" className="w-4 h-4 shrink-0" />
+                    <span className="truncate text-left flex-1">待更新</span>
+                    {pendingUpdateCount > 0 ? (
+                      <span
+                        className={`shrink-0 min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full text-[10px] font-semibold ${
+                          marketCategory === MARKET_CATEGORY_UPDATES
+                            ? "bg-amber-500 text-white"
+                            : "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                        }`}
+                      >
+                        {pendingUpdateCount}
+                      </span>
+                    ) : null}
+                  </button>
+                </div>
               </aside>
 
               <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -3106,7 +3264,11 @@ export function PluginManagerModal({
                         ))}
                       </StyledSelect>
                     </div>
-                    <span className="text-[11px] text-neutral-400 whitespace-nowrap shrink-0">发现 {marketTotal} 个获取接口</span>
+                    <span className="text-[11px] text-neutral-400 whitespace-nowrap shrink-0">
+                      {marketCategory === MARKET_CATEGORY_UPDATES
+                        ? `待更新 ${displayedMarketTotal} 个插件`
+                        : `发现 ${displayedMarketTotal} 个获取接口`}
+                    </span>
                   </div>
                   {installError ? (
                     <p className="mt-2 text-[11px] text-rose-500">{installError}</p>
@@ -3115,12 +3277,15 @@ export function PluginManagerModal({
                 <div className={`flex-1 overflow-y-auto px-6 py-5 ${isDark ? "bg-neutral-950/30" : "bg-neutral-100/80"}`}>
                   {marketLoading ? (
                     <p className="text-sm text-neutral-400 text-center py-16">加载官方插件…</p>
-                  ) : marketPlugins.length === 0 ? (
-                    <p className="text-sm text-neutral-400 text-center py-16">暂无匹配插件</p>
+                  ) : displayedMarketPlugins.length === 0 ? (
+                    <p className="text-sm text-neutral-400 text-center py-16">
+                      {marketCategory === MARKET_CATEGORY_UPDATES ? "暂无待更新插件" : "暂无匹配插件"}
+                    </p>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                      {marketPlugins.map(plugin => {
+                      {displayedMarketPlugins.map(plugin => {
                         const installed = findInstalledMarketPlugin(plugin, installedPlugins);
+                        const needsUpdate = installed ? pluginNeedsUpdate(installed, plugin) : false;
                         return (
                           <MarketPluginCard
                             key={plugin.id}
@@ -3128,12 +3293,25 @@ export function PluginManagerModal({
                             categoryLabel={marketCategoryLabels.get(String(plugin.categoryId))}
                             subtleBorder={subtleBorder}
                             installedPlugin={installed}
+                            needsUpdate={needsUpdate}
                             installing={installingMarketId === plugin.id}
                             onInstall={async (marketId) => {
                               setInstallError(null);
                               setInstallingMarketId(marketId);
                               try {
                                 await onInstall(marketId);
+                              } catch (err) {
+                                setInstallError(err instanceof Error ? err.message : String(err));
+                                throw err;
+                              } finally {
+                                setInstallingMarketId(null);
+                              }
+                            }}
+                            onUpdate={async (marketId, pluginId) => {
+                              setInstallError(null);
+                              setInstallingMarketId(marketId);
+                              try {
+                                await onUpdate(marketId, pluginId);
                               } catch (err) {
                                 setInstallError(err instanceof Error ? err.message : String(err));
                                 throw err;

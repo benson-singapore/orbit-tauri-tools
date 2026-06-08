@@ -84,6 +84,7 @@ export interface MarketPluginItem {
   colorClass?: string;
   accentColor?: string;
   downloads?: number;
+  version?: string;
 }
 
 export interface MarketPluginsResponse {
@@ -118,6 +119,8 @@ export interface Plugin {
   source?: string;
   sort?: number;
   lastError?: string;
+  version?: string;
+  marketId?: string;
 }
 
 export interface FeedResponse {

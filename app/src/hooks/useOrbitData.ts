@@ -4,6 +4,7 @@ import {
   fetchFeed,
   fetchPlugins,
   installMarketPlugin,
+  updateMarketPlugin,
   installRSSPlugin,
   markFeedItemRead,
   refreshPluginFeed,
@@ -17,6 +18,18 @@ import type { Article, InstallRSSPluginRequest, Plugin } from "@/types";
 const ALL_PLUGIN: Plugin = INITIAL_PLUGINS[0]!;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const FEED_PAGE_SIZE = 20;
+const FEED_RELOAD_DELAYS_MS = [3000, 5000, 10000, 20000, 40000, 60000];
+
+function scheduleFeedReloadAfterBackgroundFetch(
+  loadFeedPage: (options?: { offset?: number; append?: boolean }) => Promise<void>,
+) {
+  void (async () => {
+    for (const delay of FEED_RELOAD_DELAYS_MS) {
+      await new Promise(resolve => window.setTimeout(resolve, delay));
+      await loadFeedPage({ offset: 0, append: false });
+    }
+  })().catch(console.error);
+}
 
 interface UseOrbitDataResult {
   plugins: Plugin[];
@@ -33,6 +46,7 @@ interface UseOrbitDataResult {
   markArticleRead: (id: string) => Promise<void>;
   installCustomRSS: (payload: InstallRSSPluginRequest) => Promise<Plugin>;
   installOfficialPlugin: (marketId: string) => Promise<Plugin>;
+  updateOfficialPlugin: (marketId: string, pluginId: string) => Promise<Plugin>;
   savePluginManifest: (id: string, manifestText: string) => Promise<Plugin>;
   togglePluginActive: (id: string) => Promise<void>;
   removePlugin: (id: string) => Promise<void>;
@@ -244,9 +258,17 @@ export function useOrbitData(
     async (marketId: string) => {
       const plugin = await installMarketPlugin(marketId);
       await loadPlugins();
-      // 首次安装后强制抓取，确保本地数据库有内容
-      await refreshPluginFeed(plugin.id, undefined, { force: true });
-      await loadFeedPage({ offset: 0, append: false });
+      scheduleFeedReloadAfterBackgroundFetch(loadFeedPage);
+      return plugin;
+    },
+    [loadPlugins, loadFeedPage],
+  );
+
+  const updateOfficialPlugin = useCallback(
+    async (marketId: string, pluginId: string) => {
+      const plugin = await updateMarketPlugin(marketId, pluginId);
+      await loadPlugins();
+      scheduleFeedReloadAfterBackgroundFetch(loadFeedPage);
       return plugin;
     },
     [loadPlugins, loadFeedPage],
@@ -401,6 +423,7 @@ export function useOrbitData(
     markArticleRead,
     installCustomRSS,
     installOfficialPlugin,
+    updateOfficialPlugin,
     savePluginManifest,
     togglePluginActive,
     removePlugin,

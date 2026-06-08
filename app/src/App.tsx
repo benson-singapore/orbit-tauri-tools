@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
 import { PluginAvatar } from "@/components/PluginAvatar";
+import { YouTubeEmbed } from "@/components/YouTubeEmbed";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { dedupeCoverImageFromContent } from "@/lib/articleContent";
+import { isVideoPluginChannel, resolveYouTubeVideoId } from "@/lib/youtube";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
-import { fetchFeedItem, fetchFeedUnread } from "@/lib/feed";
+import { fetchFeedItem } from "@/lib/feed";
 import {
   persistIgnoredArticleIds,
   readIgnoredArticleIds,
@@ -93,6 +95,7 @@ export default function App() {
     movePlugin: orbitMovePlugin,
     reorderPlugins: orbitReorderPlugins,
     installOfficialPlugin: orbitInstallOfficialPlugin,
+    updateOfficialPlugin: orbitUpdateOfficialPlugin,
     savePluginManifest: orbitSavePluginManifest,
     forceRefreshPlugin: orbitForceRefreshPlugin,
   } = useOrbitData(
@@ -141,54 +144,11 @@ export default function App() {
   const [selectedItem, setSelectedItem] = useState<Article | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const articleContentRef = useRef<HTMLDivElement>(null);
+  const readerPanelRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("today");
 
   const [showPluginStore, setShowPluginStore] = useState(false);
   const [isSidebarRefreshing, setIsSidebarRefreshing] = useState(false);
-  const [groupUnreadCounts, setGroupUnreadCounts] = useState<Record<string, number>>({});
-
-  useEffect(() => {
-    if (activePlugin !== "all" || activePluginGroupId != null || activeTab !== "all") {
-      return;
-    }
-    const first = sidebarPluginGroups[0];
-    if (first) {
-      setActivePluginGroupId(first.group.id);
-    }
-  }, [activePlugin, activePluginGroupId, activeTab, sidebarPluginGroups]);
-
-  const refreshGroupUnreadCounts = useCallback(async () => {
-    const groups = groupedPluginsForSidebar(myPlugins);
-    const entries = await Promise.all(
-      groups.map(async ({ group, plugins }) => {
-        const ids = plugins.map(p => p.id);
-        if (ids.length === 0) {
-          return [group.id, 0] as const;
-        }
-        try {
-          const count = await fetchFeedUnread({ pluginIds: ids });
-          return [group.id, count] as const;
-        } catch {
-          return [group.id, 0] as const;
-        }
-      }),
-    );
-    setGroupUnreadCounts(Object.fromEntries(entries));
-  }, [groupedPluginsForSidebar, myPlugins]);
-
-  useEffect(() => {
-    void refreshGroupUnreadCounts();
-  }, [refreshGroupUnreadCounts]);
-
-  useEffect(() => {
-    if (activePlugin !== "all" || !activePluginGroupId) {
-      return;
-    }
-    setGroupUnreadCounts(prev => ({
-      ...prev,
-      [activePluginGroupId]: unreadTotal,
-    }));
-  }, [unreadTotal, activePlugin, activePluginGroupId]);
 
   useEffect(() => {
     if (visibleArticles.length === 0) {
@@ -251,6 +211,11 @@ export default function App() {
     return false;
   }, [selectedItem, coverImageFailed]);
 
+  const selectedYouTubeVideoId = useMemo(
+    () => (selectedItem ? resolveYouTubeVideoId(selectedItem) : null),
+    [selectedItem],
+  );
+
   const selectedItemDisplayContent = useMemo(() => {
     if (!selectedItem?.content?.trim()) return "";
     if (selectedItem.type !== "text" || !selectedItem.image) {
@@ -285,6 +250,23 @@ export default function App() {
 
   const selectedPluginMeta = selectedItem ? pluginById.get(selectedItem.pluginId) : undefined;
 
+  const relatedRecentVideos = useMemo(() => {
+    if (!selectedItem) return [];
+    if (!isVideoPluginChannel(selectedPluginMeta, selectedItem)) return [];
+
+    return articlesWithBookmarks
+      .filter(
+        item =>
+          item.id !== selectedItem.id &&
+          item.type === "video" &&
+          item.pluginId === selectedItem.pluginId &&
+          (!selectedItem.channelId ||
+            !item.channelId ||
+            item.channelId === selectedItem.channelId),
+      )
+      .slice(0, 5);
+  }, [selectedItem, selectedPluginMeta, articlesWithBookmarks]);
+
   const activePluginChannels = useMemo(() => {
     if (activePlugin === "all") return [];
     return pluginById.get(activePlugin)?.channels ?? [];
@@ -301,19 +283,24 @@ export default function App() {
     if (isSidebarRefreshing) return;
     setIsSidebarRefreshing(true);
     void refreshFromCache()
-      .then(() => refreshGroupUnreadCounts())
       .finally(() => {
         setIsSidebarRefreshing(false);
       });
   };
 
   const handleItemSelect = (item: Article) => {
-    void markArticleRead(item.id).then(() => refreshGroupUnreadCounts());
+    void markArticleRead(item.id);
     setSelectedItem(item);
     setAiSummary(null);
     setIsPlayingAudio(false);
     setActiveImageIndex(0);
   };
+
+  useEffect(() => {
+    if (readerPanelRef.current) {
+      readerPanelRef.current.scrollTop = 0;
+    }
+  }, [selectedItem?.id]);
 
   useEffect(() => {
     const itemId = selectedItem?.id;
@@ -377,6 +364,10 @@ export default function App() {
 
   const handleInstallPlugin = async (marketId: string) => {
     await orbitInstallOfficialPlugin(marketId);
+  };
+
+  const handleUpdatePlugin = async (marketId: string, pluginId: string) => {
+    await orbitUpdateOfficialPlugin(marketId, pluginId);
   };
 
   const handleUninstallPlugin = async (id: string) => {
@@ -680,39 +671,6 @@ export default function App() {
               </div>
 
               {(() => {
-                const isGroupAllActive = (groupId: string) =>
-                  activeTab === "all" &&
-                  activePlugin === "all" &&
-                  activePluginGroupId === groupId;
-
-                const renderGroupAllButton = (group: { id: string; label: string }) => (
-                  <button
-                    key={`group-all-${group.id}`}
-                    type="button"
-                    onClick={() => selectGroupAll(group.id)}
-                    className={`w-full flex items-center py-2.5 rounded-xl text-sm transition-all duration-200 ${
-                      isSidebarCollapsed ? "justify-center px-0" : "gap-3 px-3"
-                    } ${
-                      isGroupAllActive(group.id)
-                        ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-900 dark:text-white font-medium"
-                        : "text-neutral-500 dark:text-neutral-400 hover:bg-neutral-50 dark:hover:bg-neutral-800/50"
-                    }`}
-                    title={`${group.label} · 全部平台`}
-                  >
-                    <div className="w-5 h-5 rounded-md bg-indigo-500 flex items-center justify-center text-[10px] font-bold text-white shrink-0">
-                      全
-                    </div>
-                    {!isSidebarCollapsed && (
-                      <div className="flex-1 flex items-center justify-between min-w-0">
-                        <span className="truncate">全部平台</span>
-                        <span className="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400 px-1.5 py-0.5 rounded-md font-semibold shrink-0">
-                          未读 {groupUnreadCounts[group.id] ?? 0}
-                        </span>
-                      </div>
-                    )}
-                  </button>
-                );
-
                 const renderPluginButton = (plugin: Plugin) => (
                   <button
                     key={plugin.id}
@@ -754,10 +712,9 @@ export default function App() {
                 );
 
                 if (isSidebarCollapsed) {
-                  return visibleGroups.flatMap(({ group, plugins }) => [
-                    renderGroupAllButton(group),
-                    ...plugins.map(renderPluginButton),
-                  ]);
+                  return visibleGroups.flatMap(({ plugins }) =>
+                    plugins.map(renderPluginButton),
+                  );
                 }
 
                 return (
@@ -779,7 +736,6 @@ export default function App() {
                             {plugins.length}
                           </span>
                         </button>
-                        {renderGroupAllButton(group)}
                         {plugins.map(renderPluginButton)}
                       </div>
                     ))}
@@ -830,6 +786,7 @@ export default function App() {
               getPluginGroupId={getPluginGroupId}
               onClose={() => setShowPluginStore(false)}
               onInstall={handleInstallPlugin}
+              onUpdate={handleUpdatePlugin}
               onUninstall={handleUninstallPlugin}
               onToggleActive={handleTogglePluginActive}
               onMove={handleMovePlugin}
@@ -840,7 +797,6 @@ export default function App() {
               }}
               onForceRefresh={async (pluginId) => {
                 await orbitForceRefreshPlugin(pluginId);
-                await refreshGroupUnreadCounts();
               }}
               onSaveManifest={async (pluginId, manifestText) => {
                 await orbitSavePluginManifest(pluginId, manifestText);
@@ -1110,9 +1066,12 @@ export default function App() {
           </section>
 
           {}
-          <section className={`flex-1 h-full overflow-y-auto transition-all duration-300 ${
+          <section
+            ref={readerPanelRef}
+            className={`flex-1 h-full overflow-y-auto transition-all duration-300 ${
             theme === 'dark' ? 'bg-[#121314]' : 'bg-[#fafafa]'
-          } ${dimmerMode ? 'brightness-[0.85] contrast-105' : ''}`}>
+          } ${dimmerMode ? 'brightness-[0.85] contrast-105' : ''}`}
+          >
             
             {selectedItem ? (
               <div className="max-w-3xl mx-auto px-6 pb-8 md:pb-10">
@@ -1277,19 +1236,32 @@ export default function App() {
                       />
                     )}
 
-                    {/* Type 2: Interactive Custom Video Player */}
+                    {/* Type 2: Video — YouTube embed or direct stream */}
                     {selectedItem.type === 'video' && (
                       <div className="relative aspect-video bg-neutral-950 flex flex-col items-center justify-center text-white">
-                        <video 
-                          id="reader-video"
-                          src={selectedItem.videoUrl} 
-                          className="w-full h-full object-cover"
-                          controls
-                          poster={selectedItem.image}
-                        />
-                        <div className="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full text-xs flex items-center gap-1.5 backdrop-blur-md">
+                        {selectedYouTubeVideoId ? (
+                          <YouTubeEmbed
+                            videoId={selectedYouTubeVideoId}
+                            title={selectedItem.title}
+                          />
+                        ) : selectedItem.videoUrl ? (
+                          <video
+                            id="reader-video"
+                            src={selectedItem.videoUrl}
+                            className="w-full h-full object-cover"
+                            controls
+                            poster={selectedItem.image}
+                          />
+                        ) : selectedItem.image ? (
+                          <img
+                            src={selectedItem.image}
+                            alt={selectedItem.title}
+                            className="w-full h-full object-cover opacity-80"
+                          />
+                        ) : null}
+                        <div className="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full text-xs flex items-center gap-1.5 backdrop-blur-md pointer-events-none">
                           <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span>
-                          <span>超清 4K HDR 视频流</span>
+                          <span>{selectedYouTubeVideoId ? "YouTube" : "视频流"}</span>
                         </div>
                       </div>
                     )}
@@ -1459,6 +1431,66 @@ export default function App() {
                       </p>
                     )}
                   </div>
+                )}
+
+                {relatedRecentVideos.length > 0 && (
+                  <section className="mt-10 pt-8 border-t border-neutral-100 dark:border-neutral-800">
+                    <div className="flex items-center justify-between mb-4">
+                      <h2 className="text-sm font-bold text-neutral-800 dark:text-neutral-200">
+                        更多视频
+                      </h2>
+                      <span className="text-[11px] text-neutral-400">
+                        最近 {relatedRecentVideos.length} 条
+                      </span>
+                    </div>
+                    <div className="space-y-2.5">
+                      {relatedRecentVideos.map(item => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          onClick={() => handleItemSelect(item)}
+                          className={`w-full flex gap-3 p-2.5 rounded-xl text-left transition-all border ${
+                            theme === "dark"
+                              ? "border-neutral-800 hover:bg-neutral-900"
+                              : "border-neutral-100 hover:bg-white hover:shadow-sm"
+                          }`}
+                        >
+                          <div className="relative w-28 sm:w-32 aspect-video rounded-lg overflow-hidden shrink-0 bg-neutral-100 dark:bg-neutral-800">
+                            {item.image?.trim() ? (
+                              <img
+                                src={item.image}
+                                alt=""
+                                className="w-full h-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-neutral-400">
+                                <Icon name="video" className="w-5 h-5" />
+                              </div>
+                            )}
+                            <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
+                              <Icon name="play" className="w-5 h-5 text-white drop-shadow" />
+                            </div>
+                          </div>
+                          <div className="flex-1 min-w-0 py-0.5">
+                            <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-200 line-clamp-2 leading-snug">
+                              {item.title}
+                            </h3>
+                            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-400">
+                              <span>{item.author}</span>
+                              <span>•</span>
+                              <span>{item.time}</span>
+                              {item.reads ? (
+                                <>
+                                  <span>•</span>
+                                  <span>{item.reads}</span>
+                                </>
+                              ) : null}
+                            </div>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
                 )}
 
                 </div>

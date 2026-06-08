@@ -64,6 +64,8 @@ type pluginView struct {
 	Source          string               `json:"source"`
 	Sort            int                  `json:"sort"`
 	LastError       string               `json:"lastError,omitempty"`
+	Version         string               `json:"version,omitempty"`
+	MarketID        string               `json:"marketId,omitempty"`
 }
 
 func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
@@ -92,6 +94,8 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		Source:          rec.Source,
 		Sort:            rec.SortOrder,
 		LastError:       rec.LastError,
+		Version:         rec.Version,
+		MarketID:        rec.Meta.MarketID,
 	}
 }
 
@@ -256,6 +260,38 @@ func (s *Server) handlePluginsMarket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeJSON(w, http.StatusCreated, map[string]any{"plugin": pluginRecordToView(rec)})
+			return
+		}
+		if strings.HasSuffix(rest, "/update") && r.Method == http.MethodPost {
+			marketID := strings.TrimSuffix(rest, "/update")
+			marketID = strings.TrimSuffix(marketID, "/")
+			if marketID == "" {
+				writeJSON(w, http.StatusBadRequest, errorBody("market plugin id is required"))
+				return
+			}
+			var body struct {
+				PluginID string `json:"pluginId"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody("invalid JSON body"))
+				return
+			}
+			if strings.TrimSpace(body.PluginID) == "" {
+				writeJSON(w, http.StatusBadRequest, errorBody("pluginId is required"))
+				return
+			}
+			client := market.NewClient()
+			rec, err := s.registry.UpdateOrbitFromMarket(
+				r.Context(),
+				client.DownloadOrbitPackage,
+				marketID,
+				body.PluginID,
+			)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+				return
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"plugin": pluginRecordToView(rec)})
 			return
 		}
 		writeJSON(w, http.StatusNotFound, errorBody("not found"))
