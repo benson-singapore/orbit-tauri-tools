@@ -330,6 +330,26 @@ func (s *Server) handlePluginByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if strings.HasSuffix(rest, "/readme") {
+		id := strings.TrimSuffix(rest, "/readme")
+		id = strings.TrimSuffix(id, "/")
+		if r.Method != http.MethodGet {
+			writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			return
+		}
+		content, err := s.registry.GetPluginReadme(id)
+		if err != nil {
+			if strings.Contains(err.Error(), "readme not found") {
+				writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
+				return
+			}
+			writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"content": content})
+		return
+	}
+
 	if strings.HasSuffix(rest, "/manifest") {
 		id := strings.TrimSuffix(rest, "/manifest")
 		id = strings.TrimSuffix(id, "/")

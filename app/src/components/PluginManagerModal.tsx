@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
 import { PluginAvatar } from "@/components/PluginAvatar";
+import { PluginReadmeModal } from "@/components/PluginReadmeModal";
 import {
   fetchMarketPlugins,
   fetchPluginTypeDicts,
@@ -457,6 +458,7 @@ function MarketPluginCard({
 }
 
 interface PluginSectionProps {
+  theme: ThemeMode;
   plugins: Plugin[];
   installedPlugins: Plugin[];
   subtleBorder: string;
@@ -476,6 +478,7 @@ interface PluginSectionProps {
 
 function PluginSection(props: PluginSectionProps) {
   const {
+    theme,
     plugins,
     installedPlugins,
     subtleBorder,
@@ -495,6 +498,7 @@ function PluginSection(props: PluginSectionProps) {
   const [draggingPluginId, setDraggingPluginId] = useState<string | null>(null);
   const [dragOverPluginId, setDragOverPluginId] = useState<string | null>(null);
   const [uninstallTarget, setUninstallTarget] = useState<Plugin | null>(null);
+  const [readmeTarget, setReadmeTarget] = useState<Plugin | null>(null);
   const [forceRefreshingId, setForceRefreshingId] = useState<string | null>(null);
   const [forceRefreshError, setForceRefreshError] = useState<string | null>(null);
 
@@ -640,6 +644,16 @@ function PluginSection(props: PluginSectionProps) {
                         编辑配置
                       </button>
                     )}
+                    {isWasm && (
+                      <button
+                        type="button"
+                        onClick={() => setReadmeTarget(plugin)}
+                        className="inline-flex items-center gap-0.5 px-2 py-0.5 text-[10px] font-medium rounded text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      >
+                        <Icon name="info" className="w-3 h-3" />
+                        使用说明
+                      </button>
+                    )}
                   </div>
                   <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
                     {plugin.desc}
@@ -704,6 +718,14 @@ function PluginSection(props: PluginSectionProps) {
           </article>
         );
       })}
+
+      {readmeTarget && (
+        <PluginReadmeModal
+          theme={theme}
+          plugin={readmeTarget}
+          onClose={() => setReadmeTarget(null)}
+        />
+      )}
 
       {uninstallTarget && (
         <div
@@ -3419,6 +3441,7 @@ export function PluginManagerModal({
                 {activeManageGroup ? (
                   activeManageGroup.plugins.length > 0 ? (
                     <PluginSection
+                      theme={theme}
                       plugins={activeManageGroup.plugins}
                       installedPlugins={installedPlugins}
                       subtleBorder={subtleBorder}

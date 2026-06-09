@@ -231,6 +231,16 @@ export async function fetchPluginManifest(id: string): Promise<string> {
   return res.text();
 }
 
+export async function fetchPluginReadme(id: string): Promise<string> {
+  const base = await apiBase();
+  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/readme`);
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const data = (await res.json()) as { content: string };
+  return data.content;
+}
+
 export async function updatePluginManifest(
   id: string,
   manifestText: string,

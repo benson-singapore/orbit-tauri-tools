@@ -273,7 +273,7 @@ func (r *Registry) InstallOrbitFromMarket(ctx context.Context, marketDownloader 
 	return r.UpdateManifest(ctx, rec.ID, &rec.Manifest)
 }
 
-// UpdateOrbitFromMarket downloads a newer .orbit package and updates wasm while merging manifest.
+// UpdateOrbitFromMarket downloads a newer .orbit package and updates package assets while merging manifest.
 func (r *Registry) UpdateOrbitFromMarket(ctx context.Context, marketDownloader func(context.Context, string) ([]byte, error), marketID, pluginID string) (*PluginRecord, error) {
 	pluginID = strings.TrimSpace(pluginID)
 	if pluginID == "" {

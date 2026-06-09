@@ -37,6 +37,46 @@ func TestExtractOrbitPackage_Juejin(t *testing.T) {
 	}
 }
 
+func TestExtractPackageFilesFromZip_ReplacesReadme(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "docs", "插件", "联合早报", "联合早报.orbit")
+	data, err := os.ReadFile(root)
+	if err != nil {
+		t.Skipf("sample orbit package missing: %v", err)
+	}
+
+	zr, _, _, err := parseOrbitZip(data)
+	if err != nil {
+		t.Fatalf("parseOrbitZip: %v", err)
+	}
+
+	pluginDir := t.TempDir()
+	if err := extractPackageFilesFromZip(zr, pluginDir); err != nil {
+		t.Fatalf("extractPackageFilesFromZip: %v", err)
+	}
+
+	readmePath := filepath.Join(pluginDir, "README.md")
+	original, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("readme missing after extract: %v", err)
+	}
+
+	if err := os.WriteFile(readmePath, []byte("stale readme content"), 0o644); err != nil {
+		t.Fatalf("write stale readme: %v", err)
+	}
+
+	if err := extractPackageFilesFromZip(zr, pluginDir); err != nil {
+		t.Fatalf("extractPackageFilesFromZip update: %v", err)
+	}
+
+	updated, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("readme missing after update extract: %v", err)
+	}
+	if string(updated) != string(original) {
+		t.Fatalf("readme was not replaced on update")
+	}
+}
+
 func TestLoadWasmBinary_Brotli(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "docs", "插件", "掘金", "掘金", "main.wasm.br")
 	data, err := loadWasmBinary(root)
