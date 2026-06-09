@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import {
@@ -3021,37 +3021,74 @@ export function PluginManagerModal({
   ]);
   const [marketGroupsLoading, setMarketGroupsLoading] = useState(false);
   const [marketPluginsForCount, setMarketPluginsForCount] = useState<MarketPluginItem[]>([]);
+  const [marketSidebarRefreshing, setMarketSidebarRefreshing] = useState(false);
+
+  const loadMarketGroups = useCallback(async () => {
+    setMarketGroupsLoading(true);
+    try {
+      const items = await fetchPluginTypeDicts();
+      setMarketGroups([
+        { id: "all", label: "全部官方精选" },
+        ...items.map(item => ({ id: item.value, label: item.label })),
+      ]);
+    } catch (err) {
+      console.error("load plugin type groups failed", err);
+      setMarketGroups([{ id: "all", label: "全部官方精选" }]);
+    } finally {
+      setMarketGroupsLoading(false);
+    }
+  }, []);
+
+  const loadMarketPluginsForCount = useCallback(async () => {
+    try {
+      const { items } = await fetchMarketPlugins({ category: "all", pageSize: 50 });
+      setMarketPluginsForCount(items);
+    } catch (err) {
+      console.error("load market plugins for update count failed", err);
+      setMarketPluginsForCount([]);
+    }
+  }, []);
+
+  const loadMarketPlugins = useCallback(async () => {
+    setMarketLoading(true);
+    try {
+      const { items, total } = await fetchMarketPlugins({
+        category: marketCategory === MARKET_CATEGORY_UPDATES ? "all" : marketCategory,
+        sort: marketSort,
+        search: debouncedMarketSearch,
+        pageSize: 50,
+      });
+      setMarketPlugins(items);
+      setMarketTotal(total);
+    } catch (err) {
+      console.error("load market plugins failed", err);
+      setMarketPlugins([]);
+      setMarketTotal(0);
+    } finally {
+      setMarketLoading(false);
+    }
+  }, [marketCategory, marketSort, debouncedMarketSearch]);
+
+  const handleMarketSidebarRefresh = useCallback(async () => {
+    if (marketSidebarRefreshing) return;
+    setMarketSidebarRefreshing(true);
+    try {
+      await Promise.all([
+        loadMarketGroups(),
+        loadMarketPluginsForCount(),
+        loadMarketPlugins(),
+      ]);
+    } finally {
+      setMarketSidebarRefreshing(false);
+    }
+  }, [marketSidebarRefreshing, loadMarketGroups, loadMarketPluginsForCount, loadMarketPlugins]);
 
   useEffect(() => {
     if (activeTab !== "market") {
       return;
     }
-    let cancelled = false;
-    setMarketGroupsLoading(true);
-    void fetchPluginTypeDicts()
-      .then(items => {
-        if (!cancelled) {
-          setMarketGroups([
-            { id: "all", label: "全部官方精选" },
-            ...items.map(item => ({ id: item.value, label: item.label })),
-          ]);
-        }
-      })
-      .catch(err => {
-        if (!cancelled) {
-          console.error("load plugin type groups failed", err);
-          setMarketGroups([{ id: "all", label: "全部官方精选" }]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setMarketGroupsLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab]);
+    void loadMarketGroups();
+  }, [activeTab, loadMarketGroups]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -3064,23 +3101,8 @@ export function PluginManagerModal({
     if (activeTab !== "market") {
       return;
     }
-    let cancelled = false;
-    void fetchMarketPlugins({ category: "all", pageSize: 50 })
-      .then(({ items }) => {
-        if (!cancelled) {
-          setMarketPluginsForCount(items);
-        }
-      })
-      .catch(err => {
-        if (!cancelled) {
-          console.error("load market plugins for update count failed", err);
-          setMarketPluginsForCount([]);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab]);
+    void loadMarketPluginsForCount();
+  }, [activeTab, loadMarketPluginsForCount]);
 
   const pendingUpdateCount = useMemo(
     () =>
@@ -3109,36 +3131,8 @@ export function PluginManagerModal({
     if (activeTab !== "market") {
       return;
     }
-    let cancelled = false;
-    setMarketLoading(true);
-    void fetchMarketPlugins({
-      category: marketCategory === MARKET_CATEGORY_UPDATES ? "all" : marketCategory,
-      sort: marketSort,
-      search: debouncedMarketSearch,
-      pageSize: 50,
-    })
-      .then(({ items, total }) => {
-        if (!cancelled) {
-          setMarketPlugins(items);
-          setMarketTotal(total);
-        }
-      })
-      .catch(err => {
-        if (!cancelled) {
-          console.error("load market plugins failed", err);
-          setMarketPlugins([]);
-          setMarketTotal(0);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setMarketLoading(false);
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, marketCategory, marketSort, debouncedMarketSearch]);
+    void loadMarketPlugins();
+  }, [activeTab, loadMarketPlugins]);
 
   const marketCategoryLabels = useMemo(() => {
     const map = new Map<string, string>();
@@ -3191,7 +3185,22 @@ export function PluginManagerModal({
           {activeTab === "market" && (
             <div className="flex-1 min-h-0 flex">
               <aside className={`w-52 shrink-0 border-r ${subtleBorder} px-4 py-5 overflow-y-auto flex flex-col`}>
-                <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider px-3 mb-3">插件分组</p>
+                <div className="flex items-center justify-between px-3 mb-3">
+                  <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">插件分组</p>
+                  <button
+                    type="button"
+                    onClick={() => void handleMarketSidebarRefresh()}
+                    disabled={marketSidebarRefreshing}
+                    title="刷新分组、列表与待更新数量"
+                    aria-label="刷新分组、列表与待更新数量"
+                    className={`p-1 rounded-md transition-colors text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-800/50 disabled:opacity-50 disabled:pointer-events-none`}
+                  >
+                    <Icon
+                      name="refresh"
+                      className={`w-3.5 h-3.5 ${marketSidebarRefreshing ? "animate-spin" : ""}`}
+                    />
+                  </button>
+                </div>
                 <nav className="space-y-0.5 flex-1 min-h-0">
                   {marketGroupsLoading && marketGroups.length <= 1 ? (
                     <p className="px-3 py-2 text-xs text-neutral-400">加载分组…</p>
