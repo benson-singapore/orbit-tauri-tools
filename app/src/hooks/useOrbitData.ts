@@ -13,11 +13,21 @@ import {
   uninstallPlugin,
   updatePluginManifest,
 } from "@/lib/feed";
+import { DYNAMIC_SEARCH_MAX_PAGES, isChannelDynamic } from "@/lib/channelStatus";
 import type { Article, InstallRSSPluginRequest, Plugin } from "@/types";
+
+function resolveActiveDynamicFeed(plugins: Plugin[], pluginId: string, channelId: string): boolean {
+  if (pluginId === "all" || channelId === "all") {
+    return false;
+  }
+  const plugin = plugins.find(p => p.id === pluginId);
+  const channel = plugin?.channels?.find(ch => ch.id === channelId);
+  return isChannelDynamic(channel);
+}
 
 const ALL_PLUGIN: Plugin = INITIAL_PLUGINS[0]!;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const FEED_PAGE_SIZE = 20;
+export const FEED_PAGE_SIZE = 20;
 const FEED_RELOAD_DELAYS_MS = [3000, 5000, 10000, 20000, 40000, 60000];
 
 function scheduleFeedReloadAfterBackgroundFetch(
@@ -37,6 +47,7 @@ interface UseOrbitDataResult {
   unreadTotal: number;
   feedTotal: number;
   loading: boolean;
+  searching: boolean;
   loadingMore: boolean;
   hasMore: boolean;
   error: string | null;
@@ -68,10 +79,12 @@ export function useOrbitData(
   const [unreadTotal, setUnreadTotal] = useState(0);
   const [feedTotal, setFeedTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const feedRequestId = useRef(0);
+  const dynamicPageRef = useRef(1);
   const reorderPersistQueue = useRef(Promise.resolve());
   const pluginFilterRef = useRef(pluginFilter);
   const channelFilterRef = useRef(channelFilter);
@@ -98,12 +111,38 @@ export function useOrbitData(
     append?: boolean;
   }) => {
     const requestId = ++feedRequestId.current;
-    const offset = options?.offset ?? 0;
     const append = options?.append ?? false;
+    if (!append) {
+      dynamicPageRef.current = 1;
+    }
     const pluginId = pluginFilterRef.current;
     const channel = channelFilterRef.current;
     const contentType = contentTypeFilterRef.current;
     const search = searchFilterRef.current.trim();
+    const dynamicFeed = resolveActiveDynamicFeed(
+      pluginsRef.current,
+      pluginFilterRef.current,
+      channelFilterRef.current,
+    );
+    let offset = options?.offset ?? 0;
+    if (dynamicFeed) {
+      if (append) {
+        dynamicPageRef.current += 1;
+      }
+      offset = (dynamicPageRef.current - 1) * FEED_PAGE_SIZE;
+    }
+    if (dynamicFeed && !search) {
+      if (requestId !== feedRequestId.current) {
+        return;
+      }
+      setFeedTotal(0);
+      setHasMore(false);
+      setArticles(prev => (append ? prev : []));
+      if (!append) {
+        setUnreadTotal(0);
+      }
+      return;
+    }
     let scopeIds: string[] = [];
     const groupScopeId = pluginGroupScopeIdRef.current;
     if (pluginId === "all" && groupScopeId) {
@@ -150,7 +189,15 @@ export function useOrbitData(
     const items = data.items ?? [];
     const total = data.total ?? (offset + items.length);
     setFeedTotal(total);
-    setHasMore(offset + items.length < total);
+    const page = Math.floor(offset / FEED_PAGE_SIZE) + 1;
+    const moreFromApi = offset + items.length < total;
+    if (typeof data.hasMore === "boolean") {
+      setHasMore(data.hasMore);
+    } else if (dynamicFeed) {
+      setHasMore(items.length > 0 && page < DYNAMIC_SEARCH_MAX_PAGES);
+    } else {
+      setHasMore(moreFromApi);
+    }
     setArticles(prev => (append ? [...prev, ...items] : items));
     if (!append) {
       setUnreadTotal(data.unreadTotal ?? items.filter(item => !item.isRead).length);
@@ -181,7 +228,16 @@ export function useOrbitData(
     }
     setLoadingMore(true);
     try {
-      await loadFeedPage({ offset: articles.length, append: true });
+      const dynamicFeed = resolveActiveDynamicFeed(
+        pluginsRef.current,
+        pluginFilterRef.current,
+        channelFilterRef.current,
+      );
+      await loadFeedPage(
+        dynamicFeed
+          ? { append: true }
+          : { offset: articles.length, append: true },
+      );
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -200,15 +256,28 @@ export function useOrbitData(
     }
   }, [loadFeedPage]);
 
-  const reloadFeedOnly = useCallback(async () => {
-    setLoading(true);
+  const reloadFeedOnly = useCallback(async (options?: { searching?: boolean }) => {
+    const isSearchReload = options?.searching === true;
+    if (isSearchReload) {
+      feedRequestId.current += 1;
+      dynamicPageRef.current = 1;
+      setArticles([]);
+      setHasMore(false);
+      setSearching(true);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     try {
       await loadFeedPage({ offset: 0, append: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false);
+      if (isSearchReload) {
+        setSearching(false);
+      } else {
+        setLoading(false);
+      }
     }
   }, [loadFeedPage]);
 
@@ -234,12 +303,16 @@ export function useOrbitData(
     };
   }, [reload, refreshInBackground]);
 
+  const prevSearchFilterRef = useRef(searchFilter);
   useEffect(() => {
     if (initialMount.current) {
       initialMount.current = false;
+      prevSearchFilterRef.current = searchFilter;
       return;
     }
-    void reloadFeedOnly();
+    const searchChanged = prevSearchFilterRef.current !== searchFilter;
+    prevSearchFilterRef.current = searchFilter;
+    void reloadFeedOnly(searchChanged ? { searching: true } : undefined);
   }, [pluginFilter, channelFilter, contentTypeFilter, searchFilter, pluginGroupScopeId, reloadFeedOnly]);
 
   const installCustomRSS = useCallback(
@@ -414,6 +487,7 @@ export function useOrbitData(
     unreadTotal,
     feedTotal,
     loading,
+    searching,
     loadingMore,
     hasMore,
     error,

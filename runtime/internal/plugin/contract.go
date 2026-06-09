@@ -100,6 +100,14 @@ type InstallRSSOptions struct {
 	CategoryTag     string
 }
 
+// FeedQueryResult is the outcome of a feed list query.
+type FeedQueryResult struct {
+	Items    []FeedItem
+	Total    int
+	HasMore  bool
+	PrePaged bool // true when Items are already limited to the requested page (dynamic WASM search)
+}
+
 // FeedItem is the normalized output shared with the frontend.
 type FeedItem struct {
 	ID          string   `json:"id"`

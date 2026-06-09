@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -27,11 +28,17 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 	offset := parseNonNegativeInt(q.Get("offset"), 0)
 	scopePluginIDs := parseCSVPluginIDs(q.Get("plugin_ids"))
 
-	items, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, search, scopePluginIDs)
+	log.Printf(
+		"[orbit-feed] request plugin_id=%q channel=%q q=%q limit=%d offset=%d raw_query=%q",
+		pluginID, channelID, search, limit, offset, r.URL.RawQuery,
+	)
+
+	feedResult, err := s.registry.Feed(r.Context(), pluginID, channelID, contentType, search, scopePluginIDs, limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
 		return
 	}
+	items := feedResult.Items
 
 	type feedArticle struct {
 		ID           string   `json:"id"`
@@ -52,26 +59,32 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		IsRead       bool     `json:"isRead"`
 	}
 
-	total := len(items)
+	total := feedResult.Total
+	if !feedResult.PrePaged {
+		total = len(items)
+	}
 	unreadTotal := 0
 	for _, item := range items {
 		if !item.IsRead {
 			unreadTotal++
 		}
 	}
-	if offset == 0 {
+	if offset == 0 && !feedResult.PrePaged {
 		if count, err := s.registry.CountUnread(r.Context(), pluginID, channelID, contentType, scopePluginIDs); err == nil {
 			unreadTotal = count
 		}
 	}
-	if offset > total {
-		offset = total
+	page := items
+	if !feedResult.PrePaged {
+		if offset > total {
+			offset = total
+		}
+		end := total
+		if limit > 0 && offset+limit < end {
+			end = offset + limit
+		}
+		page = items[offset:end]
 	}
-	end := total
-	if limit > 0 && offset+limit < end {
-		end = offset + limit
-	}
-	page := items[offset:end]
 
 	out := make([]feedArticle, 0, len(page))
 	for _, item := range page {
@@ -99,7 +112,7 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"ok":          true,
 		"items":       out,
 		"count":       len(out),
@@ -107,7 +120,19 @@ func (s *Server) handleFeed(w http.ResponseWriter, r *http.Request) {
 		"unreadTotal": unreadTotal,
 		"limit":       limit,
 		"offset":      offset,
-	})
+	}
+	if feedResult.PrePaged {
+		resp["hasMore"] = feedResult.HasMore
+	}
+	firstID := ""
+	if len(out) > 0 {
+		firstID = out[0].ID
+	}
+	log.Printf(
+		"[orbit-feed] response plugin_id=%q channel=%q prePaged=%v hasMore=%v count=%d total=%d offset=%d first_item_id=%q",
+		pluginID, channelID, feedResult.PrePaged, feedResult.HasMore, len(out), total, offset, firstID,
+	)
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleFeedUnread(w http.ResponseWriter, r *http.Request) {

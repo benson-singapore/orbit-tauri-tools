@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -12,6 +13,8 @@ const DefaultChannelItemLimit = 100
 const (
 	ChannelStatusEnabled  = "enabled"
 	ChannelStatusDisabled = "disabled"
+
+	ChannelTypeSearch = "search"
 )
 
 // FeedChannel is one feed source within a plugin (RSS feedUrl or WASM route).
@@ -23,6 +26,21 @@ type FeedChannel struct {
 	Params    map[string]string `json:"params,omitempty"`
 	ItemLimit int               `json:"itemLimit,omitempty"`
 	Status    string            `json:"status,omitempty"` // enabled (default) | disabled
+	Type      string            `json:"type,omitempty"`   // search | empty (feed)
+	Dynamic   bool              `json:"dynamic,omitempty"`
+}
+
+const DynamicSearchMaxPages = 20
+
+const DefaultFeedPageSize = 20
+
+// ChannelDynamic reports whether the channel is fetched on-demand (not cached by scheduler).
+func ChannelDynamic(ch *FeedChannel) bool {
+	if ch == nil {
+		return false
+	}
+	inferSearchChannelMetadata(ch)
+	return ch.Dynamic
 }
 
 // ChannelStatus returns the effective channel status (empty means enabled).
@@ -92,7 +110,35 @@ func normalizeChannels(cfg *ManifestConfig) {
 		case ChannelStatusDisabled:
 			cfg.Channels[i].Status = ChannelStatusDisabled
 		}
+		inferSearchChannelMetadata(&cfg.Channels[i])
 	}
+}
+
+func isSearchRoute(route string) bool {
+	route = strings.ToLower(strings.TrimSpace(route))
+	return strings.Contains(route, "/search/") || strings.HasSuffix(route, "/search")
+}
+
+// inferSearchChannelMetadata marks WASM search routes as dynamic feed channels.
+func inferSearchChannelMetadata(ch *FeedChannel) {
+	if ch == nil || ch.Dynamic {
+		return
+	}
+	if isSearchRoute(ch.Route) || strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeSearch) {
+		ch.Dynamic = true
+		if strings.TrimSpace(ch.Type) == "" {
+			ch.Type = ChannelTypeSearch
+		}
+	}
+}
+
+// ChannelsForAPI returns enabled channels with search metadata normalized for clients.
+func ChannelsForAPI(channels []FeedChannel) []FeedChannel {
+	out := EnabledChannels(channels)
+	for i := range out {
+		inferSearchChannelMetadata(&out[i])
+	}
+	return out
 }
 
 func validateChannelStatus(ch FeedChannel) error {
@@ -188,6 +234,96 @@ func ResolveChannelID(cfg *ManifestConfig, channelID string) string {
 	enabled := EnabledChannels(cfg.Channels)
 	if len(enabled) == 1 {
 		return enabled[0].ID
+	}
+	return ""
+}
+
+// WasmPageFromOffset converts feed API offset/limit into a 1-based WASM page number.
+func WasmPageFromOffset(limit, offset int) int {
+	if limit <= 0 {
+		limit = DefaultFeedPageSize
+	}
+	return offset/limit + 1
+}
+
+// DynamicSearchWasmOverrides builds WASM param overrides for a paged search request.
+func DynamicSearchWasmOverrides(ch *FeedChannel, query string, limit, offset int) map[string]string {
+	page := WasmPageFromOffset(limit, offset)
+	queryKey := channelSearchParamKey(ch)
+	if queryKey == "" {
+		queryKey = "query"
+	}
+	pageKey := channelPageParamKey(ch)
+	if pageKey == "" {
+		pageKey = "page"
+	}
+	return map[string]string{
+		queryKey: strings.TrimSpace(query),
+		pageKey:  strconv.Itoa(page),
+	}
+}
+
+// BuildDynamicSearchParams merges channel defaults with a live search query and page.
+func BuildDynamicSearchParams(ch *FeedChannel, query string, page int) map[string]string {
+	params := make(map[string]string, len(ch.Params)+2)
+	for k, v := range ch.Params {
+		params[k] = v
+	}
+	queryKey := channelSearchParamKey(ch)
+	if queryKey == "" {
+		queryKey = "query"
+	}
+	pageKey := channelPageParamKey(ch)
+	if pageKey == "" {
+		pageKey = "page"
+	}
+	params[queryKey] = strings.TrimSpace(query)
+	if page > 0 {
+		params[pageKey] = strconv.Itoa(page)
+	}
+	return params
+}
+
+func channelSearchParamKey(ch *FeedChannel) string {
+	if ch == nil {
+		return ""
+	}
+	if key := firstRouteParam(ch.Route); key != "" {
+		return key
+	}
+	for k, v := range ch.Params {
+		if k == "page" {
+			continue
+		}
+		if strings.TrimSpace(v) == "" {
+			return k
+		}
+	}
+	return ""
+}
+
+func channelPageParamKey(ch *FeedChannel) string {
+	if ch == nil {
+		return ""
+	}
+	if ch.Params != nil {
+		if _, ok := ch.Params["page"]; ok {
+			return "page"
+		}
+	}
+	if isSearchRoute(ch.Route) {
+		return "page"
+	}
+	return ""
+}
+
+func firstRouteParam(route string) string {
+	parts := strings.Split(strings.TrimSpace(route), "/")
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, ":") {
+			return strings.TrimPrefix(part, ":")
+		}
 	}
 	return ""
 }

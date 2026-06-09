@@ -1,4 +1,25 @@
+import type { PluginChannel } from "@/types";
+
 export type ChannelStatus = "enabled" | "disabled";
+
+export const DYNAMIC_SEARCH_MAX_PAGES = 20;
+
+function isSearchRoute(route?: string): boolean {
+  const normalized = (route ?? "").trim().toLowerCase();
+  return normalized.includes("/search/") || normalized.endsWith("/search");
+}
+
+export function isChannelDynamic(
+  channel?: Pick<PluginChannel, "dynamic" | "type" | "route">,
+): boolean {
+  if (channel?.dynamic === true) {
+    return true;
+  }
+  if (channel?.type === "search") {
+    return true;
+  }
+  return isSearchRoute(channel?.route);
+}
 
 /** status が空の場合は enabled として扱う */
 export function normalizeChannelStatus(status?: string): ChannelStatus {

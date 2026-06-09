@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -40,14 +41,32 @@ type wasmFetchData struct {
 }
 
 func buildWasmFetchData(rec *PluginRecord, ch *FeedChannel) wasmFetchData {
-	params := make(map[string]string, len(ch.Params))
+	return buildWasmFetchDataWithParams(rec, ch, nil)
+}
+
+func mustJSONMap(m map[string]string) string {
+	if len(m) == 0 {
+		return "{}"
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Sprintf("%v", m)
+	}
+	return string(data)
+}
+
+func buildWasmFetchDataWithParams(rec *PluginRecord, ch *FeedChannel, overrides map[string]string) wasmFetchData {
+	merged := make(map[string]string, len(ch.Params)+len(overrides))
 	for k, v := range ch.Params {
-		params[k] = v
+		merged[k] = v
+	}
+	for k, v := range overrides {
+		merged[k] = v
 	}
 	data := wasmFetchData{
 		ChannelID: ch.ID,
 		Route:     ch.Route,
-		Params:    params,
+		Params:    merged,
 	}
 	if rec != nil && len(rec.Config.Secrets) > 0 {
 		data.Secrets = make(map[string]string, len(rec.Config.Secrets))
@@ -114,6 +133,10 @@ func loadWasmBinary(path string) ([]byte, error) {
 }
 
 func (e *WASMExecutor) FetchChannel(ctx context.Context, pluginDir string, rec *PluginRecord, ch *FeedChannel) ([]FeedItem, error) {
+	return e.FetchChannelWithParams(ctx, pluginDir, rec, ch, nil)
+}
+
+func (e *WASMExecutor) FetchChannelWithParams(ctx context.Context, pluginDir string, rec *PluginRecord, ch *FeedChannel, params map[string]string) ([]FeedItem, error) {
 	if rec == nil || ch == nil {
 		return nil, fmt.Errorf("plugin and channel are required")
 	}
@@ -134,10 +157,16 @@ func (e *WASMExecutor) FetchChannel(ctx context.Context, pluginDir string, rec *
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	reqData, _ := json.Marshal(buildWasmFetchData(rec, ch))
+	fetchData := buildWasmFetchDataWithParams(rec, ch, params)
+	reqData, _ := json.Marshal(fetchData)
 	env, _ := json.Marshal(wasmEnvelope{Action: "fetch", Data: reqData})
+	stdinLine := string(env) + "\n"
+	log.Printf(
+		"[orbit-feed] wasm stdin plugin=%q channel=%q overrides=%s merged_params=%s envelope=%s",
+		rec.ID, ch.ID, mustJSONMap(params), mustJSONMap(fetchData.Params), strings.TrimSpace(string(env)),
+	)
 
-	raw, err := e.run(runCtx, data, string(env)+"\n", rec, timeout)
+	raw, err := e.run(runCtx, data, stdinLine, rec, timeout)
 	if err != nil {
 		return nil, err
 	}

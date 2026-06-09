@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -617,6 +619,9 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 		if !ChannelEnabled(ch) {
 			return []FeedItem{}, nil
 		}
+		if ChannelDynamic(ch) {
+			return []FeedItem{}, nil
+		}
 		items, err := r.refreshChannel(ctx, rec, ch)
 		if err != nil {
 			return nil, err
@@ -625,6 +630,9 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 	} else {
 		for _, ch := range channels {
 			if !ChannelEnabled(&ch) {
+				continue
+			}
+			if ChannelDynamic(&ch) {
 				continue
 			}
 			items, err := r.refreshChannel(ctx, rec, &ch)
@@ -687,8 +695,13 @@ func (r *Registry) refreshChannel(ctx context.Context, rec *PluginRecord, ch *Fe
 func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord, channelID, search string) ([]FeedItem, bool, error) {
 	channelID = ResolveChannelID(&rec.Config, channelID)
 	if channelID != "" {
-		if ch, ok := findChannel(rec.Config.Channels, channelID); ok && !ChannelEnabled(ch) {
-			return []FeedItem{}, false, nil
+		if ch, ok := findChannel(rec.Config.Channels, channelID); ok {
+			if !ChannelEnabled(ch) {
+				return []FeedItem{}, false, nil
+			}
+			if ChannelDynamic(ch) {
+				return []FeedItem{}, false, nil
+			}
 		}
 		return r.loadFeedItems(ctx, rec.ID, channelID, search)
 	}
@@ -696,6 +709,9 @@ func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord
 	needsBackfill := false
 	for _, ch := range rec.Config.Channels {
 		if !ChannelEnabled(&ch) {
+			continue
+		}
+		if ChannelDynamic(&ch) {
 			continue
 		}
 		items, backfill, err := r.loadFeedItems(ctx, rec.ID, ch.ID, search)
@@ -718,7 +734,8 @@ func (r *Registry) Feed(
 	ctx context.Context,
 	pluginID, channelID, contentType, search string,
 	scopePluginIDs []string,
-) ([]FeedItem, error) {
+	limit, offset int,
+) (FeedQueryResult, error) {
 	recs := r.List()
 	if len(scopePluginIDs) > 0 {
 		allowed := make(map[string]struct{}, len(scopePluginIDs))
@@ -739,12 +756,13 @@ func (r *Registry) Feed(
 	} else if pluginID != "" && pluginID != "all" {
 		rec, ok := r.Get(pluginID)
 		if !ok {
-			return nil, fmt.Errorf("plugin not found: %s", pluginID)
+			return FeedQueryResult{}, fmt.Errorf("plugin not found: %s", pluginID)
 		}
 		recs = []*PluginRecord{rec}
 	}
 
 	var all []FeedItem
+	prePaged := false
 	for _, rec := range recs {
 		if !rec.Active || rec.ID == "all" {
 			continue
@@ -760,16 +778,46 @@ func (r *Registry) Feed(
 			effectiveChannel = ""
 		}
 
+		if effectiveChannel != "" {
+			if ch, ok := findChannel(rec.Config.Channels, effectiveChannel); ok {
+				isDynamic := ChannelDynamic(ch)
+				log.Printf(
+					"[orbit-feed] channel resolve plugin=%q channel=%q found=%v dynamic=%v route=%q ch_params=%s",
+					rec.ID, effectiveChannel, ok, isDynamic, ch.Route, mustJSON(ch.Params),
+				)
+				if isDynamic {
+					items, err := r.fetchDynamicChannel(ctx, rec, ch, search, limit, offset)
+					if err != nil {
+						return FeedQueryResult{}, err
+					}
+					all = append(all, items...)
+					prePaged = true
+					continue
+				}
+			} else {
+				log.Printf(
+					"[orbit-feed] channel resolve plugin=%q channel=%q found=false",
+					rec.ID, effectiveChannel,
+				)
+			}
+		}
+
+		log.Printf(
+			"[orbit-feed] db path plugin=%q channel=%q q=%q limit=%d offset=%d",
+			rec.ID, effectiveChannel, search, limit, offset,
+		)
 		items, _, err := r.loadFeedItemsForPlugin(ctx, rec, effectiveChannel, search)
 		if err != nil {
-			return nil, err
+			return FeedQueryResult{}, err
 		}
 		all = append(all, items...)
 	}
 
-	sort.Slice(all, func(i, j int) bool {
-		return all[i].PublishedAt > all[j].PublishedAt
-	})
+	if !prePaged {
+		sort.Slice(all, func(i, j int) bool {
+			return all[i].PublishedAt > all[j].PublishedAt
+		})
+	}
 
 	if contentType != "" {
 		filtered := make([]FeedItem, 0, len(all))
@@ -780,7 +828,79 @@ func (r *Registry) Feed(
 		}
 		all = filtered
 	}
-	return all, nil
+
+	total := len(all)
+	hasMore := false
+	if prePaged {
+		total = offset + len(all)
+		page := WasmPageFromOffset(limit, offset)
+		hasMore = len(all) > 0 && page < DynamicSearchMaxPages
+	}
+
+	return FeedQueryResult{
+		Items:    all,
+		Total:    total,
+		HasMore:  hasMore,
+		PrePaged: prePaged,
+	}, nil
+}
+
+func (r *Registry) fetchDynamicChannel(
+	ctx context.Context,
+	rec *PluginRecord,
+	ch *FeedChannel,
+	search string,
+	limit, offset int,
+) ([]FeedItem, error) {
+	search = strings.TrimSpace(search)
+	if search == "" {
+		return []FeedItem{}, nil
+	}
+	if rec.Source != SourceWASM {
+		return nil, fmt.Errorf("dynamic channel requires wasm plugin: %s", rec.ID)
+	}
+	dir, ok := r.getPluginDir(rec.ID)
+	if !ok {
+		return nil, fmt.Errorf("plugin dir not found for %s", rec.ID)
+	}
+	page := WasmPageFromOffset(limit, offset)
+	if page > DynamicSearchMaxPages {
+		log.Printf(
+			"[orbit-feed] dynamic skip page limit plugin=%q channel=%q page=%d max=%d",
+			rec.ID, ch.ID, page, DynamicSearchMaxPages,
+		)
+		return []FeedItem{}, nil
+	}
+	overrides := DynamicSearchWasmOverrides(ch, search, limit, offset)
+	log.Printf(
+		"[orbit-feed] dynamic fetch plugin=%q channel=%q q=%q limit=%d offset=%d wasm_page=%d overrides=%s",
+		rec.ID, ch.ID, search, limit, offset, page, mustJSON(overrides),
+	)
+	items, err := r.wasmExec.FetchChannelWithParams(ctx, dir, rec, ch, overrides)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].ChannelID = ch.ID
+		items[i].IsRead = true
+	}
+	firstID := ""
+	if len(items) > 0 {
+		firstID = items[0].ID
+	}
+	log.Printf(
+		"[orbit-feed] dynamic result plugin=%q channel=%q wasm_page=%d count=%d first_item_id=%q",
+		rec.ID, ch.ID, page, len(items), firstID,
+	)
+	return items, nil
+}
+
+func mustJSON(v any) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	return string(data)
 }
 
 func (r *Registry) MarkFeedItemRead(ctx context.Context, id string) error {

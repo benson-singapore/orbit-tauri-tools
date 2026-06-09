@@ -13,6 +13,8 @@ export interface PluginChannel {
   params?: Record<string, string>;
   itemLimit?: number;
   status?: "enabled" | "disabled";
+  type?: "search" | string;
+  dynamic?: boolean;
 }
 
 export interface Article {
@@ -129,6 +131,7 @@ export interface FeedResponse {
   items: Article[];
   count: number;
   total?: number;
+  hasMore?: boolean;
   unreadTotal?: number;
   limit?: number;
   offset?: number;

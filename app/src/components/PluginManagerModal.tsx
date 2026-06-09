@@ -14,7 +14,7 @@ import {
   installOrbitPackage,
 } from "@/lib/feed";
 import { slugifyChannelId } from "@/lib/channelId";
-import { normalizeChannelStatus, type ChannelStatus } from "@/lib/channelStatus";
+import { isChannelDynamic, normalizeChannelStatus, type ChannelStatus } from "@/lib/channelStatus";
 import { resolveColorToHex } from "@/lib/pluginColor";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
@@ -91,11 +91,15 @@ type WasmChannelFormRow = {
   params: string;
   itemLimit: string;
   status: ChannelStatus;
+  dynamic?: boolean;
+  type?: string;
   idAuto: boolean;
 };
 
 function createWasmChannelRow(
-  partial: Partial<Pick<WasmChannelFormRow, "id" | "label" | "route" | "params" | "itemLimit" | "status">> = {},
+  partial: Partial<
+    Pick<WasmChannelFormRow, "id" | "label" | "route" | "params" | "itemLimit" | "status" | "dynamic" | "type">
+  > = {},
   options?: { idAuto?: boolean },
 ): WasmChannelFormRow {
   const label = partial.label ?? "默认";
@@ -111,6 +115,8 @@ function createWasmChannelRow(
     params: partial.params ?? "",
     itemLimit: partial.itemLimit ?? "100",
     status: partial.status ?? "enabled",
+    dynamic: partial.dynamic,
+    type: partial.type,
     idAuto,
   };
 }
@@ -1059,6 +1065,8 @@ function WasmManifestEditorModal({
           params?: Record<string, string>;
           itemLimit?: number;
           status?: string;
+          dynamic?: boolean;
+          type?: string;
         }[])
       : [];
     if (rawChannels.length > 0) {
@@ -1074,6 +1082,8 @@ function WasmManifestEditorModal({
                 typeof ch.itemLimit === "number" && ch.itemLimit > 0 ? ch.itemLimit : 100,
               ),
               status: normalizeChannelStatus(ch.status),
+              dynamic: ch.dynamic === true ? true : undefined,
+              type: typeof ch.type === "string" && ch.type.trim() ? ch.type.trim() : undefined,
             },
             { idAuto: false },
           ),
@@ -1162,6 +1172,12 @@ function WasmManifestEditorModal({
       }
       if (ch.status === "disabled") {
         item.status = "disabled";
+      }
+      if (ch.dynamic === true) {
+        item.dynamic = true;
+      }
+      if (ch.type === "search") {
+        item.type = "search";
       }
       return item;
     });
@@ -1551,7 +1567,7 @@ function WasmManifestEditorModal({
                               <th className={`px-4 py-2.5 text-left font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
                                 抓取数量上限
                               </th>
-                              <th className={`px-4 py-2.5 text-left font-semibold w-20 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              <th className={`px-4 py-2.5 text-left font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
                                 状态
                               </th>
                               <th className={`px-4 py-2.5 text-right font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
@@ -1610,19 +1626,33 @@ function WasmManifestEditorModal({
                                 </td>
                                 <td className="px-4 py-3">{ch.itemLimit.trim() || "100"}</td>
                                 <td className="px-4 py-3">
-                                  <span
-                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                                      ch.status === "disabled"
-                                        ? isDark
-                                          ? "bg-neutral-800 text-neutral-400"
-                                          : "bg-neutral-100 text-neutral-500"
-                                        : isDark
-                                          ? "bg-emerald-950/40 text-emerald-400"
-                                          : "bg-emerald-50 text-emerald-700"
-                                    }`}
-                                  >
-                                    {ch.status === "disabled" ? "停用" : "启用"}
-                                  </span>
+                                  <div className="flex flex-wrap items-center gap-1.5">
+                                    <span
+                                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                        ch.status === "disabled"
+                                          ? isDark
+                                            ? "bg-neutral-800 text-neutral-400"
+                                            : "bg-neutral-100 text-neutral-500"
+                                          : isDark
+                                            ? "bg-emerald-950/40 text-emerald-400"
+                                            : "bg-emerald-50 text-emerald-700"
+                                      }`}
+                                    >
+                                      {ch.status === "disabled" ? "停用" : "启用"}
+                                    </span>
+                                    {isChannelDynamic(ch) && (
+                                      <span
+                                        title="dynamic: true"
+                                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                          isDark
+                                            ? "bg-amber-950/40 text-amber-400"
+                                            : "bg-amber-50 text-amber-700"
+                                        }`}
+                                      >
+                                        动态
+                                      </span>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="px-4 py-3">
                                   <div className="flex items-center justify-end gap-3">

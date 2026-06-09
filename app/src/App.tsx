@@ -8,7 +8,7 @@ import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { dedupeCoverImageFromContent } from "@/lib/articleContent";
 import { isVideoPluginChannel, resolveYouTubeVideoId } from "@/lib/youtube";
-import { isChannelEnabled } from "@/lib/channelStatus";
+import { isChannelDynamic, isChannelEnabled } from "@/lib/channelStatus";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import {
@@ -53,14 +53,16 @@ export default function App() {
   const [activeChannel, setActiveChannel] = useState("all");
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [submittedSearch, setSubmittedSearch] = useState("");
 
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setDebouncedSearch(searchQuery.trim());
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [searchQuery]);
+  const commitSearch = () => {
+    setSubmittedSearch(searchQuery.trim());
+  };
+
+  const clearSearch = () => {
+    setSearchQuery("");
+    setSubmittedSearch("");
+  };
 
   const feedContentType =
     activePlugin === "all" && activeCategory !== "all"
@@ -87,6 +89,7 @@ export default function App() {
     unreadTotal,
     feedTotal,
     loading: feedLoading,
+    searching: feedSearching,
     loadingMore: feedLoadingMore,
     hasMore: feedHasMore,
     error: feedError,
@@ -107,7 +110,7 @@ export default function App() {
     activePlugin,
     activeChannel,
     feedContentType,
-    debouncedSearch,
+    submittedSearch,
     activePluginGroupId,
     getPluginGroupId,
   );
@@ -276,6 +279,13 @@ export default function App() {
     if (activePlugin === "all") return [];
     return (pluginById.get(activePlugin)?.channels ?? []).filter(ch => isChannelEnabled(ch.status));
   }, [activePlugin, pluginById]);
+
+  const activeChannelMeta = useMemo(() => {
+    if (activePlugin === "all" || activeChannel === "all") return undefined;
+    return activePluginChannels.find(ch => ch.id === activeChannel);
+  }, [activePlugin, activeChannel, activePluginChannels]);
+
+  const isActiveDynamicChannel = isChannelDynamic(activeChannelMeta);
 
   useEffect(() => {
     if (activeChannel === "all") return;
@@ -460,6 +470,11 @@ export default function App() {
         stored
         && (stored === "all" || channels.some(ch => ch.id === stored))
       ) {
+        if (stored === "all") return "all";
+        const storedChannel = channels.find(ch => ch.id === stored);
+        if (storedChannel && isChannelDynamic(storedChannel)) {
+          return "all";
+        }
         return stored;
       }
       return "all";
@@ -470,14 +485,34 @@ export default function App() {
   const selectChannel = useCallback(
     (channelId: string) => {
       setActiveChannel(channelId);
-      if (activePlugin !== "all") {
+      if (activePlugin === "all") return;
+      if (channelId === "all") {
+        persistPluginChannel(activePlugin, channelId);
+        return;
+      }
+      const channel = (pluginById.get(activePlugin)?.channels ?? []).find(
+        ch => ch.id === channelId,
+      );
+      if (channel && !isChannelDynamic(channel)) {
         persistPluginChannel(activePlugin, channelId);
       }
     },
-    [activePlugin],
+    [activePlugin, pluginById],
   );
 
   const selectPlugin = (pluginId: string, groupId?: string) => {
+    if (
+      activePlugin !== "all"
+      && activePlugin !== pluginId
+      && activeChannel !== "all"
+    ) {
+      const leavingChannel = (pluginById.get(activePlugin)?.channels ?? []).find(
+        ch => ch.id === activeChannel,
+      );
+      if (isChannelDynamic(leavingChannel)) {
+        persistPluginChannel(activePlugin, "all");
+      }
+    }
     setActivePlugin(pluginId);
     if (pluginId === "all") {
       setActiveChannel("all");
@@ -871,12 +906,18 @@ export default function App() {
                   type="text" 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="搜索文章标题、摘要、标签…"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitSearch();
+                    }
+                  }}
+                  placeholder="搜索文章标题、摘要、标签…（回车搜索）"
                   className="w-full py-1.5 bg-transparent text-sm outline-none placeholder-neutral-400 dark:placeholder-neutral-500"
                 />
                 {searchQuery && (
                   <button 
-                    onClick={() => setSearchQuery('')}
+                    onClick={clearSearch}
                     className="p-1 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-full"
                   >
                     <Icon name="close" className="w-3.5 h-3.5 text-neutral-500" />
@@ -949,7 +990,7 @@ export default function App() {
             {/* Scrollable list of feeds */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
               <div className="flex items-center justify-between text-xs text-neutral-400 mb-2">
-                <span>
+                <span className="inline-flex items-center gap-1.5 min-w-0">
                   {activeTab === "bookmarks"
                     ? "收藏的文章"
                     : activeTab === "trending"
@@ -959,15 +1000,27 @@ export default function App() {
                         : activePlugin === "all"
                           ? "Today 全部文章"
                           : pluginById.get(activePlugin)?.name ?? "文章列表"}
+                  {isActiveDynamicChannel && (
+                    <span
+                      title="实时搜索"
+                      className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-amber-100 dark:bg-amber-900/40 text-amber-600 dark:text-amber-400 shrink-0"
+                    >
+                      <Icon name="sparkles" className="w-2.5 h-2.5" />
+                    </span>
+                  )}
                 </span>
-                <span>共 {debouncedSearch ? feedTotal : filteredArticles.length} 篇</span>
+                <span>
+                  {isActiveDynamicChannel
+                    ? submittedSearch
+                      ? `共 ${feedTotal} 条结果`
+                      : "实时搜索"
+                    : `共 ${submittedSearch ? feedTotal : filteredArticles.length} 篇`}
+                </span>
               </div>
 
               {feedLoading ? (
                 <div className="text-center py-12">
-                  <p className="text-sm text-neutral-400">
-                    {debouncedSearch ? "正在搜索…" : "正在拉取 RSS 订阅…"}
-                  </p>
+                  <p className="text-sm text-neutral-400">正在拉取 RSS 订阅…</p>
                 </div>
               ) : feedError ? (
                 <div className="text-center py-12 px-4">
@@ -979,10 +1032,19 @@ export default function App() {
                   <div className="w-12 h-12 rounded-full bg-neutral-50 dark:bg-neutral-800 flex items-center justify-center mx-auto mb-3">
                     <Icon name="search" className="w-6 h-6 text-neutral-400" />
                   </div>
-                  <p className="text-sm text-neutral-400">未找到符合条件的资讯资源</p>
+                  <p className="text-sm text-neutral-400">
+                    {feedSearching
+                      ? "正在搜索…"
+                      : isActiveDynamicChannel && !submittedSearch
+                        ? "输入关键词后按回车进行实时搜索"
+                        : "未找到符合条件的资讯资源"}
+                  </p>
                 </div>
               ) : (
                 <>
+                  {feedSearching && (
+                    <p className="text-center text-xs text-neutral-400 py-1">正在搜索…</p>
+                  )}
                   {filteredArticles.map((item) => {
                     const isSelected = selectedItem && selectedItem.id === item.id;
                     const isUnread = !item.isRead;
