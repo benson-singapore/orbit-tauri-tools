@@ -36,14 +36,15 @@ type Manifest struct {
 }
 
 type ManifestConfig struct {
-	Channels        []FeedChannel `json:"channels"`
-	DefaultChannel  string        `json:"defaultChannel,omitempty"`
-	RefreshInterval int           `json:"refreshInterval"` // seconds, default 3600
-	UserAgent       string        `json:"userAgent"`
-	LegacyFeedURL   string        `json:"feedUrl,omitempty"` // migrated to channels on load; not persisted after save
-	ExecutionMode   string        `json:"executionMode,omitempty"` // wasm | browser | hybrid (Phase 3)
-	Wasm            WasmConfig    `json:"wasm,omitempty"`
-	Browser         BrowserConfig `json:"browser,omitempty"`
+	Channels        []FeedChannel     `json:"channels"`
+	DefaultChannel  string            `json:"defaultChannel,omitempty"`
+	RefreshInterval int               `json:"refreshInterval"` // seconds, default 3600
+	UserAgent       string            `json:"userAgent"`
+	Secrets         map[string]string `json:"secrets,omitempty"`
+	LegacyFeedURL   string            `json:"feedUrl,omitempty"` // migrated to channels on load; not persisted after save
+	ExecutionMode   string            `json:"executionMode,omitempty"` // wasm | browser | hybrid (Phase 3)
+	Wasm            WasmConfig        `json:"wasm,omitempty"`
+	Browser         BrowserConfig     `json:"browser,omitempty"`
 }
 
 // WasmConfig describes the WASM binary for source=wasm plugins.

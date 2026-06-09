@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { marked } from "marked";
 import { Icon } from "@/components/Icon";
@@ -12,9 +12,11 @@ interface PluginReadmeModalProps {
   theme: ThemeMode;
   plugin: Plugin;
   onClose: () => void;
+  /** 親モーダル上に重ねる場合は portal を使わず、クリック伝播を遮断する */
+  nested?: boolean;
 }
 
-export function PluginReadmeModal({ theme, plugin, onClose }: PluginReadmeModalProps) {
+export function PluginReadmeModal({ theme, plugin, onClose, nested = false }: PluginReadmeModalProps) {
   const isDark = theme === "dark";
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
@@ -63,10 +65,19 @@ export function PluginReadmeModal({ theme, plugin, onClose }: PluginReadmeModalP
     }
   }, [loading, html]);
 
-  return createPortal(
+  const handleBackdropClick = (event: MouseEvent) => {
+    event.stopPropagation();
+    onClose();
+  };
+
+  const modal = (
     <div
-      className="fixed inset-0 z-[100] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6"
-      onClick={onClose}
+      className={`fixed inset-0 flex items-center justify-center p-6 ${
+        nested
+          ? "z-[85] bg-black/40 backdrop-blur-[2px]"
+          : "z-[100] bg-black/55 backdrop-blur-sm"
+      }`}
+      onClick={handleBackdropClick}
     >
       <div
         className={`w-full max-w-6xl h-[min(820px,88vh)] flex flex-col rounded-[28px] border shadow-2xl overflow-hidden ${panelBg} ${subtleBorder}`}
@@ -81,12 +92,15 @@ export function PluginReadmeModal({ theme, plugin, onClose }: PluginReadmeModalP
               {plugin.name} — 使用说明
             </h3>
             <p className={`text-[11px] mt-0.5 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-              插件配置与频道说明文档
+              {nested ? "点击空白处关闭，可继续编辑 manifest" : "插件配置与频道说明文档"}
             </p>
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={e => {
+              e.stopPropagation();
+              onClose();
+            }}
             className={`shrink-0 p-2 rounded-xl transition-colors ${
               isDark ? "hover:bg-neutral-800 text-neutral-400" : "hover:bg-neutral-100 text-neutral-500"
             }`}
@@ -119,7 +133,8 @@ export function PluginReadmeModal({ theme, plugin, onClose }: PluginReadmeModalP
           )}
         </div>
       </div>
-    </div>,
-    document.body,
+    </div>
   );
+
+  return nested ? modal : createPortal(modal, document.body);
 }

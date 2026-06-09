@@ -12,6 +12,7 @@ export interface PluginChannel {
   route?: string;
   params?: Record<string, string>;
   itemLimit?: number;
+  status?: "enabled" | "disabled";
 }
 
 export interface Article {

@@ -438,6 +438,12 @@ func cloneRecord(rec *PluginRecord) *PluginRecord {
 	cp := *rec
 	cp.Capabilities = append([]string(nil), rec.Capabilities...)
 	cp.Config.Channels = append([]FeedChannel(nil), rec.Config.Channels...)
+	if len(rec.Config.Secrets) > 0 {
+		cp.Config.Secrets = make(map[string]string, len(rec.Config.Secrets))
+		for k, v := range rec.Config.Secrets {
+			cp.Config.Secrets[k] = v
+		}
+	}
 	return &cp
 }
 
@@ -608,6 +614,9 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 		if !ok {
 			return nil, fmt.Errorf("channel not found: %s", channelID)
 		}
+		if !ChannelEnabled(ch) {
+			return []FeedItem{}, nil
+		}
 		items, err := r.refreshChannel(ctx, rec, ch)
 		if err != nil {
 			return nil, err
@@ -615,6 +624,9 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 		all = items
 	} else {
 		for _, ch := range channels {
+			if !ChannelEnabled(&ch) {
+				continue
+			}
 			items, err := r.refreshChannel(ctx, rec, &ch)
 			if err != nil {
 				refreshErr = err
@@ -675,11 +687,17 @@ func (r *Registry) refreshChannel(ctx context.Context, rec *PluginRecord, ch *Fe
 func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord, channelID, search string) ([]FeedItem, bool, error) {
 	channelID = ResolveChannelID(&rec.Config, channelID)
 	if channelID != "" {
+		if ch, ok := findChannel(rec.Config.Channels, channelID); ok && !ChannelEnabled(ch) {
+			return []FeedItem{}, false, nil
+		}
 		return r.loadFeedItems(ctx, rec.ID, channelID, search)
 	}
 	var all []FeedItem
 	needsBackfill := false
 	for _, ch := range rec.Config.Channels {
+		if !ChannelEnabled(&ch) {
+			continue
+		}
 		items, backfill, err := r.loadFeedItems(ctx, rec.ID, ch.ID, search)
 		if err != nil {
 			return nil, false, err

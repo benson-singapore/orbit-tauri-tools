@@ -80,7 +80,7 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		MediaType:       rec.MediaType,
 		Active:          rec.Active,
 		Desc:            rec.Meta.Description,
-		Channels:        rec.Config.Channels,
+		Channels:        plugin.EnabledChannels(rec.Config.Channels),
 		DefaultChannel:  rec.Config.DefaultChannel,
 		RefreshInterval: rec.Config.RefreshInterval,
 		UserAgent:       rec.Config.UserAgent,
@@ -347,6 +347,25 @@ func (s *Server) handlePluginByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"content": content})
+		return
+	}
+
+	if strings.HasSuffix(rest, "/manifest/restore-default") {
+		id := strings.TrimSuffix(rest, "/manifest/restore-default")
+		id = strings.TrimSuffix(id, "/")
+		if r.Method != http.MethodPost {
+			writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
+			return
+		}
+		client := market.NewClient()
+		data, err := s.registry.GetDefaultManifestJSON(r.Context(), id, client.DownloadOrbitPackage)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
 		return
 	}
 

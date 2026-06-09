@@ -231,6 +231,18 @@ export async function fetchPluginManifest(id: string): Promise<string> {
   return res.text();
 }
 
+export async function fetchPluginDefaultManifest(id: string): Promise<string> {
+  const base = await apiBase();
+  const res = await fetch(
+    `${base}/v1/plugins/${encodeURIComponent(id)}/manifest/restore-default`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  return res.text();
+}
+
 export async function fetchPluginReadme(id: string): Promise<string> {
   const base = await apiBase();
   const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/readme`);

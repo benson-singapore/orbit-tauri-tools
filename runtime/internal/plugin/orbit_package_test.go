@@ -32,6 +32,9 @@ func TestExtractOrbitPackage_Juejin(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "manifest.json")); err != nil {
 		t.Fatalf("manifest missing: %v", err)
 	}
+	if _, err := os.Stat(filepath.Join(dir, defaultManifestFileName)); err != nil {
+		t.Fatalf("default manifest missing: %v", err)
+	}
 	if m.Meta.LogoImageURL == "" {
 		t.Fatal("expected iconUrl alias to populate logoImageUrl")
 	}

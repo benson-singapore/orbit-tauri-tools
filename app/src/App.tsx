@@ -8,12 +8,17 @@ import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { dedupeCoverImageFromContent } from "@/lib/articleContent";
 import { isVideoPluginChannel, resolveYouTubeVideoId } from "@/lib/youtube";
+import { isChannelEnabled } from "@/lib/channelStatus";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import {
   persistIgnoredArticleIds,
   readIgnoredArticleIds,
 } from "@/lib/ignoredArticles";
+import {
+  getStoredPluginChannel,
+  persistPluginChannel,
+} from "@/lib/pluginChannelMemory";
 import {
   READER_FONT_SCALE_DEFAULT,
   READER_FONT_SCALE_MAX,
@@ -269,8 +274,18 @@ export default function App() {
 
   const activePluginChannels = useMemo(() => {
     if (activePlugin === "all") return [];
-    return pluginById.get(activePlugin)?.channels ?? [];
+    return (pluginById.get(activePlugin)?.channels ?? []).filter(ch => isChannelEnabled(ch.status));
   }, [activePlugin, pluginById]);
+
+  useEffect(() => {
+    if (activeChannel === "all") return;
+    if (!activePluginChannels.some(ch => ch.id === activeChannel)) {
+      setActiveChannel("all");
+      if (activePlugin !== "all") {
+        persistPluginChannel(activePlugin, "all");
+      }
+    }
+  }, [activeChannel, activePluginChannels, activePlugin]);
 
   const showPluginChannelBar = activePluginChannels.length > 1;
 
@@ -435,15 +450,43 @@ export default function App() {
     setShowPluginStore(false);
   };
 
+  const resolvePluginChannel = useCallback(
+    (pluginId: string): string => {
+      const channels = (pluginById.get(pluginId)?.channels ?? []).filter(ch =>
+        isChannelEnabled(ch.status),
+      );
+      const stored = getStoredPluginChannel(pluginId);
+      if (
+        stored
+        && (stored === "all" || channels.some(ch => ch.id === stored))
+      ) {
+        return stored;
+      }
+      return "all";
+    },
+    [pluginById],
+  );
+
+  const selectChannel = useCallback(
+    (channelId: string) => {
+      setActiveChannel(channelId);
+      if (activePlugin !== "all") {
+        persistPluginChannel(activePlugin, channelId);
+      }
+    },
+    [activePlugin],
+  );
+
   const selectPlugin = (pluginId: string, groupId?: string) => {
     setActivePlugin(pluginId);
-    setActiveChannel("all");
     if (pluginId === "all") {
+      setActiveChannel("all");
       if (groupId) {
         setActivePluginGroupId(groupId);
       }
       return;
     }
+    setActiveChannel(resolvePluginChannel(pluginId));
     setActivePluginGroupId(groupId ?? getPluginGroupId(pluginId));
     setShowPluginStore(false);
   };
@@ -874,7 +917,7 @@ export default function App() {
                       <>
                         <button
                           type="button"
-                          onClick={() => setActiveChannel("all")}
+                          onClick={() => selectChannel("all")}
                           className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                             activeChannel === "all"
                               ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm"
@@ -887,7 +930,7 @@ export default function App() {
                           <button
                             key={ch.id}
                             type="button"
-                            onClick={() => setActiveChannel(ch.id)}
+                            onClick={() => selectChannel(ch.id)}
                             className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                               activeChannel === ch.id
                                 ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm"

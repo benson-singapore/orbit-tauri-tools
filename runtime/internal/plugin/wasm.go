@@ -36,6 +36,26 @@ type wasmFetchData struct {
 	ChannelID string            `json:"channelId"`
 	Route     string            `json:"route"`
 	Params    map[string]string `json:"params"`
+	Secrets   map[string]string `json:"secrets,omitempty"`
+}
+
+func buildWasmFetchData(rec *PluginRecord, ch *FeedChannel) wasmFetchData {
+	params := make(map[string]string, len(ch.Params))
+	for k, v := range ch.Params {
+		params[k] = v
+	}
+	data := wasmFetchData{
+		ChannelID: ch.ID,
+		Route:     ch.Route,
+		Params:    params,
+	}
+	if rec != nil && len(rec.Config.Secrets) > 0 {
+		data.Secrets = make(map[string]string, len(rec.Config.Secrets))
+		for k, v := range rec.Config.Secrets {
+			data.Secrets[k] = v
+		}
+	}
+	return data
 }
 
 type wasmResponse struct {
@@ -114,15 +134,7 @@ func (e *WASMExecutor) FetchChannel(ctx context.Context, pluginDir string, rec *
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	params := make(map[string]string, len(ch.Params))
-	for k, v := range ch.Params {
-		params[k] = v
-	}
-	reqData, _ := json.Marshal(wasmFetchData{
-		ChannelID: ch.ID,
-		Route:     ch.Route,
-		Params:    params,
-	})
+	reqData, _ := json.Marshal(buildWasmFetchData(rec, ch))
 	env, _ := json.Marshal(wasmEnvelope{Action: "fetch", Data: reqData})
 
 	raw, err := e.run(runCtx, data, string(env)+"\n", rec, timeout)

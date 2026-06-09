@@ -7,8 +7,15 @@ import {
   fetchPluginTypeDicts,
   parseMarketPluginZhTags,
 } from "@/lib/orbitApi";
-import { fetchPluginManifest, installOrbitPackage } from "@/lib/feed";
+import {
+  fetchPluginDefaultManifest,
+  fetchPluginManifest,
+  fetchPluginReadme,
+  installOrbitPackage,
+} from "@/lib/feed";
 import { slugifyChannelId } from "@/lib/channelId";
+import { normalizeChannelStatus, type ChannelStatus } from "@/lib/channelStatus";
+import { resolveColorToHex } from "@/lib/pluginColor";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
 import { DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
@@ -25,6 +32,10 @@ import type {
 
 const MODAL_HEIGHT = "h-[660px]";
 const PRIMARY = "bg-[#5856D6] hover:bg-[#4a48c4]";
+
+/** カラーピッカーを正方形で表示する */
+const COLOR_PICKER_CLASS =
+  "h-10 w-10 shrink-0 rounded-xl border border-neutral-200 p-0.5 bg-white cursor-pointer [&::-webkit-color-swatch-wrapper]:p-0 [&::-webkit-color-swatch]:rounded-lg [&::-webkit-color-swatch]:border-none [&::-moz-color-swatch]:rounded-lg [&::-moz-color-swatch]:border-none";
 
 function isHttpUrl(value: string): boolean {
   try {
@@ -79,11 +90,12 @@ type WasmChannelFormRow = {
   route: string;
   params: string;
   itemLimit: string;
+  status: ChannelStatus;
   idAuto: boolean;
 };
 
 function createWasmChannelRow(
-  partial: Partial<Pick<WasmChannelFormRow, "id" | "label" | "route" | "params" | "itemLimit">> = {},
+  partial: Partial<Pick<WasmChannelFormRow, "id" | "label" | "route" | "params" | "itemLimit" | "status">> = {},
   options?: { idAuto?: boolean },
 ): WasmChannelFormRow {
   const label = partial.label ?? "默认";
@@ -98,6 +110,7 @@ function createWasmChannelRow(
     route: partial.route ?? "",
     params: partial.params ?? "",
     itemLimit: partial.itemLimit ?? "100",
+    status: partial.status ?? "enabled",
     idAuto,
   };
 }
@@ -771,6 +784,208 @@ function PluginSection(props: PluginSectionProps) {
   );
 }
 
+type WasmChannelEditorState =
+  | { mode: "add" }
+  | { mode: "edit"; key: string };
+
+function WasmChannelEditorModal({
+  theme,
+  mode,
+  initialRow,
+  onClose,
+  onSave,
+}: {
+  theme: ThemeMode;
+  mode: "add" | "edit";
+  initialRow: WasmChannelFormRow;
+  onClose: () => void;
+  onSave: (row: WasmChannelFormRow) => void;
+}) {
+  const isDark = theme === "dark";
+  const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+  const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
+  const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
+  const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
+  const inputBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+  const inputText = isDark ? "text-neutral-100 placeholder:text-neutral-500" : "text-neutral-900 placeholder:text-neutral-400";
+
+  const [draft, setDraft] = useState<WasmChannelFormRow>(initialRow);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = () => {
+    const id = draft.id.trim();
+    const label = draft.label.trim();
+    const route = draft.route.trim();
+
+    if (!id || !label || !route) {
+      setError("请填写 ID、名称与 route");
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) {
+      setError(`频道 ID「${id}」格式无效`);
+      return;
+    }
+    try {
+      if (draft.params.trim()) {
+        parseWasmChannelParams(draft.params);
+      }
+    } catch (e) {
+      setError(`params 无效：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+
+    onSave({
+      ...draft,
+      id,
+      label,
+      route,
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6"
+      onClick={e => {
+        e.stopPropagation();
+        onClose();
+      }}
+    >
+      <div
+        className={`w-full max-w-lg rounded-[24px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className={`px-6 py-4 border-b ${subtleBorder}`}>
+          <h4 className="text-sm font-semibold">{mode === "add" ? "添加频道" : "编辑频道"}</h4>
+          <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+            配置频道 ID、名称、route、params、状态与抓取数量上限
+          </p>
+        </div>
+
+        <div className="px-6 py-5 space-y-4 max-h-[min(520px,70vh)] overflow-y-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                显示名称
+              </label>
+              <input
+                value={draft.label}
+                onChange={e => {
+                  const v = e.target.value;
+                  setDraft(prev => {
+                    const slug = slugifyChannelId(v);
+                    const synced = isWasmChannelIdSyncedWithLabel(prev);
+                    return {
+                      ...prev,
+                      label: v,
+                      ...(synced && slug ? { id: slug, idAuto: true } : {}),
+                    };
+                  });
+                }}
+                placeholder="显示名称"
+                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                ID
+              </label>
+              <input
+                value={draft.id}
+                onChange={e => {
+                  const v = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+                  setDraft(prev => ({ ...prev, id: v, idAuto: false }));
+                }}
+                placeholder="id（根据名称自动生成）"
+                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText} ${
+                  draft.idAuto ? (isDark ? "text-neutral-400" : "text-neutral-500") : ""
+                }`}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+              route
+            </label>
+            <input
+              value={draft.route}
+              onChange={e => setDraft(prev => ({ ...prev, route: e.target.value }))}
+              placeholder="/plugin/route"
+              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+              params（JSON 对象，可选）
+            </label>
+            <input
+              value={draft.params}
+              onChange={e => setDraft(prev => ({ ...prev, params: e.target.value }))}
+              placeholder='{"category":"frontend"}'
+              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 font-mono ${inputBg} ${inputBorder} ${inputText}`}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+              状态 status（默认 enabled）
+            </label>
+            <StyledSelect
+              value={draft.status}
+              onChange={e =>
+                setDraft(prev => ({
+                  ...prev,
+                  status: normalizeChannelStatus(e.target.value),
+                }))
+              }
+              className={`${inputBg} ${inputBorder} ${inputText}`}
+            >
+              <option value="enabled">启用</option>
+              <option value="disabled">停用</option>
+            </StyledSelect>
+          </div>
+
+          <div className="space-y-1">
+            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+              抓取数量上限 itemLimit（默认 100）
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={draft.itemLimit}
+              onChange={e => setDraft(prev => ({ ...prev, itemLimit: e.target.value }))}
+              placeholder="100"
+              className={`w-full sm:w-40 px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+            />
+          </div>
+
+          {error ? <p className="text-xs text-rose-500">{error}</p> : null}
+        </div>
+
+        <div className={`px-6 py-4 flex items-center justify-end gap-3 border-t ${subtleBorder} ${mutedBg}`}>
+          <button
+            type="button"
+            onClick={onClose}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} ${
+              isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+            }`}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY}`}
+          >
+            {mode === "add" ? "添加" : "保存"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WasmManifestEditorModal({
   theme,
   plugin,
@@ -793,20 +1008,25 @@ function WasmManifestEditorModal({
   const baseManifestRef = useRef<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"form" | "json">("form");
   const [jsonText, setJsonText] = useState("");
   const [isEditingJson, setIsEditingJson] = useState(false);
 
   const [pluginName, setPluginName] = useState("");
-  const [version, setVersion] = useState("1.0.0");
   const [mediaType, setMediaType] = useState<NonNullable<InstallRSSPluginRequest["mediaType"]>>("article");
   const [channels, setChannels] = useState<WasmChannelFormRow[]>([
     createWasmChannelRow({ label: "默认" }, { idAuto: true }),
   ]);
+  const [channelEditor, setChannelEditor] = useState<WasmChannelEditorState | null>(null);
+  const [draggingChannelKey, setDraggingChannelKey] = useState<string | null>(null);
+  const [dragOverChannelKey, setDragOverChannelKey] = useState<string | null>(null);
   const [defaultChannel, setDefaultChannel] = useState("");
   const [refreshInterval, setRefreshInterval] = useState("3600");
   const [userAgent, setUserAgent] = useState("");
+  const [hasSecretsApiKey, setHasSecretsApiKey] = useState(false);
+  const [secretsApiKey, setSecretsApiKey] = useState("");
   const [executionMode, setExecutionMode] = useState("wasm");
   const [wasmEntry, setWasmEntry] = useState("plugin.wasm");
   const [wasmTimeoutMs, setWasmTimeoutMs] = useState("30000");
@@ -817,6 +1037,8 @@ function WasmManifestEditorModal({
   const [description, setDescription] = useState("");
   const [color, setColor] = useState("#7c3aed");
   const [logoImageUrl, setLogoImageUrl] = useState("");
+  const [hasReadme, setHasReadme] = useState(false);
+  const [showReadme, setShowReadme] = useState(false);
 
   const applyManifestToForm = (raw: Record<string, unknown>) => {
     const config = (raw.config ?? {}) as Record<string, unknown>;
@@ -824,14 +1046,20 @@ function WasmManifestEditorModal({
     const wasm = (config.wasm ?? {}) as Record<string, unknown>;
 
     setPluginName(typeof raw.name === "string" ? raw.name : "");
-    setVersion(typeof raw.version === "string" ? raw.version : "1.0.0");
     const nextMediaType = typeof raw.mediaType === "string" ? raw.mediaType : "article";
     if (nextMediaType === "article" || nextMediaType === "manga" || nextMediaType === "video" || nextMediaType === "audio") {
       setMediaType(nextMediaType);
     }
 
     const rawChannels = Array.isArray(config.channels)
-      ? (config.channels as { id?: string; label?: string; route?: string; params?: Record<string, string>; itemLimit?: number }[])
+      ? (config.channels as {
+          id?: string;
+          label?: string;
+          route?: string;
+          params?: Record<string, string>;
+          itemLimit?: number;
+          status?: string;
+        }[])
       : [];
     if (rawChannels.length > 0) {
       setChannels(
@@ -845,6 +1073,7 @@ function WasmManifestEditorModal({
               itemLimit: String(
                 typeof ch.itemLimit === "number" && ch.itemLimit > 0 ? ch.itemLimit : 100,
               ),
+              status: normalizeChannelStatus(ch.status),
             },
             { idAuto: false },
           ),
@@ -861,6 +1090,14 @@ function WasmManifestEditorModal({
         : 3600;
     setRefreshInterval(String(nextRefresh));
     setUserAgent(typeof config.userAgent === "string" ? config.userAgent : "");
+    const secrets = config.secrets as Record<string, unknown> | undefined;
+    if (secrets != null && typeof secrets === "object" && "apiKey" in secrets) {
+      setHasSecretsApiKey(true);
+      setSecretsApiKey(typeof secrets.apiKey === "string" ? secrets.apiKey : "");
+    } else {
+      setHasSecretsApiKey(false);
+      setSecretsApiKey("");
+    }
     setExecutionMode(typeof config.executionMode === "string" ? config.executionMode : "wasm");
     setWasmEntry(typeof wasm.entry === "string" ? wasm.entry : "plugin.wasm");
     setWasmTimeoutMs(
@@ -893,7 +1130,7 @@ function WasmManifestEditorModal({
         : typeof meta.iconColor === "string"
           ? meta.iconColor
           : "#7c3aed";
-    setColor(nextColor);
+    setColor(resolveColorToHex(nextColor));
     const nextLogo =
       typeof meta.logoImageUrl === "string"
         ? meta.logoImageUrl
@@ -906,7 +1143,6 @@ function WasmManifestEditorModal({
   const buildManifestFromForm = (): Record<string, unknown> => {
     const manifest = JSON.parse(JSON.stringify(baseManifestRef.current)) as Record<string, unknown>;
     manifest.name = pluginName.trim() || manifest.name;
-    manifest.version = version.trim() || "1.0.0";
     manifest.mediaType = mediaType;
 
     const config = (manifest.config ?? {}) as Record<string, unknown>;
@@ -924,6 +1160,9 @@ function WasmManifestEditorModal({
       if (Number.isFinite(parsedLimit) && parsedLimit > 0) {
         item.itemLimit = parsedLimit;
       }
+      if (ch.status === "disabled") {
+        item.status = "disabled";
+      }
       return item;
     });
     const dc = defaultChannel.trim();
@@ -936,6 +1175,11 @@ function WasmManifestEditorModal({
     config.refreshInterval =
       Number.isFinite(parsedRefresh) && parsedRefresh > 0 ? parsedRefresh : 3600;
     config.userAgent = userAgent.trim();
+    if (hasSecretsApiKey) {
+      const secrets = (config.secrets ?? {}) as Record<string, unknown>;
+      secrets.apiKey = secretsApiKey.trim();
+      config.secrets = secrets;
+    }
     const mode = executionMode.trim();
     if (mode) {
       config.executionMode = mode;
@@ -1015,6 +1259,28 @@ function WasmManifestEditorModal({
   }, [plugin.id]);
 
   useEffect(() => {
+    if (plugin.source !== "wasm") {
+      setHasReadme(false);
+      return;
+    }
+    let cancelled = false;
+    void fetchPluginReadme(plugin.id)
+      .then(() => {
+        if (!cancelled) {
+          setHasReadme(true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setHasReadme(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [plugin.id, plugin.source]);
+
+  useEffect(() => {
     if (loading || isEditingJson || viewMode !== "form") return;
     setJsonText(buildManifestJsonText());
   }, [
@@ -1022,12 +1288,13 @@ function WasmManifestEditorModal({
     isEditingJson,
     viewMode,
     pluginName,
-    version,
     mediaType,
     channels,
     defaultChannel,
     refreshInterval,
     userAgent,
+    hasSecretsApiKey,
+    secretsApiKey,
     executionMode,
     wasmEntry,
     wasmTimeoutMs,
@@ -1039,6 +1306,28 @@ function WasmManifestEditorModal({
     color,
     logoImageUrl,
   ]);
+
+  const handleChannelDropReorder = (targetKey: string) => {
+    if (!draggingChannelKey || draggingChannelKey === targetKey) {
+      setDragOverChannelKey(null);
+      return;
+    }
+    const fromIndex = channels.findIndex(ch => ch._key === draggingChannelKey);
+    const toIndex = channels.findIndex(ch => ch._key === targetKey);
+    if (fromIndex < 0 || toIndex < 0) {
+      setDragOverChannelKey(null);
+      return;
+    }
+
+    setChannels(prev => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      if (!moved) return prev;
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+    setDragOverChannelKey(null);
+  };
 
   const validateBeforeSave = (): string | null => {
     if (viewMode === "json") {
@@ -1083,6 +1372,10 @@ function WasmManifestEditorModal({
       return "刷新间隔需为正整数（秒）";
     }
 
+    if (hasSecretsApiKey && !secretsApiKey.trim()) {
+      return "请填写 API Key（config.secrets.apiKey）";
+    }
+
     return null;
   };
 
@@ -1108,17 +1401,60 @@ function WasmManifestEditorModal({
     }
   };
 
+  const handleRestoreDefault = async () => {
+    if (
+      !window.confirm(
+        "确定恢复为默认 manifest 配置？当前未保存的修改将被替换，需点击「保存 manifest」后才会写入磁盘。",
+      )
+    ) {
+      return;
+    }
+    setRestoring(true);
+    setError(null);
+    try {
+      const text = await fetchPluginDefaultManifest(plugin.id);
+      const parsed = JSON.parse(text) as Record<string, unknown>;
+      baseManifestRef.current = parsed;
+      applyManifestToForm(parsed);
+      setJsonText(JSON.stringify(parsed, null, 2));
+      setIsEditingJson(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRestoring(false);
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-[70] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-[70] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6"
+      onClick={() => {
+        if (!showReadme && !channelEditor) {
+          onClose();
+        }
+      }}
+    >
       <div
-        className={`w-full max-w-6xl h-[690px] rounded-[28px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
+        className={`w-full max-w-6xl h-[min(820px,92vh)] rounded-[28px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
         onClick={e => e.stopPropagation()}
       >
         <div className={`h-[72px] px-6 flex items-center justify-between border-b ${subtleBorder}`}>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold truncate">编辑插件 manifest — {plugin.name}</h3>
+            <div className="flex items-center gap-2 flex-wrap min-w-0">
+              <h3 className="text-sm font-semibold truncate">编辑插件 manifest — {plugin.name}</h3>
+              {hasReadme && (
+                <button
+                  type="button"
+                  onClick={() => setShowReadme(true)}
+                  className="inline-flex shrink-0 items-center gap-0.5 px-2 py-0.5 text-[10px] font-medium rounded text-neutral-600 hover:bg-neutral-100 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                >
+                  <Icon name="info" className="w-3 h-3" />
+                  使用说明
+                </button>
+              )}
+            </div>
             <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-              修改 channels、refreshInterval、userAgent、wasm 等配置，支持可视化表单或 JSON 编辑
+              修改 channels、secrets、refreshInterval、userAgent、wasm 等配置，支持可视化表单或 JSON 编辑
             </p>
           </div>
 
@@ -1147,6 +1483,19 @@ function WasmManifestEditorModal({
                 JSON 编辑
               </button>
             </div>
+
+            <button
+              type="button"
+              disabled={loading || restoring || saving}
+              onClick={() => {
+                void handleRestoreDefault();
+              }}
+              className={`px-3 py-1.5 text-xs rounded-lg border ${subtleBorder} disabled:opacity-50 disabled:cursor-not-allowed ${
+                isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+              }`}
+            >
+              {restoring ? "恢复中…" : "恢复默认配置"}
+            </button>
 
             <button
               type="button"
@@ -1182,119 +1531,123 @@ function WasmManifestEditorModal({
                         </label>
                         <button
                           type="button"
-                          onClick={() =>
-                            setChannels(prev => [
-                              ...prev,
-                              createWasmChannelRow({ label: `频道 ${prev.length + 1}` }, { idAuto: true }),
-                            ])
-                          }
+                          onClick={() => setChannelEditor({ mode: "add" })}
                           className="text-[11px] font-semibold text-[#5856D6] hover:underline"
                         >
                           + 添加频道
                         </button>
                       </div>
-                      <div className="space-y-3">
-                        {channels.map((ch, index) => (
-                          <div
-                            key={ch._key}
-                            className={`p-4 rounded-2xl border space-y-3 ${subtleBorder} ${mutedBg}`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-semibold">频道 {index + 1}</span>
-                              {channels.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() => setChannels(prev => prev.filter((_, i) => i !== index))}
-                                  className="text-[11px] text-rose-500 hover:underline"
-                                >
-                                  删除
-                                </button>
-                              )}
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              <input
-                                value={ch.label}
-                                onChange={e => {
-                                  const v = e.target.value;
-                                  setChannels(prev =>
-                                    prev.map((row, i) => {
-                                      if (i !== index) return row;
-                                      const slug = slugifyChannelId(v);
-                                      const synced = isWasmChannelIdSyncedWithLabel(row);
-                                      return {
-                                        ...row,
-                                        label: v,
-                                        ...(synced && slug ? { id: slug, idAuto: true } : {}),
-                                      };
-                                    }),
-                                  );
+                      <div className={`rounded-2xl border overflow-hidden ${subtleBorder}`}>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className={`border-b ${subtleBorder} ${mutedBg}`}>
+                              <th className={`px-3 py-2.5 w-10 ${isDark ? "text-neutral-400" : "text-neutral-500"}`} aria-label="排序" />
+                              <th className={`px-4 py-2.5 text-left font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                名称
+                              </th>
+                              <th className={`px-4 py-2.5 text-left font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                route
+                              </th>
+                              <th className={`px-4 py-2.5 text-left font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                抓取数量上限
+                              </th>
+                              <th className={`px-4 py-2.5 text-left font-semibold w-20 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                状态
+                              </th>
+                              <th className={`px-4 py-2.5 text-right font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                操作
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {channels.map((ch, index) => (
+                              <tr
+                                key={ch._key}
+                                className={`border-b last:border-b-0 ${subtleBorder} transition-colors ${
+                                  dragOverChannelKey === ch._key
+                                    ? "ring-2 ring-inset ring-[#5856D6]/35"
+                                    : isDark
+                                      ? "hover:bg-neutral-900/40"
+                                      : "hover:bg-neutral-50"
+                                } ${draggingChannelKey === ch._key ? "opacity-50" : ""}`}
+                                onDragOver={event => {
+                                  event.preventDefault();
+                                  setDragOverChannelKey(ch._key);
                                 }}
-                                placeholder="显示名称"
-                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                              />
-                              <input
-                                value={ch.id}
-                                onChange={e => {
-                                  const v = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-                                  setChannels(prev =>
-                                    prev.map((row, i) =>
-                                      i === index ? { ...row, id: v, idAuto: false } : row,
-                                    ),
-                                  );
+                                onDragLeave={() => {
+                                  if (dragOverChannelKey === ch._key) {
+                                    setDragOverChannelKey(null);
+                                  }
                                 }}
-                                placeholder="id（根据名称自动生成）"
-                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText} ${
-                                  ch.idAuto ? (isDark ? "text-neutral-400" : "text-neutral-500") : ""
-                                }`}
-                              />
-                            </div>
-                            <input
-                              value={ch.route}
-                              onChange={e => {
-                                const v = e.target.value;
-                                setChannels(prev =>
-                                  prev.map((row, i) => (i === index ? { ...row, route: v } : row)),
-                                );
-                              }}
-                              placeholder="/plugin/route"
-                              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                            />
-                            <div className="space-y-1">
-                              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-                                params（JSON 对象，可选）
-                              </label>
-                              <input
-                                value={ch.params}
-                                onChange={e => {
-                                  const v = e.target.value;
-                                  setChannels(prev =>
-                                    prev.map((row, i) => (i === index ? { ...row, params: v } : row)),
-                                  );
+                                onDrop={event => {
+                                  event.preventDefault();
+                                  handleChannelDropReorder(ch._key);
                                 }}
-                                placeholder='{"category":"frontend"}'
-                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 font-mono ${inputBg} ${inputBorder} ${inputText}`}
-                              />
-                            </div>
-                            <div className="space-y-1">
-                              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-                                抓取数量上限 itemLimit（默认 100）
-                              </label>
-                              <input
-                                type="number"
-                                min={1}
-                                value={ch.itemLimit}
-                                onChange={e => {
-                                  const v = e.target.value;
-                                  setChannels(prev =>
-                                    prev.map((row, i) => (i === index ? { ...row, itemLimit: v } : row)),
-                                  );
-                                }}
-                                placeholder="100"
-                                className={`w-full sm:w-40 px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                              />
-                            </div>
-                          </div>
-                        ))}
+                              >
+                                <td className="px-3 py-3">
+                                  <button
+                                    type="button"
+                                    draggable
+                                    onDragStart={() => setDraggingChannelKey(ch._key)}
+                                    onDragEnd={() => {
+                                      setDraggingChannelKey(null);
+                                      setDragOverChannelKey(null);
+                                    }}
+                                    className={`px-2 py-1.5 text-[11px] rounded-lg border cursor-grab active:cursor-grabbing ${
+                                      isDark
+                                        ? "border-neutral-700 text-neutral-400 hover:bg-neutral-800"
+                                        : "border-neutral-200 text-neutral-500 hover:bg-white"
+                                    }`}
+                                    title="拖拽排序"
+                                    aria-label="拖拽排序"
+                                  >
+                                    <span aria-hidden className="text-[10px] leading-none">⋮⋮</span>
+                                  </button>
+                                </td>
+                                <td className="px-4 py-3 font-medium">{ch.label.trim() || "—"}</td>
+                                <td className={`px-4 py-3 font-mono truncate max-w-[240px] ${isDark ? "text-neutral-300" : "text-neutral-600"}`}>
+                                  {ch.route.trim() || "—"}
+                                </td>
+                                <td className="px-4 py-3">{ch.itemLimit.trim() || "100"}</td>
+                                <td className="px-4 py-3">
+                                  <span
+                                    className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                      ch.status === "disabled"
+                                        ? isDark
+                                          ? "bg-neutral-800 text-neutral-400"
+                                          : "bg-neutral-100 text-neutral-500"
+                                        : isDark
+                                          ? "bg-emerald-950/40 text-emerald-400"
+                                          : "bg-emerald-50 text-emerald-700"
+                                    }`}
+                                  >
+                                    {ch.status === "disabled" ? "停用" : "启用"}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center justify-end gap-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => setChannelEditor({ mode: "edit", key: ch._key })}
+                                      className="text-[11px] font-semibold text-[#5856D6] hover:underline"
+                                    >
+                                      编辑
+                                    </button>
+                                    {channels.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setChannels(prev => prev.filter((_, i) => i !== index))}
+                                        className="text-[11px] text-rose-500 hover:underline"
+                                      >
+                                        删除
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
 
@@ -1340,6 +1693,31 @@ function WasmManifestEditorModal({
                         className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
                       />
                     </div>
+
+                    {hasSecretsApiKey && (
+                      <div className={`p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
+                        <div className="flex items-center gap-2 mb-5">
+                          <div className="w-1 h-4 rounded-full bg-amber-500" />
+                          <h4 className="text-sm font-bold">密钥配置</h4>
+                        </div>
+                        <div className="space-y-1.5">
+                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                            API Key（config.secrets.apiKey）
+                          </label>
+                          <input
+                            type="password"
+                            value={secretsApiKey}
+                            onChange={e => setSecretsApiKey(e.target.value)}
+                            placeholder="输入 API Key"
+                            autoComplete="off"
+                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                          />
+                          <p className={`text-[10px] leading-relaxed ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                            插件运行所需的外部服务密钥，保存后写入 manifest.json。
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     <div className={`mt-6 p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
                       <div className="flex items-center gap-2 mb-5">
@@ -1397,28 +1775,15 @@ function WasmManifestEditorModal({
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                          插件名称
-                        </label>
-                        <input
-                          value={pluginName}
-                          onChange={e => setPluginName(e.target.value)}
-                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                          版本 version
-                        </label>
-                        <input
-                          value={version}
-                          onChange={e => setVersion(e.target.value)}
-                          placeholder="1.0.0"
-                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                        />
-                      </div>
+                    <div className="space-y-1.5">
+                      <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                        插件名称
+                      </label>
+                      <input
+                        value={pluginName}
+                        onChange={e => setPluginName(e.target.value)}
+                        className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                      />
                     </div>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -1479,35 +1844,20 @@ function WasmManifestEditorModal({
                             <div className="flex items-center gap-2">
                               <input
                                 type="color"
-                                value={/^#([0-9a-fA-F]{6})$/.test(color.trim()) ? color.trim() : "#7c3aed"}
+                                value={resolveColorToHex(color)}
                                 onChange={e => setColor(e.target.value)}
-                                className="h-10 w-12 rounded-xl border border-neutral-200 p-1 bg-white"
+                                className={COLOR_PICKER_CLASS}
                               />
                               <input
                                 value={color}
                                 onChange={e => setColor(e.target.value)}
-                                placeholder="#7c3aed 或 bg-blue-500"
-                                className={`flex-1 px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                                placeholder="#7c3aed"
+                                className={`w-[88px] shrink-0 px-2.5 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
                               />
                             </div>
                           </div>
                         </div>
                         <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-1.5">
-                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                              图标类型
-                            </label>
-                            <StyledSelect
-                              value={icon}
-                              onChange={e => setIcon(e.target.value as PluginContentType)}
-                              className={`${inputBg} ${inputBorder} ${inputText}`}
-                            >
-                              <option value="text">文章适应排版</option>
-                              <option value="image">漫画/图片</option>
-                              <option value="video">视频</option>
-                              <option value="audio">音频</option>
-                            </StyledSelect>
-                          </div>
                           <div className="space-y-1.5">
                             <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
                               排版分类大区
@@ -1627,6 +1977,202 @@ function WasmManifestEditorModal({
           </div>
         </div>
       </div>
+
+      {channelEditor ? (
+        <WasmChannelEditorModal
+          key={
+            channelEditor.mode === "add"
+              ? "channel-add"
+              : `channel-edit-${channelEditor.key}`
+          }
+          theme={theme}
+          mode={channelEditor.mode}
+          initialRow={
+            channelEditor.mode === "add"
+              ? createWasmChannelRow({ label: `频道 ${channels.length + 1}` }, { idAuto: true })
+              : (channels.find(ch => ch._key === channelEditor.key) ??
+                  createWasmChannelRow({ label: "默认" }, { idAuto: true }))
+          }
+          onClose={() => setChannelEditor(null)}
+          onSave={row => {
+            if (channelEditor.mode === "add") {
+              setChannels(prev => [...prev, row]);
+            } else {
+              setChannels(prev => prev.map(r => (r._key === channelEditor.key ? row : r)));
+            }
+            setChannelEditor(null);
+          }}
+        />
+      ) : null}
+
+      {showReadme && (
+        <PluginReadmeModal
+          theme={theme}
+          plugin={plugin}
+          nested
+          onClose={() => setShowReadme(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+type RssChannelEditorState =
+  | { mode: "add" }
+  | { mode: "edit"; index: number };
+
+function RssChannelEditorModal({
+  theme,
+  mode,
+  initialRow,
+  onClose,
+  onSave,
+}: {
+  theme: ThemeMode;
+  mode: "add" | "edit";
+  initialRow: ChannelFormRow;
+  onClose: () => void;
+  onSave: (row: ChannelFormRow) => void;
+}) {
+  const isDark = theme === "dark";
+  const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+  const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
+  const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
+  const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
+  const inputBorder = isDark ? "border-neutral-800" : "border-neutral-200";
+  const inputText = isDark ? "text-neutral-100 placeholder:text-neutral-500" : "text-neutral-900 placeholder:text-neutral-400";
+
+  const [draft, setDraft] = useState<ChannelFormRow>(initialRow);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = () => {
+    const id = draft.id.trim();
+    const label = draft.label.trim();
+    const feedUrl = draft.feedUrl.trim();
+
+    if (!id || !label || !feedUrl) {
+      setError("请填写 ID、名称与 Feed URL");
+      return;
+    }
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) {
+      setError(`频道 ID「${id}」格式无效`);
+      return;
+    }
+
+    onSave({
+      ...draft,
+      id,
+      label,
+      feedUrl,
+    });
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6"
+      onClick={onClose}
+    >
+      <div
+        className={`w-full max-w-lg rounded-[24px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className={`px-6 py-4 border-b ${subtleBorder}`}>
+          <h4 className="text-sm font-semibold">{mode === "add" ? "添加频道" : "编辑频道"}</h4>
+          <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+            配置频道 ID、名称、Feed URL 与抓取数量上限
+          </p>
+        </div>
+
+        <div className="px-6 py-5 space-y-4 max-h-[min(520px,70vh)] overflow-y-auto">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                显示名称
+              </label>
+              <input
+                value={draft.label}
+                onChange={e => {
+                  const v = e.target.value;
+                  setDraft(prev => {
+                    const slug = slugifyChannelId(v);
+                    const synced = isChannelIdSyncedWithLabel(prev);
+                    return {
+                      ...prev,
+                      label: v,
+                      ...(synced && slug ? { id: slug, idAuto: true } : {}),
+                    };
+                  });
+                }}
+                placeholder="显示名称"
+                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+              />
+            </div>
+            <div className="space-y-1">
+              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                ID
+              </label>
+              <input
+                value={draft.id}
+                onChange={e => {
+                  const v = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+                  setDraft(prev => ({ ...prev, id: v, idAuto: false }));
+                }}
+                placeholder="id（根据名称自动生成）"
+                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText} ${
+                  draft.idAuto ? (isDark ? "text-neutral-400" : "text-neutral-500") : ""
+                }`}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+              Feed URL
+            </label>
+            <input
+              value={draft.feedUrl}
+              onChange={e => setDraft(prev => ({ ...prev, feedUrl: e.target.value }))}
+              placeholder="https://example.com/feed.xml"
+              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+              抓取数量上限 itemLimit（默认 100）
+            </label>
+            <input
+              type="number"
+              min={1}
+              value={draft.itemLimit}
+              onChange={e => setDraft(prev => ({ ...prev, itemLimit: e.target.value }))}
+              placeholder="100"
+              className={`w-full sm:w-40 px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+            />
+          </div>
+
+          {error ? <p className="text-xs text-rose-500">{error}</p> : null}
+        </div>
+
+        <div className={`px-6 py-4 flex items-center justify-end gap-3 border-t ${subtleBorder} ${mutedBg}`}>
+          <button
+            type="button"
+            onClick={onClose}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} ${
+              isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+            }`}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            className={`px-4 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY}`}
+          >
+            {mode === "add" ? "添加" : "保存"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1660,6 +2206,7 @@ function ImportPluginModal({
   const [channels, setChannels] = useState<ChannelFormRow[]>([
     createChannelRow({ label: "全部" }, { idAuto: true }),
   ]);
+  const [channelEditor, setChannelEditor] = useState<RssChannelEditorState | null>(null);
   const [refreshInterval, setRefreshInterval] = useState("3600");
   const [userAgent, setUserAgent] = useState("");
   const [categoryTag, setCategoryTag] = useState("NEWS");
@@ -1695,7 +2242,7 @@ function ImportPluginModal({
     ) {
       setIcon(initialPlugin.icon);
     }
-    setColor(initialPlugin.color);
+    setColor(resolveColorToHex(initialPlugin.color));
     setLogoImageUrl(initialPlugin.logoImageUrl ?? "");
     setLogoSourceUrl(initialPlugin.logoImageUrl ?? "");
     if (initialPlugin.channels?.length) {
@@ -1875,7 +2422,7 @@ function ImportPluginModal({
       if (nextIcon === "text" || nextIcon === "image" || nextIcon === "video" || nextIcon === "audio") {
         setIcon(nextIcon);
       }
-      setColor(nextColor);
+      setColor(resolveColorToHex(nextColor));
       setLogoImageUrl(nextLogoImageUrl.trim());
       if (!logoSourceUrl.trim()) {
         setLogoSourceUrl(nextLogoImageUrl.trim());
@@ -2030,7 +2577,7 @@ function ImportPluginModal({
   return (
     <div className="fixed inset-0 z-[60] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6" onClick={onClose}>
       <div
-        className={`w-full max-w-6xl h-[690px] rounded-[28px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
+        className={`w-full max-w-6xl h-[min(780px,92vh)] rounded-[28px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
         onClick={e => e.stopPropagation()}
       >
         <div className={`h-[72px] px-6 flex items-center justify-between border-b ${subtleBorder}`}>
@@ -2256,116 +2803,67 @@ function ImportPluginModal({
                         </label>
                         <button
                           type="button"
-                          onClick={() =>
-                            setChannels(prev => [
-                              ...prev,
-                              createChannelRow(
-                                { label: `频道 ${prev.length + 1}` },
-                                { idAuto: true },
-                              ),
-                            ])
-                          }
+                          onClick={() => setChannelEditor({ mode: "add" })}
                           className="text-[11px] font-semibold text-[#5856D6] hover:underline"
                         >
                           + 添加频道
                         </button>
                       </div>
-                      <div className="space-y-3">
-                        {channels.map((ch, index) => (
-                          <div
-                            key={ch._key}
-                            className={`p-4 rounded-2xl border space-y-3 ${subtleBorder} ${mutedBg}`}
-                          >
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-semibold">频道 {index + 1}</span>
-                              {channels.length > 1 && (
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    setChannels(prev => prev.filter((_, i) => i !== index))
-                                  }
-                                  className="text-[11px] text-rose-500 hover:underline"
-                                >
-                                  删除
-                                </button>
-                              )}
-                            </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                              <input
-                                value={ch.label}
-                                onChange={e => {
-                                  const v = e.target.value;
-                                  setChannels(prev =>
-                                    prev.map((row, i) => {
-                                      if (i !== index) return row;
-                                      const slug = slugifyChannelId(v);
-                                      const synced = isChannelIdSyncedWithLabel(row);
-                                      return {
-                                        ...row,
-                                        label: v,
-                                        ...(synced && slug
-                                          ? { id: slug, idAuto: true }
-                                          : {}),
-                                      };
-                                    }),
-                                  );
-                                }}
-                                placeholder="显示名称"
-                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                              />
-                              <input
-                                value={ch.id}
-                                onChange={e => {
-                                  const v = e.target.value
-                                    .toLowerCase()
-                                    .replace(/[^a-z0-9_-]/g, "");
-                                  setChannels(prev =>
-                                    prev.map((row, i) =>
-                                      i === index ? { ...row, id: v, idAuto: false } : row,
-                                    ),
-                                  );
-                                }}
-                                placeholder="id（根据名称自动生成）"
-                                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText} ${
-                                  ch.idAuto ? (isDark ? "text-neutral-400" : "text-neutral-500") : ""
+                      <div className={`rounded-2xl border overflow-hidden ${subtleBorder}`}>
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className={`border-b ${subtleBorder} ${mutedBg}`}>
+                              <th className={`px-4 py-2.5 text-left font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                名称
+                              </th>
+                              <th className={`px-4 py-2.5 text-left font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                Feed URL
+                              </th>
+                              <th className={`px-4 py-2.5 text-left font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                抓取数量上限
+                              </th>
+                              <th className={`px-4 py-2.5 text-right font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                操作
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {channels.map((ch, index) => (
+                              <tr
+                                key={ch._key}
+                                className={`border-b last:border-b-0 ${subtleBorder} ${
+                                  isDark ? "hover:bg-neutral-900/40" : "hover:bg-neutral-50"
                                 }`}
-                              />
-                            </div>
-                            <input
-                              value={ch.feedUrl}
-                              onChange={e => {
-                                const v = e.target.value;
-                                setChannels(prev =>
-                                  prev.map((row, i) =>
-                                    i === index ? { ...row, feedUrl: v } : row,
-                                  ),
-                                );
-                              }}
-                              placeholder="https://example.com/feed.xml"
-                              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                            />
-                            <div className="space-y-1">
-                              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-                                抓取数量上限 itemLimit（默认 100）
-                              </label>
-                              <input
-                                type="number"
-                                min={1}
-                                value={ch.itemLimit}
-                                onChange={e => {
-                                  const v = e.target.value;
-                                  setChannels(prev =>
-                                    prev.map((row, i) =>
-                                      i === index ? { ...row, itemLimit: v } : row,
-                                    ),
-                                  );
-                                }}
-                                placeholder="100"
-                                className={`w-full sm:w-40 px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                              />
-                            </div>
-                          </div>
-                        ))}
+                              >
+                                <td className="px-4 py-3 font-medium">{ch.label.trim() || "—"}</td>
+                                <td className={`px-4 py-3 font-mono truncate max-w-[240px] ${isDark ? "text-neutral-300" : "text-neutral-600"}`}>
+                                  {ch.feedUrl.trim() || "—"}
+                                </td>
+                                <td className="px-4 py-3">{ch.itemLimit.trim() || "100"}</td>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center justify-end gap-3">
+                                    <button
+                                      type="button"
+                                      onClick={() => setChannelEditor({ mode: "edit", index })}
+                                      className="text-[11px] font-semibold text-[#5856D6] hover:underline"
+                                    >
+                                      编辑
+                                    </button>
+                                    {channels.length > 1 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setChannels(prev => prev.filter((_, i) => i !== index))}
+                                        className="text-[11px] text-rose-500 hover:underline"
+                                      >
+                                        删除
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
                       </div>
                     </div>
 
@@ -2484,9 +2982,9 @@ function ImportPluginModal({
                             <div className="flex items-center gap-2">
                               <input
                                 type="color"
-                                value={/^#([0-9a-fA-F]{6})$/.test(color.trim()) ? color.trim() : "#7c3aed"}
+                                value={resolveColorToHex(color)}
                                 onChange={e => setColor(e.target.value)}
-                                className="h-10 w-12 rounded-xl border border-neutral-200 p-1 bg-white"
+                                className={COLOR_PICKER_CLASS}
                               />
                               <input
                                 value={color}
@@ -2648,6 +3146,32 @@ function ImportPluginModal({
           </div>
         </div>
       </div>
+
+      {channelEditor ? (
+        <RssChannelEditorModal
+          key={
+            channelEditor.mode === "add"
+              ? "rss-channel-add"
+              : `rss-channel-edit-${channels[channelEditor.index]._key}`
+          }
+          theme={theme}
+          mode={channelEditor.mode}
+          initialRow={
+            channelEditor.mode === "add"
+              ? createChannelRow({ label: `频道 ${channels.length + 1}` }, { idAuto: true })
+              : channels[channelEditor.index]
+          }
+          onClose={() => setChannelEditor(null)}
+          onSave={row => {
+            if (channelEditor.mode === "add") {
+              setChannels(prev => [...prev, row]);
+            } else {
+              setChannels(prev => prev.map((r, i) => (i === channelEditor.index ? row : r)));
+            }
+            setChannelEditor(null);
+          }}
+        />
+      ) : null}
 
       {showLogoUploadModal && (
         <div

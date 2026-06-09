@@ -14,7 +14,13 @@ import (
 	"time"
 )
 
-const maxOrbitPackageBytes = 32 << 20 // 32 MiB
+const (
+	maxOrbitPackageBytes   = 32 << 20 // 32 MiB
+	defaultManifestFileName = "manifest.default.json"
+)
+
+// MarketDownloader fetches a .orbit package from the remote plugin market.
+type MarketDownloader func(context.Context, string) ([]byte, error)
 
 // InstallOrbit extracts a .orbit zip package into the user plugins directory and registers it.
 func (r *Registry) InstallOrbit(ctx context.Context, data []byte) (*PluginRecord, error) {
@@ -86,6 +92,74 @@ func (r *Registry) UpdateManifest(ctx context.Context, id string, m *Manifest) (
 	r.setRecord(rec)
 	r.setPluginDir(id, dir)
 	return cloneRecord(rec), nil
+}
+
+// GetDefaultManifestJSON returns the original manifest from install time.
+// If manifest.default.json is missing, it re-downloads the .orbit package from market
+// (when marketId is known), extracts manifest.json, persists the default copy, and returns it.
+func (r *Registry) GetDefaultManifestJSON(ctx context.Context, id string, download MarketDownloader) ([]byte, error) {
+	dir, err := r.resolvePluginDir(id)
+	if err != nil {
+		return nil, err
+	}
+
+	defaultPath := filepath.Join(dir, defaultManifestFileName)
+	if data, err := os.ReadFile(defaultPath); err == nil {
+		return data, nil
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("read default manifest: %w", err)
+	}
+
+	rec, ok := r.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("plugin not found: %s", id)
+	}
+	marketID := strings.TrimSpace(rec.Meta.MarketID)
+	if marketID == "" {
+		return nil, fmt.Errorf("default manifest not found and plugin has no market id")
+	}
+	if download == nil {
+		return nil, fmt.Errorf("default manifest not found and market download is unavailable")
+	}
+
+	pkgData, err := download(ctx, marketID)
+	if err != nil {
+		return nil, err
+	}
+	_, m, manifestData, err := parseOrbitZip(pkgData)
+	if err != nil {
+		return nil, err
+	}
+	if m.ID != id {
+		return nil, fmt.Errorf("market package id %q does not match plugin %q", m.ID, id)
+	}
+	if err := saveDefaultManifest(dir, manifestData); err != nil {
+		return nil, err
+	}
+	return manifestData, nil
+}
+
+func saveDefaultManifest(pluginDir string, manifestData []byte) error {
+	path := filepath.Join(pluginDir, defaultManifestFileName)
+	if err := os.WriteFile(path, manifestData, 0o644); err != nil {
+		return fmt.Errorf("write default manifest: %w", err)
+	}
+	return nil
+}
+
+func (r *Registry) resolvePluginDir(id string) (string, error) {
+	dir, ok := r.getPluginDir(id)
+	if ok {
+		return dir, nil
+	}
+	if _, exists := r.Get(id); !exists {
+		return "", fmt.Errorf("plugin not found: %s", id)
+	}
+	userDir, err := UserPluginsDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(userDir, id), nil
 }
 
 // GetManifestJSON returns the on-disk manifest.json for an installed plugin.
@@ -243,6 +317,10 @@ func extractOrbitPackage(data []byte) (*Manifest, string, error) {
 	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.json"), manifestData, 0o644); err != nil {
 		_ = os.RemoveAll(pluginDir)
 		return nil, "", fmt.Errorf("write manifest: %w", err)
+	}
+	if err := saveDefaultManifest(pluginDir, manifestData); err != nil {
+		_ = os.RemoveAll(pluginDir)
+		return nil, "", err
 	}
 
 	if err := extractPackageFilesFromZip(zr, pluginDir); err != nil {

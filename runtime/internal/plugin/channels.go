@@ -9,6 +9,11 @@ const DefaultChannelID = "main"
 
 const DefaultChannelItemLimit = 100
 
+const (
+	ChannelStatusEnabled  = "enabled"
+	ChannelStatusDisabled = "disabled"
+)
+
 // FeedChannel is one feed source within a plugin (RSS feedUrl or WASM route).
 type FeedChannel struct {
 	ID        string            `json:"id"`
@@ -17,6 +22,36 @@ type FeedChannel struct {
 	Route     string            `json:"route,omitempty"`
 	Params    map[string]string `json:"params,omitempty"`
 	ItemLimit int               `json:"itemLimit,omitempty"`
+	Status    string            `json:"status,omitempty"` // enabled (default) | disabled
+}
+
+// ChannelStatus returns the effective channel status (empty means enabled).
+func ChannelStatus(ch *FeedChannel) string {
+	if ch == nil {
+		return ChannelStatusEnabled
+	}
+	switch strings.TrimSpace(strings.ToLower(ch.Status)) {
+	case ChannelStatusDisabled:
+		return ChannelStatusDisabled
+	default:
+		return ChannelStatusEnabled
+	}
+}
+
+// ChannelEnabled reports whether the channel should be shown and refreshed.
+func ChannelEnabled(ch *FeedChannel) bool {
+	return ChannelStatus(ch) != ChannelStatusDisabled
+}
+
+// EnabledChannels returns only channels that are not disabled.
+func EnabledChannels(channels []FeedChannel) []FeedChannel {
+	out := make([]FeedChannel, 0, len(channels))
+	for _, ch := range channels {
+		if ChannelEnabled(&ch) {
+			out = append(out, ch)
+		}
+	}
+	return out
 }
 
 func ChannelItemLimit(ch *FeedChannel) int {
@@ -50,7 +85,22 @@ func normalizeChannels(cfg *ManifestConfig) {
 		cfg.Channels[i].Label = strings.TrimSpace(cfg.Channels[i].Label)
 		cfg.Channels[i].FeedURL = strings.TrimSpace(cfg.Channels[i].FeedURL)
 		cfg.Channels[i].Route = strings.TrimSpace(cfg.Channels[i].Route)
+		status := strings.TrimSpace(strings.ToLower(cfg.Channels[i].Status))
+		switch status {
+		case "", ChannelStatusEnabled:
+			cfg.Channels[i].Status = ""
+		case ChannelStatusDisabled:
+			cfg.Channels[i].Status = ChannelStatusDisabled
+		}
 	}
+}
+
+func validateChannelStatus(ch FeedChannel) error {
+	status := strings.TrimSpace(strings.ToLower(ch.Status))
+	if status == "" || status == ChannelStatusEnabled || status == ChannelStatusDisabled {
+		return nil
+	}
+	return fmt.Errorf("channel %q has unsupported status %q", ch.ID, ch.Status)
 }
 
 func validateRSSChannels(channels []FeedChannel) error {
@@ -77,6 +127,9 @@ func validateRSSChannels(channels []FeedChannel) error {
 			return fmt.Errorf("duplicate channel feedUrl for %q", ch.ID)
 		}
 		seenURL[ch.FeedURL] = struct{}{}
+		if err := validateChannelStatus(ch); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -109,6 +162,9 @@ func validateWasmChannels(channels []FeedChannel) error {
 			return fmt.Errorf("duplicate channel route for %q", ch.ID)
 		}
 		seenRoute[routeKey] = struct{}{}
+		if err := validateChannelStatus(ch); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -129,17 +185,22 @@ func ResolveChannelID(cfg *ManifestConfig, channelID string) string {
 	if channelID != "" {
 		return channelID
 	}
-	if len(cfg.Channels) == 1 {
-		return cfg.Channels[0].ID
+	enabled := EnabledChannels(cfg.Channels)
+	if len(enabled) == 1 {
+		return enabled[0].ID
 	}
 	return ""
 }
 
 func defaultChannelID(cfg *ManifestConfig) string {
 	if dc := strings.TrimSpace(cfg.DefaultChannel); dc != "" {
-		if _, ok := findChannel(cfg.Channels, dc); ok {
+		if ch, ok := findChannel(cfg.Channels, dc); ok && ChannelEnabled(ch) {
 			return dc
 		}
+	}
+	enabled := EnabledChannels(cfg.Channels)
+	if len(enabled) > 0 {
+		return enabled[0].ID
 	}
 	if len(cfg.Channels) > 0 {
 		return cfg.Channels[0].ID
