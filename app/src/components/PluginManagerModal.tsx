@@ -1053,7 +1053,13 @@ function WasmManifestEditorModal({
 
     setPluginName(typeof raw.name === "string" ? raw.name : "");
     const nextMediaType = typeof raw.mediaType === "string" ? raw.mediaType : "article";
-    if (nextMediaType === "article" || nextMediaType === "manga" || nextMediaType === "video" || nextMediaType === "audio") {
+    if (
+      nextMediaType === "article" ||
+      nextMediaType === "manga" ||
+      nextMediaType === "image" ||
+      nextMediaType === "video" ||
+      nextMediaType === "audio"
+    ) {
       setMediaType(nextMediaType);
     }
 
@@ -1576,7 +1582,9 @@ function WasmManifestEditorModal({
                             </tr>
                           </thead>
                           <tbody>
-                            {channels.map((ch, index) => (
+                            {channels.map((ch, index) => {
+                              const isChannelEnabled = ch.status !== "disabled";
+                              return (
                               <tr
                                 key={ch._key}
                                 className={`border-b last:border-b-0 ${subtleBorder} transition-colors ${
@@ -1626,24 +1634,43 @@ function WasmManifestEditorModal({
                                 </td>
                                 <td className="px-4 py-3">{ch.itemLimit.trim() || "100"}</td>
                                 <td className="px-4 py-3">
-                                  <div className="flex flex-wrap items-center gap-1.5">
-                                    <span
-                                      className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
-                                        ch.status === "disabled"
-                                          ? isDark
-                                            ? "bg-neutral-800 text-neutral-400"
-                                            : "bg-neutral-100 text-neutral-500"
+                                  <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
+                                    <button
+                                      type="button"
+                                      role="switch"
+                                      aria-checked={isChannelEnabled}
+                                      aria-label={isChannelEnabled ? "停用频道" : "启用频道"}
+                                      onClick={() => {
+                                        setChannels(prev =>
+                                          prev.map(row =>
+                                            row._key === ch._key
+                                              ? {
+                                                  ...row,
+                                                  status: isChannelEnabled ? "disabled" : "enabled",
+                                                }
+                                              : row,
+                                          ),
+                                        );
+                                      }}
+                                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+                                        isChannelEnabled
+                                          ? "bg-emerald-500"
                                           : isDark
-                                            ? "bg-emerald-950/40 text-emerald-400"
-                                            : "bg-emerald-50 text-emerald-700"
+                                            ? "bg-neutral-600"
+                                            : "bg-neutral-300"
                                       }`}
+                                      title={isChannelEnabled ? "点击停用" : "点击启用"}
                                     >
-                                      {ch.status === "disabled" ? "停用" : "启用"}
-                                    </span>
+                                      <span
+                                        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                                          isChannelEnabled ? "translate-x-3.5" : "translate-x-0.5"
+                                        }`}
+                                      />
+                                    </button>
                                     {isChannelDynamic(ch) && (
                                       <span
                                         title="dynamic: true"
-                                        className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold ${
+                                        className={`inline-flex shrink-0 items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${
                                           isDark
                                             ? "bg-amber-950/40 text-amber-400"
                                             : "bg-amber-50 text-amber-700"
@@ -1675,7 +1702,8 @@ function WasmManifestEditorModal({
                                   </div>
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -2410,7 +2438,13 @@ function ImportPluginModal({
 
       setPluginId(nextId);
       setPluginName(nextName);
-      if (nextMediaType === "article" || nextMediaType === "manga" || nextMediaType === "video" || nextMediaType === "audio") {
+      if (
+        nextMediaType === "article" ||
+        nextMediaType === "manga" ||
+        nextMediaType === "image" ||
+        nextMediaType === "video" ||
+        nextMediaType === "audio"
+      ) {
         setMediaType(nextMediaType);
       }
       setChannels(nextChannels);

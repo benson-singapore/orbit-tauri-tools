@@ -21,6 +21,8 @@ function resolveColumnCount(width: number): number {
   return 6;
 }
 
+const COLUMN_GAP_PX = 8;
+
 function articleToGalleryItem(article: Article): GalleryImageItem | null {
   const url = article.image?.trim();
   if (!url) return null;
@@ -30,6 +32,33 @@ function articleToGalleryItem(article: Article): GalleryImageItem | null {
     title: article.title,
     author: article.author,
   };
+}
+
+type ColumnEntry = { item: GalleryImageItem; lightboxIndex: number };
+
+function distributeShortestColumn(
+  entries: ColumnEntry[],
+  columnCount: number,
+  columnWidth: number,
+  aspectRatios: Record<string, number>,
+  defaultAspectRatio: number,
+): ColumnEntry[][] {
+  const cols: ColumnEntry[][] = Array.from({ length: columnCount }, () => []);
+  const colHeights = Array(columnCount).fill(0);
+
+  for (const entry of entries) {
+    const ratio = aspectRatios[entry.item.id] ?? defaultAspectRatio;
+    let shortest = 0;
+    for (let i = 1; i < columnCount; i++) {
+      if (colHeights[i] < colHeights[shortest]) {
+        shortest = i;
+      }
+    }
+    cols[shortest].push(entry);
+    colHeights[shortest] += columnWidth * ratio + COLUMN_GAP_PX;
+  }
+
+  return cols;
 }
 
 export function ImageGalleryFocusView({
@@ -43,10 +72,12 @@ export function ImageGalleryFocusView({
   scrollRootRef,
 }: ImageGalleryFocusViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const sentinelRef = useRef<HTMLDivElement>(null);
+  const columnSentinelRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [columns, setColumns] = useState(4);
+  const [containerWidth, setContainerWidth] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
+  const [aspectRatios, setAspectRatios] = useState<Record<string, number>>({});
 
   const galleryItems = useMemo(
     () =>
@@ -56,25 +87,60 @@ export function ImageGalleryFocusView({
     [articles, failedIds],
   );
 
-  const galleryColumns = useMemo(() => {
-    const cols: { item: GalleryImageItem; lightboxIndex: number }[][] = Array.from(
-      { length: columns },
-      () => [],
-    );
+  const defaultAspectRatio = useMemo(() => {
+    const ratios = Object.values(aspectRatios);
+    if (ratios.length === 0) return 1;
+    return ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length;
+  }, [aspectRatios]);
+
+  const columnEntries = useMemo(() => {
+    const entries: ColumnEntry[] = [];
     let lightboxIndex = 0;
-    articles.forEach((article, articleIndex) => {
+    articles.forEach(article => {
       const item = articleToGalleryItem(article);
       if (!item || failedIds.has(item.id)) return;
-      cols[articleIndex % columns].push({ item, lightboxIndex });
+      entries.push({ item, lightboxIndex });
       lightboxIndex += 1;
     });
-    return cols;
-  }, [articles, columns, failedIds]);
+    return entries;
+  }, [articles, failedIds]);
+
+  const columnWidth = useMemo(() => {
+    if (containerWidth <= 0 || columns <= 0) return 0;
+    return (containerWidth - COLUMN_GAP_PX * (columns - 1)) / columns;
+  }, [containerWidth, columns]);
+
+  const galleryColumns = useMemo(() => {
+    if (columnWidth <= 0) {
+      const cols = Array.from({ length: columns }, () => [] as ColumnEntry[]);
+      columnEntries.forEach((entry, index) => {
+        cols[index % columns].push(entry);
+      });
+      return cols;
+    }
+    return distributeShortestColumn(
+      columnEntries,
+      columns,
+      columnWidth,
+      aspectRatios,
+      defaultAspectRatio,
+    );
+  }, [columnEntries, columns, columnWidth, aspectRatios, defaultAspectRatio]);
+
+  const handleImageLoad = useCallback((id: string, img: HTMLImageElement) => {
+    const { naturalWidth, naturalHeight } = img;
+    if (naturalWidth <= 0 || naturalHeight <= 0) return;
+    const ratio = naturalHeight / naturalWidth;
+    setAspectRatios(prev => (prev[id] === ratio ? prev : { ...prev, [id]: ratio }));
+  }, []);
 
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    const update = () => setColumns(resolveColumnCount(el.clientWidth));
+    const update = () => {
+      setContainerWidth(el.clientWidth);
+      setColumns(resolveColumnCount(el.clientWidth));
+    };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
@@ -82,20 +148,24 @@ export function ImageGalleryFocusView({
   }, []);
 
   useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel || !hasMore || loadingMore || loading) return;
+    if (!hasMore || loadingMore || loading) return;
+
+    const sentinels = columnSentinelRefs.current.filter(
+      (node): node is HTMLDivElement => node !== null,
+    );
+    if (sentinels.length === 0) return;
 
     const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry?.isIntersecting) {
+      entries => {
+        if (entries.some(entry => entry.isIntersecting)) {
           onLoadMore();
         }
       },
-      { root: scrollRootRef?.current ?? null, rootMargin: "600px" },
+      { root: scrollRootRef?.current ?? null, rootMargin: "800px" },
     );
-    observer.observe(sentinel);
+    sentinels.forEach(sentinel => observer.observe(sentinel));
     return () => observer.disconnect();
-  }, [hasMore, loadingMore, loading, onLoadMore, galleryItems.length, scrollRootRef]);
+  }, [hasMore, loadingMore, loading, onLoadMore, galleryColumns, scrollRootRef]);
 
   const openLightbox = useCallback(
     (index: number) => {
@@ -153,6 +223,7 @@ export function ImageGalleryFocusView({
                     alt={item.title}
                     loading="lazy"
                     className="w-full h-auto block transition-transform duration-300 group-hover:scale-[1.02]"
+                    onLoad={event => handleImageLoad(item.id, event.currentTarget)}
                     onError={() => {
                       setFailedIds(prev => new Set(prev).add(item.id));
                     }}
@@ -165,11 +236,16 @@ export function ImageGalleryFocusView({
                   ) : null}
                 </button>
               ))}
+              <div
+                ref={node => {
+                  columnSentinelRefs.current[columnIndex] = node;
+                }}
+                className="h-1 w-full shrink-0"
+                aria-hidden
+              />
             </div>
           ))}
         </div>
-
-        <div ref={sentinelRef} className="h-4 w-full" aria-hidden />
 
         {loadingMore ? (
           <div className="flex items-center justify-center py-6">
