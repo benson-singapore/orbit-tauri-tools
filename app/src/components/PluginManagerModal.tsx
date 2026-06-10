@@ -1844,6 +1844,7 @@ function WasmManifestEditorModal({
                         >
                           <option value="article">article</option>
                           <option value="manga">manga</option>
+                          <option value="image">image</option>
                           <option value="video">video</option>
                           <option value="audio">audio</option>
                         </StyledSelect>
@@ -2297,6 +2298,7 @@ function ImportPluginModal({
     if (
       initialPlugin.mediaType === "article" ||
       initialPlugin.mediaType === "manga" ||
+      initialPlugin.mediaType === "image" ||
       initialPlugin.mediaType === "video" ||
       initialPlugin.mediaType === "audio"
     ) {
@@ -2932,6 +2934,7 @@ function ImportPluginModal({
                         >
                           <option value="article">article</option>
                           <option value="manga">manga</option>
+                          <option value="image">image</option>
                           <option value="video">video</option>
                           <option value="audio">audio</option>
                         </StyledSelect>

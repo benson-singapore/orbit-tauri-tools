@@ -105,7 +105,7 @@ export interface Plugin {
   id: string;
   name: string;
   icon: PluginContentType | string;
-  mediaType?: "article" | "manga" | "video" | "audio";
+  mediaType?: "article" | "manga" | "image" | "video" | "audio";
   active?: boolean;
   desc: string;
   channels?: PluginChannel[];
@@ -153,7 +153,7 @@ export interface InstallRSSPluginRequest {
   defaultChannel?: string;
   name?: string;
   id?: string;
-  mediaType?: "article" | "manga" | "video" | "audio";
+  mediaType?: "article" | "manga" | "image" | "video" | "audio";
   refreshInterval?: number;
   userAgent?: string;
   icon?: PluginContentType;

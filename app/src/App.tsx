@@ -6,7 +6,10 @@ import { YouTubeEmbed } from "@/components/YouTubeEmbed";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
-import { dedupeCoverImageFromContent } from "@/lib/articleContent";
+import {
+  dedupeCoverImageFromContent,
+  mergeArticleListWithDetail,
+} from "@/lib/articleContent";
 import { isVideoPluginChannel, resolveYouTubeVideoId } from "@/lib/youtube";
 import { isChannelDynamic, isChannelEnabled } from "@/lib/channelStatus";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
@@ -164,8 +167,11 @@ export default function App() {
       return;
     }
     setSelectedItem(prev => {
-      if (prev && visibleArticles.some(a => a.id === prev.id)) {
-        return visibleArticles.find(a => a.id === prev.id) ?? prev;
+      if (prev) {
+        const listItem = visibleArticles.find(a => a.id === prev.id);
+        if (listItem) {
+          return mergeArticleListWithDetail(listItem, prev);
+        }
       }
       return visibleArticles[0] ?? null;
     });
@@ -315,7 +321,11 @@ export default function App() {
 
   const handleItemSelect = (item: Article) => {
     void markArticleRead(item.id);
-    setSelectedItem(item);
+    setSelectedItem(prev =>
+      prev?.id === item.id
+        ? mergeArticleListWithDetail(item, prev)
+        : item,
+    );
     setAiSummary(null);
     setIsPlayingAudio(false);
     setActiveImageIndex(0);

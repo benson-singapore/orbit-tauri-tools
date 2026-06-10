@@ -13,6 +13,7 @@ const (
 
 	MediaArticle = "article"
 	MediaManga   = "manga"
+	MediaImage   = "image"
 	MediaVideo   = "video"
 	MediaAudio   = "audio"
 
@@ -152,7 +153,7 @@ func ContentTypeForMedia(mediaType string) string {
 		return "video"
 	case MediaAudio:
 		return "audio"
-	case MediaManga:
+	case MediaManga, MediaImage:
 		return "image"
 	default:
 		return "text"
@@ -166,7 +167,7 @@ func MediaTypeFromIcon(icon string) string {
 	case "audio":
 		return MediaAudio
 	case "image":
-		return MediaManga
+		return MediaImage
 	default:
 		return MediaArticle
 	}

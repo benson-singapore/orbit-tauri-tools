@@ -459,13 +459,16 @@ export function useOrbitData(
 
   const markArticleRead = useCallback(async (id: string) => {
     let wasUnread = false;
-    setArticles(prev => prev.map(article => {
-      if (article.id !== id || article.isRead) {
-        return article;
+    setArticles(prev => {
+      const target = prev.find(article => article.id === id);
+      if (!target || target.isRead) {
+        return prev;
       }
       wasUnread = true;
-      return { ...article, isRead: true };
-    }));
+      return prev.map(article =>
+        article.id === id ? { ...article, isRead: true } : article,
+      );
+    });
     if (wasUnread) {
       setUnreadTotal(prev => Math.max(0, prev - 1));
     }

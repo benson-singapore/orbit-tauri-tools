@@ -1,3 +1,5 @@
+import type { Article } from "@/types";
+
 /** Normalize image URLs so CDN variants (query params, tpl suffix) compare equal. */
 export function normalizeImageUrl(url: string): string {
   const trimmed = url.trim();
@@ -68,4 +70,19 @@ export function dedupeCoverImageFromContent(
   }
 
   return doc.body.innerHTML;
+}
+
+/** Feed list items omit detail fields; keep them when syncing list metadata. */
+export function mergeArticleListWithDetail(
+  listItem: Article,
+  detail: Article,
+): Article {
+  return {
+    ...listItem,
+    content: detail.content,
+    galleryImages: detail.galleryImages,
+    videoUrl: detail.videoUrl,
+    audioUrl: detail.audioUrl,
+    audioDuration: detail.audioDuration,
+  };
 }
