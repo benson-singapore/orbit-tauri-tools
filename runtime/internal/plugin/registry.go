@@ -781,11 +781,12 @@ func (r *Registry) Feed(
 		if effectiveChannel != "" {
 			if ch, ok := findChannel(rec.Config.Channels, effectiveChannel); ok {
 				isDynamic := ChannelDynamic(ch)
+				browseDynamic := ChannelBrowseDynamic(ch, rec.MediaType)
 				log.Printf(
-					"[orbit-feed] channel resolve plugin=%q channel=%q found=%v dynamic=%v route=%q ch_params=%s",
-					rec.ID, effectiveChannel, ok, isDynamic, ch.Route, mustJSON(ch.Params),
+					"[orbit-feed] channel resolve plugin=%q channel=%q found=%v dynamic=%v browseDynamic=%v route=%q ch_params=%s",
+					rec.ID, effectiveChannel, ok, isDynamic, browseDynamic, ch.Route, mustJSON(ch.Params),
 				)
-				if isDynamic {
+				if isDynamic || browseDynamic {
 					items, err := r.fetchDynamicChannel(ctx, rec, ch, search, limit, offset)
 					if err != nil {
 						return FeedQueryResult{}, err
@@ -853,7 +854,8 @@ func (r *Registry) fetchDynamicChannel(
 	limit, offset int,
 ) ([]FeedItem, error) {
 	search = strings.TrimSpace(search)
-	if search == "" {
+	browseDynamic := ChannelBrowseDynamic(ch, rec.MediaType)
+	if search == "" && !browseDynamic {
 		return []FeedItem{}, nil
 	}
 	if rec.Source != SourceWASM {
@@ -871,10 +873,15 @@ func (r *Registry) fetchDynamicChannel(
 		)
 		return []FeedItem{}, nil
 	}
-	overrides := DynamicSearchWasmOverrides(ch, search, limit, offset)
+	var overrides map[string]string
+	if browseDynamic {
+		overrides = DynamicImageWasmOverrides(ch, limit, offset)
+	} else {
+		overrides = DynamicSearchWasmOverrides(ch, search, limit, offset)
+	}
 	log.Printf(
-		"[orbit-feed] dynamic fetch plugin=%q channel=%q q=%q limit=%d offset=%d wasm_page=%d overrides=%s",
-		rec.ID, ch.ID, search, limit, offset, page, mustJSON(overrides),
+		"[orbit-feed] dynamic fetch plugin=%q channel=%q browseDynamic=%v q=%q limit=%d offset=%d wasm_page=%d overrides=%s",
+		rec.ID, ch.ID, browseDynamic, search, limit, offset, page, mustJSON(overrides),
 	)
 	items, err := r.wasmExec.FetchChannelWithParams(ctx, dir, rec, ch, overrides)
 	if err != nil {

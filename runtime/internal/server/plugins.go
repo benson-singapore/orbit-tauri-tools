@@ -80,7 +80,7 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		MediaType:       rec.MediaType,
 		Active:          rec.Active,
 		Desc:            rec.Meta.Description,
-		Channels:        plugin.ChannelsForAPI(rec.Config.Channels),
+		Channels:        plugin.ChannelsForAPI(rec.Config.Channels, rec.MediaType),
 		DefaultChannel:  rec.Config.DefaultChannel,
 		RefreshInterval: rec.Config.RefreshInterval,
 		UserAgent:       rec.Config.UserAgent,

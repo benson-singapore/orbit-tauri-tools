@@ -13,7 +13,15 @@ import {
   uninstallPlugin,
   updatePluginManifest,
 } from "@/lib/feed";
-import { DYNAMIC_SEARCH_MAX_PAGES, isChannelDynamic } from "@/lib/channelStatus";
+import { DYNAMIC_SEARCH_MAX_PAGES, isChannelDynamic, isChannelEnabled } from "@/lib/channelStatus";
+import {
+  isBrowseDynamicChannel,
+  isBrowseDynamicFeedMode,
+  isBrowseDynamicImageArticle,
+  isBrowseDynamicPlugin,
+  resolveFeedChannelId,
+} from "@/lib/browseDynamicFeed";
+import { isImageGalleryPlugin } from "@/lib/imagePlugin";
 import type { Article, InstallRSSPluginRequest, Plugin } from "@/types";
 
 function resolveActiveDynamicFeed(plugins: Plugin[], pluginId: string, channelId: string): boolean {
@@ -22,12 +30,21 @@ function resolveActiveDynamicFeed(plugins: Plugin[], pluginId: string, channelId
   }
   const plugin = plugins.find(p => p.id === pluginId);
   const channel = plugin?.channels?.find(ch => ch.id === channelId);
+  if (isBrowseDynamicChannel(channel, plugin)) {
+    return true;
+  }
   return isChannelDynamic(channel);
 }
 
 const ALL_PLUGIN: Plugin = INITIAL_PLUGINS[0]!;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 export const FEED_PAGE_SIZE = 20;
+export const IMAGE_FEED_PAGE_SIZE = 40;
+
+function resolveFeedPageSize(plugin?: Plugin | null): number {
+  return isImageGalleryPlugin(plugin) ? IMAGE_FEED_PAGE_SIZE : FEED_PAGE_SIZE;
+}
+
 const FEED_RELOAD_DELAYS_MS = [3000, 5000, 10000, 20000, 40000, 60000];
 
 function scheduleFeedReloadAfterBackgroundFetch(
@@ -50,6 +67,7 @@ interface UseOrbitDataResult {
   searching: boolean;
   loadingMore: boolean;
   hasMore: boolean;
+  feedPageSize: number;
   error: string | null;
   reload: () => Promise<void>;
   refreshFromCache: () => Promise<void>;
@@ -119,19 +137,28 @@ export function useOrbitData(
     const channel = channelFilterRef.current;
     const contentType = contentTypeFilterRef.current;
     const search = searchFilterRef.current.trim();
+    const plugin = pluginsRef.current.find(p => p.id === pluginId);
+    const pageSize = resolveFeedPageSize(plugin);
+    const pluginChannels = (plugin?.channels ?? []).filter(ch =>
+      isChannelEnabled(ch.status),
+    );
+    const feedChannel = resolveFeedChannelId(plugin, pluginChannels, channel);
     const dynamicFeed = resolveActiveDynamicFeed(
       pluginsRef.current,
-      pluginFilterRef.current,
-      channelFilterRef.current,
+      pluginId,
+      feedChannel,
     );
     let offset = options?.offset ?? 0;
     if (dynamicFeed) {
       if (append) {
         dynamicPageRef.current += 1;
       }
-      offset = (dynamicPageRef.current - 1) * FEED_PAGE_SIZE;
+      offset = (dynamicPageRef.current - 1) * pageSize;
     }
-    if (dynamicFeed && !search) {
+    const browseDynamicFeed =
+      isBrowseDynamicPlugin(plugin, pluginChannels)
+      && isBrowseDynamicFeedMode(plugin, pluginChannels, feedChannel);
+    if (dynamicFeed && !search && !browseDynamicFeed) {
       if (requestId !== feedRequestId.current) {
         return;
       }
@@ -174,13 +201,13 @@ export function useOrbitData(
       pluginId: scopeIds.length > 0 ? undefined : pluginId,
       pluginIds: scopeIds.length > 0 ? scopeIds : undefined,
       channel:
-        pluginId !== "all" && channel !== "all" ? channel : undefined,
+        pluginId !== "all" && feedChannel !== "all" ? feedChannel : undefined,
       type:
         pluginId === "all" && contentType && contentType !== "all"
           ? (contentType as import("@/types").ContentType)
           : undefined,
       search: search || undefined,
-      limit: FEED_PAGE_SIZE,
+      limit: pageSize,
       offset,
     });
     if (requestId !== feedRequestId.current) {
@@ -189,7 +216,7 @@ export function useOrbitData(
     const items = data.items ?? [];
     const total = data.total ?? (offset + items.length);
     setFeedTotal(total);
-    const page = Math.floor(offset / FEED_PAGE_SIZE) + 1;
+    const page = Math.floor(offset / pageSize) + 1;
     const moreFromApi = offset + items.length < total;
     if (typeof data.hasMore === "boolean") {
       setHasMore(data.hasMore);
@@ -228,10 +255,19 @@ export function useOrbitData(
     }
     setLoadingMore(true);
     try {
+      const plugin = pluginsRef.current.find(p => p.id === pluginFilterRef.current);
+      const pluginChannels = (plugin?.channels ?? []).filter(ch =>
+        isChannelEnabled(ch.status),
+      );
+      const feedChannel = resolveFeedChannelId(
+        plugin,
+        pluginChannels,
+        channelFilterRef.current,
+      );
       const dynamicFeed = resolveActiveDynamicFeed(
         pluginsRef.current,
         pluginFilterRef.current,
-        channelFilterRef.current,
+        feedChannel,
       );
       await loadFeedPage(
         dynamicFeed
@@ -258,11 +294,11 @@ export function useOrbitData(
 
   const reloadFeedOnly = useCallback(async (options?: { searching?: boolean }) => {
     const isSearchReload = options?.searching === true;
+    feedRequestId.current += 1;
+    dynamicPageRef.current = 1;
+    setArticles([]);
+    setHasMore(false);
     if (isSearchReload) {
-      feedRequestId.current += 1;
-      dynamicPageRef.current = 1;
-      setArticles([]);
-      setHasMore(false);
       setSearching(true);
     } else {
       setLoading(true);
@@ -459,18 +495,24 @@ export function useOrbitData(
 
   const markArticleRead = useCallback(async (id: string) => {
     let wasUnread = false;
+    let skipPersist = false;
     setArticles(prev => {
       const target = prev.find(article => article.id === id);
       if (!target || target.isRead) {
         return prev;
       }
       wasUnread = true;
+      const plugin = pluginsRef.current.find(p => p.id === target.pluginId);
+      skipPersist = isBrowseDynamicImageArticle(target, plugin);
       return prev.map(article =>
         article.id === id ? { ...article, isRead: true } : article,
       );
     });
     if (wasUnread) {
       setUnreadTotal(prev => Math.max(0, prev - 1));
+    }
+    if (skipPersist) {
+      return;
     }
     try {
       await markFeedItemRead(id);
@@ -484,6 +526,10 @@ export function useOrbitData(
     }
   }, []);
 
+  const feedPageSize = resolveFeedPageSize(
+    plugins.find(p => p.id === pluginFilter),
+  );
+
   return {
     plugins,
     articles,
@@ -493,6 +539,7 @@ export function useOrbitData(
     searching,
     loadingMore,
     hasMore,
+    feedPageSize,
     error,
     reload,
     refreshFromCache,

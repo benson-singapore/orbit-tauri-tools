@@ -9,16 +9,22 @@ function isSearchRoute(route?: string): boolean {
   return normalized.includes("/search/") || normalized.endsWith("/search");
 }
 
+export function isSearchDynamicChannel(
+  channel?: Pick<PluginChannel, "dynamic" | "type" | "route">,
+): boolean {
+  if (channel?.type === "search") {
+    return true;
+  }
+  return isSearchRoute(channel?.route);
+}
+
 export function isChannelDynamic(
   channel?: Pick<PluginChannel, "dynamic" | "type" | "route">,
 ): boolean {
   if (channel?.dynamic === true) {
     return true;
   }
-  if (channel?.type === "search") {
-    return true;
-  }
-  return isSearchRoute(channel?.route);
+  return isSearchDynamicChannel(channel);
 }
 
 /** status が空の場合は enabled として扱う */

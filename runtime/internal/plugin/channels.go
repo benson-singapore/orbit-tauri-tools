@@ -43,6 +43,14 @@ func ChannelDynamic(ch *FeedChannel) bool {
 	return ch.Dynamic
 }
 
+// ChannelBrowseDynamic reports image-plugin channels with explicit dynamic: true (browse by params, no q).
+func ChannelBrowseDynamic(ch *FeedChannel, mediaType string) bool {
+	if ch == nil || mediaType != MediaImage {
+		return false
+	}
+	return ch.Dynamic
+}
+
 // ChannelStatus returns the effective channel status (empty means enabled).
 func ChannelStatus(ch *FeedChannel) string {
 	if ch == nil {
@@ -82,7 +90,7 @@ func ChannelItemLimit(ch *FeedChannel) int {
 // MigrateManifestConfig converts legacy config.feedUrl into a single channel.
 func MigrateManifestConfig(cfg *ManifestConfig) {
 	if len(cfg.Channels) > 0 {
-		normalizeChannels(cfg)
+		normalizeChannels(cfg, "")
 		return
 	}
 	legacy := strings.TrimSpace(cfg.LegacyFeedURL)
@@ -97,7 +105,7 @@ func MigrateManifestConfig(cfg *ManifestConfig) {
 	cfg.LegacyFeedURL = ""
 }
 
-func normalizeChannels(cfg *ManifestConfig) {
+func normalizeChannels(cfg *ManifestConfig, mediaType string) {
 	for i := range cfg.Channels {
 		cfg.Channels[i].ID = strings.TrimSpace(cfg.Channels[i].ID)
 		cfg.Channels[i].Label = strings.TrimSpace(cfg.Channels[i].Label)
@@ -111,6 +119,22 @@ func normalizeChannels(cfg *ManifestConfig) {
 			cfg.Channels[i].Status = ChannelStatusDisabled
 		}
 		inferSearchChannelMetadata(&cfg.Channels[i])
+		inferBrowseChannelMetadata(&cfg.Channels[i], mediaType)
+	}
+}
+
+func inferBrowseChannelMetadata(ch *FeedChannel, mediaType string) {
+	if ch == nil || ch.Dynamic {
+		return
+	}
+	if mediaType != MediaImage {
+		return
+	}
+	if isSearchRoute(ch.Route) || strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeSearch) {
+		return
+	}
+	if strings.TrimSpace(ch.Route) != "" && strings.TrimSpace(ch.FeedURL) == "" {
+		ch.Dynamic = true
 	}
 }
 
@@ -132,11 +156,12 @@ func inferSearchChannelMetadata(ch *FeedChannel) {
 	}
 }
 
-// ChannelsForAPI returns enabled channels with search metadata normalized for clients.
-func ChannelsForAPI(channels []FeedChannel) []FeedChannel {
+// ChannelsForAPI returns enabled channels with search/browse metadata normalized for clients.
+func ChannelsForAPI(channels []FeedChannel, mediaType string) []FeedChannel {
 	out := EnabledChannels(channels)
 	for i := range out {
 		inferSearchChannelMetadata(&out[i])
+		inferBrowseChannelMetadata(&out[i], mediaType)
 	}
 	return out
 }
@@ -246,6 +271,26 @@ func WasmPageFromOffset(limit, offset int) int {
 	return offset/limit + 1
 }
 
+// DynamicImageWasmOverrides builds WASM param overrides for a paged image gallery feed.
+func DynamicImageWasmOverrides(ch *FeedChannel, limit, offset int) map[string]string {
+	page := WasmPageFromOffset(limit, offset)
+	if limit <= 0 {
+		limit = DefaultFeedPageSize
+	}
+	pageKey := channelPageParamKey(ch)
+	if pageKey == "" {
+		pageKey = "page"
+	}
+	sizeKey := channelSizeParamKey(ch)
+	if sizeKey == "" {
+		sizeKey = "size"
+	}
+	return map[string]string{
+		pageKey: strconv.Itoa(page),
+		sizeKey: strconv.Itoa(limit),
+	}
+}
+
 // DynamicSearchWasmOverrides builds WASM param overrides for a paged search request.
 func DynamicSearchWasmOverrides(ch *FeedChannel, query string, limit, offset int) map[string]string {
 	page := WasmPageFromOffset(limit, offset)
@@ -313,6 +358,18 @@ func channelPageParamKey(ch *FeedChannel) string {
 	}
 	if isSearchRoute(ch.Route) {
 		return "page"
+	}
+	return ""
+}
+
+func channelSizeParamKey(ch *FeedChannel) string {
+	if ch == nil {
+		return ""
+	}
+	if ch.Params != nil {
+		if _, ok := ch.Params["size"]; ok {
+			return "size"
+		}
 	}
 	return ""
 }

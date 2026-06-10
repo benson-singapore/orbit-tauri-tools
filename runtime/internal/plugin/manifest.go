@@ -93,6 +93,7 @@ func ValidateManifest(m *Manifest) error {
 			return fmt.Errorf("wasm plugin must declare capability %q", CapFeed)
 		}
 		MigrateManifestConfig(&m.Config)
+		normalizeChannels(&m.Config, m.MediaType)
 		if err := validateWasmChannels(m.Config.Channels); err != nil {
 			return err
 		}
