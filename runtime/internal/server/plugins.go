@@ -63,6 +63,7 @@ type pluginView struct {
 	Official        bool                 `json:"official,omitempty"`
 	Source          string               `json:"source"`
 	Sort            int                  `json:"sort"`
+	InstalledAt     int64                `json:"installedAt,omitempty"`
 	LastError       string               `json:"lastError,omitempty"`
 	Version         string               `json:"version,omitempty"`
 	MarketID        string               `json:"marketId,omitempty"`
@@ -93,6 +94,7 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		Official:        rec.Meta.Official,
 		Source:          rec.Source,
 		Sort:            rec.SortOrder,
+		InstalledAt:     rec.Installed,
 		LastError:       rec.LastError,
 		Version:         rec.Version,
 		MarketID:        rec.Meta.MarketID,

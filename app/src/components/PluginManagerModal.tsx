@@ -18,7 +18,7 @@ import { isChannelDynamic, normalizeChannelStatus, type ChannelStatus } from "@/
 import { resolveColorToHex } from "@/lib/pluginColor";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
-import { DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
+import { ALL_MANAGE_GROUP_ID, DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import type {
   InstallRSSPluginRequest,
   MarketPluginItem,
@@ -3595,23 +3595,44 @@ export function PluginManagerModal({
   const [installError, setInstallError] = useState<string | null>(null);
   const [importTargetGroupId, setImportTargetGroupId] = useState<string | null>(null);
   const [showGroupManager, setShowGroupManager] = useState(false);
-  const [activeManageGroupId, setActiveManageGroupId] = useState<string>(
-    () => groupedPluginsForManage[0]?.group.id ?? DEFAULT_PLUGIN_GROUP_ID,
-  );
+  const [activeManageGroupId, setActiveManageGroupId] = useState<string>(ALL_MANAGE_GROUP_ID);
 
-  const activeManageGroup = useMemo(
-    () =>
+  const allPluginsByInstallTime = useMemo(() => {
+    const seen = new Set<string>();
+    const all: Plugin[] = [];
+    for (const { plugins } of groupedPluginsForManage) {
+      for (const plugin of plugins) {
+        if (seen.has(plugin.id)) continue;
+        seen.add(plugin.id);
+        all.push(plugin);
+      }
+    }
+    return all.sort(
+      (a, b) =>
+        (b.installedAt ?? b.sort ?? 0) - (a.installedAt ?? a.sort ?? 0),
+    );
+  }, [groupedPluginsForManage]);
+
+  const activeManageGroup = useMemo(() => {
+    if (activeManageGroupId === ALL_MANAGE_GROUP_ID) {
+      return {
+        group: { id: ALL_MANAGE_GROUP_ID, label: "全部" },
+        plugins: allPluginsByInstallTime,
+      };
+    }
+    return (
       groupedPluginsForManage.find(entry => entry.group.id === activeManageGroupId)
-      ?? groupedPluginsForManage[0],
-    [groupedPluginsForManage, activeManageGroupId],
-  );
+      ?? groupedPluginsForManage[0]
+    );
+  }, [groupedPluginsForManage, activeManageGroupId, allPluginsByInstallTime]);
 
   useEffect(() => {
+    if (activeManageGroupId === ALL_MANAGE_GROUP_ID) return;
     if (
       groupedPluginsForManage.length > 0
       && !groupedPluginsForManage.some(entry => entry.group.id === activeManageGroupId)
     ) {
-      setActiveManageGroupId(groupedPluginsForManage[0].group.id);
+      setActiveManageGroupId(ALL_MANAGE_GROUP_ID);
     }
   }, [groupedPluginsForManage, activeManageGroupId]);
 
@@ -3990,6 +4011,28 @@ export function PluginManagerModal({
                     role="tablist"
                     aria-label="插件分组"
                   >
+                    <button
+                      type="button"
+                      role="tab"
+                      aria-selected={activeManageGroupId === ALL_MANAGE_GROUP_ID}
+                      onClick={() => setActiveManageGroupId(ALL_MANAGE_GROUP_ID)}
+                      className={`shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
+                        activeManageGroupId === ALL_MANAGE_GROUP_ID
+                          ? "bg-white dark:bg-neutral-800 text-[#5856D6] shadow-sm"
+                          : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
+                      }`}
+                    >
+                      <span className="truncate max-w-[8rem]">全部</span>
+                      <span
+                        className={`text-[10px] px-1.5 py-0.5 rounded-md ${
+                          activeManageGroupId === ALL_MANAGE_GROUP_ID
+                            ? "bg-[#5856D6]/10 text-[#5856D6]"
+                            : "bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500"
+                        }`}
+                      >
+                        {allPluginsByInstallTime.length}
+                      </span>
+                    </button>
                     {groupedPluginsForManage.map(({ group, plugins }) => (
                       <button
                         key={group.id}
@@ -4019,7 +4062,13 @@ export function PluginManagerModal({
                   {activeManageGroup && (
                     <button
                       type="button"
-                      onClick={() => openImportForGroup(activeManageGroup.group.id)}
+                      onClick={() =>
+                        openImportForGroup(
+                          activeManageGroupId === ALL_MANAGE_GROUP_ID
+                            ? DEFAULT_PLUGIN_GROUP_ID
+                            : activeManageGroup.group.id,
+                        )
+                      }
                       className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4]"
                     >
                       导入插件
@@ -4059,7 +4108,9 @@ export function PluginManagerModal({
                     />
                   ) : (
                     <p className="text-sm text-neutral-400 text-center py-16">
-                      「{activeManageGroup.group.label}」暂无插件，点击「导入插件」将自动添加到此分组。
+                      {activeManageGroupId === ALL_MANAGE_GROUP_ID
+                        ? "暂无已安装插件，点击「导入插件」开始添加。"
+                        : `「${activeManageGroup.group.label}」暂无插件，点击「导入插件」将自动添加到此分组。`}
                     </p>
                   )
                 ) : (

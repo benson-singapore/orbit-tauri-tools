@@ -1,6 +1,7 @@
 import type { Plugin } from "@/types";
 
 export const DEFAULT_PLUGIN_GROUP_ID = "default";
+export const ALL_MANAGE_GROUP_ID = "__all__";
 
 export interface PluginSidebarGroup {
   id: string;

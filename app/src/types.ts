@@ -121,6 +121,7 @@ export interface Plugin {
   official?: boolean;
   source?: string;
   sort?: number;
+  installedAt?: number;
   lastError?: string;
   version?: string;
   marketId?: string;
