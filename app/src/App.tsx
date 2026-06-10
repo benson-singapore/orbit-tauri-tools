@@ -463,6 +463,9 @@ export default function App() {
   };
 
   const selectGroupAll = (groupId: string) => {
+    if (activePlugin !== "all") {
+      clearSearch();
+    }
     setActivePlugin("all");
     setActiveChannel("all");
     setActivePluginGroupId(groupId);
@@ -511,6 +514,9 @@ export default function App() {
   );
 
   const selectPlugin = (pluginId: string, groupId?: string) => {
+    if (pluginId !== activePlugin) {
+      clearSearch();
+    }
     if (
       activePlugin !== "all"
       && activePlugin !== pluginId
