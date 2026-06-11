@@ -77,3 +77,22 @@ export function isBrowseDynamicImageArticle(
   return isBrowseDynamicChannel(channel, plugin);
 }
 
+/** rating 插件（评分排行榜）：列表项已含完整展示字段，无需再拉 /v1/feed/item */
+export function isRatingPluginArticle(
+  _article: Pick<Article, "pluginId">,
+  plugin?: Plugin | null,
+): boolean {
+  return plugin?.mediaType === "rating";
+}
+
+/** 列表记录即可作为详情展示，跳过 /v1/feed/item */
+export function shouldSkipFeedItemDetailFetch(
+  article: Pick<Article, "pluginId" | "channelId">,
+  plugin?: Plugin | null,
+): boolean {
+  return (
+    isBrowseDynamicImageArticle(article, plugin)
+    || isRatingPluginArticle(article, plugin)
+  );
+}
+

@@ -1,6 +1,9 @@
 package plugin
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestChannelDynamic(t *testing.T) {
 	if ChannelDynamic(nil) {
@@ -146,6 +149,188 @@ func TestDynamicImageWasmOverrides(t *testing.T) {
 	}
 	if overrides["size"] != "20" {
 		t.Fatalf("expected size=20, got %q", overrides["size"])
+	}
+}
+
+func TestChannelDetailDynamic(t *testing.T) {
+	if ChannelDetailDynamic(nil) {
+		t.Fatal("nil channel must not be detail dynamic")
+	}
+	if ChannelDetailDynamic(&FeedChannel{
+		Status:  ChannelStatusDisabled,
+		Type:    ChannelTypeDetail,
+		Dynamic: true,
+	}) != true {
+		t.Fatal("disabled detail dynamic channel must match")
+	}
+	if ChannelDetailDynamic(&FeedChannel{
+		Status:  ChannelStatusDisabled,
+		Type:    ChannelTypeDetail,
+		Dynamic: false,
+	}) {
+		t.Fatal("detail channel without dynamic must not match")
+	}
+	if ChannelDetailDynamic(&FeedChannel{
+		Status:  ChannelStatusEnabled,
+		Type:    ChannelTypeDetail,
+		Dynamic: true,
+	}) {
+		t.Fatal("enabled detail channel must not match")
+	}
+}
+
+func TestFindDetailDynamicChannel(t *testing.T) {
+	channels := []FeedChannel{
+		{ID: "main", Route: "/list"},
+		{ID: "detail", Route: "/detail/:id", Status: ChannelStatusDisabled, Type: ChannelTypeDetail, Dynamic: true},
+	}
+	ch, ok := FindDetailDynamicChannel(channels)
+	if !ok || ch == nil || ch.ID != "detail" {
+		t.Fatalf("expected detail channel, got ok=%v ch=%v", ok, ch)
+	}
+}
+
+func TestBuildDetailParams(t *testing.T) {
+	ch := &FeedChannel{
+		Route: "/detail/:id",
+		Params: map[string]string{
+			"id": "",
+		},
+	}
+	item := FeedItem{
+		ID:        "hellogithub:ai-featured:rohitg00/ai-engineering-from-scratch",
+		PluginID:  "hellogithub",
+		ChannelID: "ai-featured",
+	}
+	params := BuildDetailParams(ch, item)
+	if params["id"] != "rohitg00/ai-engineering-from-scratch" {
+		t.Fatalf("expected third-party id, got %q", params["id"])
+	}
+}
+
+func TestMergeFeedItemDetail(t *testing.T) {
+	base := FeedItem{
+		ID:      "p:ch:1",
+		Title:   "List title",
+		Summary: "List summary",
+		IsRead:  true,
+	}
+	fetched := FeedItem{
+		Title:   "Fetched title",
+		Content: "<p>body</p>",
+	}
+	merged := mergeFeedItemDetail(base, fetched)
+	if merged.Content != "<p>body</p>" {
+		t.Fatalf("expected fetched content, got %q", merged.Content)
+	}
+	if !merged.IsRead {
+		t.Fatal("expected read state preserved from base item")
+	}
+	if merged.Title != "Fetched title" {
+		t.Fatalf("expected fetched title, got %q", merged.Title)
+	}
+}
+
+func TestInferDetailChannelMetadata(t *testing.T) {
+	ch := FeedChannel{
+		ID:     "detail",
+		Route:  "/hellogithub/detail/:id",
+		Status: ChannelStatusDisabled,
+		Params: map[string]string{"id": ""},
+	}
+	inferDetailChannelMetadata(&ch)
+	if ch.Type != ChannelTypeDetail {
+		t.Fatalf("expected type detail, got %q", ch.Type)
+	}
+	if !ch.Dynamic {
+		t.Fatal("expected dynamic=true for detail channel")
+	}
+}
+
+func TestParseManifestPreservesDetailChannelType(t *testing.T) {
+	raw := `{
+		"id": "hellogithub",
+		"name": "HelloGithub",
+		"version": "1.0.2",
+		"mediaType": "article",
+		"source": "wasm",
+		"capabilities": ["feed"],
+		"config": {
+			"channels": [
+				{"id": "main", "label": "main", "route": "/hellogithub/list"},
+				{
+					"id": "detail",
+					"label": "项目详情",
+					"route": "/hellogithub/detail/:id",
+					"params": {"id": "Andyyyy64/whichllm"},
+					"status": "disabled",
+					"type": "detail",
+					"dynamic": true
+				}
+			],
+			"defaultChannel": "main",
+			"executionMode": "wasm",
+			"refreshInterval": 3600,
+			"wasm": {"entry": "main.wasm.br", "maxMemoryMB": 64, "timeoutMs": 120000}
+		},
+		"meta": {"description": "test", "icon": "text", "marketCategory": "blog"}
+	}`
+	m, err := ParseManifestBytes([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseManifestBytes: %v", err)
+	}
+	ch, ok := FindDetailDynamicChannel(m.Config.Channels)
+	if !ok || ch.Type != ChannelTypeDetail {
+		t.Fatalf("expected detail channel with type detail, got ok=%v type=%q", ok, ch.Type)
+	}
+	data, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	m2, err := ParseManifestBytes(data)
+	if err != nil {
+		t.Fatalf("re-parse: %v", err)
+	}
+	ch2, ok := FindDetailDynamicChannel(m2.Config.Channels)
+	if !ok || ch2.Type != ChannelTypeDetail {
+		t.Fatalf("expected preserved detail type after marshal, got ok=%v type=%q", ok, ch2.Type)
+	}
+}
+
+func TestParseManifestInfersMissingDetailChannelType(t *testing.T) {
+	raw := `{
+		"id": "hellogithub",
+		"name": "HelloGithub",
+		"version": "1.0.2",
+		"mediaType": "article",
+		"source": "wasm",
+		"capabilities": ["feed"],
+		"config": {
+			"channels": [
+				{"id": "main", "label": "main", "route": "/hellogithub/list"},
+				{
+					"id": "detail",
+					"label": "项目详情",
+					"route": "/hellogithub/detail/:id",
+					"params": {"id": "Andyyyy64/whichllm"},
+					"status": "disabled",
+					"dynamic": true
+				}
+			],
+			"defaultChannel": "main",
+			"executionMode": "wasm",
+			"refreshInterval": 3600,
+			"wasm": {"entry": "main.wasm.br", "maxMemoryMB": 64, "timeoutMs": 120000}
+		},
+		"meta": {"description": "test", "icon": "text", "marketCategory": "blog"}
+	}`
+	m, err := ParseManifestBytes([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseManifestBytes: %v", err)
+	}
+	ch, ok := FindDetailDynamicChannel(m.Config.Channels)
+	if !ok || ch.Type != ChannelTypeDetail {
+		t.Fatalf("expected inferred detail channel, got ok=%v type=%q", ok, ch.Type)
 	}
 }
 

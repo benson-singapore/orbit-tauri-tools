@@ -15,6 +15,7 @@ const (
 	ChannelStatusDisabled = "disabled"
 
 	ChannelTypeSearch = "search"
+	ChannelTypeDetail = "detail"
 )
 
 // FeedChannel is one feed source within a plugin (RSS feedUrl or WASM route).
@@ -69,6 +70,56 @@ func ChannelEnabled(ch *FeedChannel) bool {
 	return ChannelStatus(ch) != ChannelStatusDisabled
 }
 
+// ChannelDetailDynamic reports a hidden detail channel used for live single-item fetches.
+func ChannelDetailDynamic(ch *FeedChannel) bool {
+	if ch == nil {
+		return false
+	}
+	return ChannelStatus(ch) == ChannelStatusDisabled &&
+		strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeDetail) &&
+		ch.Dynamic
+}
+
+// FindDetailDynamicChannel returns the first detail channel across all channels (including disabled).
+func FindDetailDynamicChannel(channels []FeedChannel) (*FeedChannel, bool) {
+	for i := range channels {
+		if ChannelDetailDynamic(&channels[i]) {
+			return &channels[i], true
+		}
+	}
+	return nil, false
+}
+
+func channelDetailParamKey(ch *FeedChannel) string {
+	if ch == nil {
+		return "id"
+	}
+	if key := firstRouteParam(ch.Route); key != "" {
+		return key
+	}
+	for k, v := range ch.Params {
+		if strings.TrimSpace(v) == "" {
+			return k
+		}
+	}
+	return "id"
+}
+
+// BuildDetailParams merges channel defaults with the third-party item id for a detail fetch.
+func BuildDetailParams(ch *FeedChannel, item FeedItem) map[string]string {
+	params := make(map[string]string, len(ch.Params)+1)
+	for k, v := range ch.Params {
+		params[k] = v
+	}
+	paramKey := channelDetailParamKey(ch)
+	paramValue := extractThirdPartyFeedID(item)
+	if paramValue == "" {
+		paramValue = strings.TrimSpace(item.ID)
+	}
+	params[paramKey] = paramValue
+	return params
+}
+
 // EnabledChannels returns only channels that are not disabled.
 func EnabledChannels(channels []FeedChannel) []FeedChannel {
 	out := make([]FeedChannel, 0, len(channels))
@@ -118,6 +169,7 @@ func normalizeChannels(cfg *ManifestConfig, mediaType string) {
 		case ChannelStatusDisabled:
 			cfg.Channels[i].Status = ChannelStatusDisabled
 		}
+		inferDetailChannelMetadata(&cfg.Channels[i])
 		inferSearchChannelMetadata(&cfg.Channels[i])
 		inferBrowseChannelMetadata(&cfg.Channels[i], mediaType)
 	}
@@ -141,6 +193,32 @@ func inferBrowseChannelMetadata(ch *FeedChannel, mediaType string) {
 func isSearchRoute(route string) bool {
 	route = strings.ToLower(strings.TrimSpace(route))
 	return strings.Contains(route, "/search/") || strings.HasSuffix(route, "/search")
+}
+
+func isDetailRoute(route string) bool {
+	route = strings.ToLower(strings.TrimSpace(route))
+	return strings.Contains(route, "/detail/") || strings.HasSuffix(route, "/detail")
+}
+
+// inferDetailChannelMetadata marks hidden detail routes used for live single-item fetches.
+func inferDetailChannelMetadata(ch *FeedChannel) {
+	if ch == nil {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeDetail) {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeSearch) {
+		return
+	}
+	if ChannelStatus(ch) != ChannelStatusDisabled {
+		return
+	}
+	if !isDetailRoute(ch.Route) {
+		return
+	}
+	ch.Type = ChannelTypeDetail
+	ch.Dynamic = true
 }
 
 // inferSearchChannelMetadata marks WASM search routes as dynamic feed channels.

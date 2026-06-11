@@ -4,6 +4,7 @@ import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginReadmeModal } from "@/components/PluginReadmeModal";
 import {
   fetchMarketPlugins,
+  fetchPluginCategoryCounts,
   fetchPluginTypeDicts,
   parseMarketPluginZhTags,
 } from "@/lib/orbitApi";
@@ -13,6 +14,11 @@ import {
   fetchPluginReadme,
   installOrbitPackage,
 } from "@/lib/feed";
+import {
+  MARKET_CONTENT_RATING_LABELS,
+  persistMarketContentRating,
+  readStoredMarketContentRating,
+} from "@/lib/marketContentRating";
 import { slugifyChannelId } from "@/lib/channelId";
 import { isChannelDynamic, normalizeChannelStatus, type ChannelStatus } from "@/lib/channelStatus";
 import { resolveColorToHex } from "@/lib/pluginColor";
@@ -21,6 +27,7 @@ import type { PluginSidebarGroup } from "@/lib/pluginGroups";
 import { ALL_MANAGE_GROUP_ID, DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import type {
   InstallRSSPluginRequest,
+  MarketPluginContentRating,
   MarketPluginItem,
   MarketPluginSort,
   Plugin,
@@ -128,6 +135,10 @@ function isWasmChannelIdSyncedWithLabel(row: WasmChannelFormRow): boolean {
   return row.id === "main" && row.label === "默认";
 }
 
+function formatPrettyJson(input: string): string {
+  return JSON.stringify(JSON.parse(input), null, 2);
+}
+
 function parseWasmChannelParams(paramsStr: string): Record<string, string> | undefined {
   const trimmed = paramsStr.trim();
   if (!trimmed) return undefined;
@@ -217,6 +228,18 @@ const MARKET_SORT_OPTIONS: { id: MarketPluginSort; label: string }[] = [
   { id: "downloads", label: "安装量" },
   { id: "size", label: "文件大小" },
 ];
+
+const MARKET_CONTENT_RATING_OPTIONS: { id: MarketPluginContentRating; label: string }[] = [
+  { id: "general", label: MARKET_CONTENT_RATING_LABELS.general },
+  { id: "under18", label: MARKET_CONTENT_RATING_LABELS.under18 },
+  { id: "mature", label: MARKET_CONTENT_RATING_LABELS.mature },
+];
+
+const MARKET_CONTENT_RATING_TAG_CLASS: Record<MarketPluginContentRating, string> = {
+  general: "bg-emerald-50 text-emerald-600 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-800",
+  under18: "bg-sky-50 text-sky-600 border-sky-200 dark:bg-sky-950/40 dark:text-sky-400 dark:border-sky-800",
+  mature: "bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800",
+};
 
 const MARKET_TAG_COLOR_CLASS: Record<string, string> = {
   blue: "bg-blue-50 text-blue-600 border-blue-200",
@@ -389,6 +412,15 @@ function MarketPluginCard({
                 }`}
               >
                 v{plugin.version.trim()}
+              </span>
+            ) : null}
+            {plugin.contentRating ? (
+              <span
+                className={`shrink-0 inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border ${
+                  MARKET_CONTENT_RATING_TAG_CLASS[plugin.contentRating]
+                }`}
+              >
+                {MARKET_CONTENT_RATING_LABELS[plugin.contentRating]}
               </span>
             ) : null}
           </h3>
@@ -1058,7 +1090,8 @@ function WasmManifestEditorModal({
       nextMediaType === "manga" ||
       nextMediaType === "image" ||
       nextMediaType === "video" ||
-      nextMediaType === "audio"
+      nextMediaType === "audio" ||
+      nextMediaType === "rating"
     ) {
       setMediaType(nextMediaType);
     }
@@ -1182,8 +1215,9 @@ function WasmManifestEditorModal({
       if (ch.dynamic === true) {
         item.dynamic = true;
       }
-      if (ch.type === "search") {
-        item.type = "search";
+      const channelType = ch.type?.trim();
+      if (channelType) {
+        item.type = channelType;
       }
       return item;
     });
@@ -1412,7 +1446,8 @@ function WasmManifestEditorModal({
         }
         return;
       }
-      const text = buildManifestJsonText();
+      const text =
+        viewMode === "json" ? formatPrettyJson(jsonText) : buildManifestJsonText();
       JSON.parse(text);
       await onSave(text);
       onClose();
@@ -1875,6 +1910,7 @@ function WasmManifestEditorModal({
                           <option value="image">image</option>
                           <option value="video">video</option>
                           <option value="audio">audio</option>
+                          <option value="rating">rating</option>
                         </StyledSelect>
                       </div>
                     </div>
@@ -1994,7 +2030,7 @@ function WasmManifestEditorModal({
                     onBlur={() => {
                       setIsEditingJson(false);
                       if (applyJsonToForm(jsonText)) {
-                        setJsonText(buildManifestJsonText());
+                        setJsonText(formatPrettyJson(jsonText));
                       }
                     }}
                     spellCheck={false}
@@ -2328,7 +2364,8 @@ function ImportPluginModal({
       initialPlugin.mediaType === "manga" ||
       initialPlugin.mediaType === "image" ||
       initialPlugin.mediaType === "video" ||
-      initialPlugin.mediaType === "audio"
+      initialPlugin.mediaType === "audio" ||
+      initialPlugin.mediaType === "rating"
     ) {
       setMediaType(initialPlugin.mediaType);
     }
@@ -2443,7 +2480,8 @@ function ImportPluginModal({
         nextMediaType === "manga" ||
         nextMediaType === "image" ||
         nextMediaType === "video" ||
-        nextMediaType === "audio"
+        nextMediaType === "audio" ||
+        nextMediaType === "rating"
       ) {
         setMediaType(nextMediaType);
       }
@@ -2971,6 +3009,7 @@ function ImportPluginModal({
                           <option value="image">image</option>
                           <option value="video">video</option>
                           <option value="audio">audio</option>
+                          <option value="rating">rating</option>
                         </StyledSelect>
                       </div>
                       <div className="space-y-1.5">
@@ -3163,7 +3202,7 @@ function ImportPluginModal({
                     onBlur={() => {
                       setIsEditingJson(false);
                       if (applyJsonToForm(jsonText)) {
-                        setJsonText(buildManifestJsonText());
+                        setJsonText(formatPrettyJson(jsonText));
                       }
                     }}
                     spellCheck={false}
@@ -3648,13 +3687,20 @@ export function PluginManagerModal({
   const [marketPlugins, setMarketPlugins] = useState<MarketPluginItem[]>([]);
   const [marketTotal, setMarketTotal] = useState(0);
   const [marketLoading, setMarketLoading] = useState(false);
-  const [marketSort, setMarketSort] = useState<MarketPluginSort>("rating");
+  const [marketSort, setMarketSort] = useState<MarketPluginSort>("downloads");
+  const [marketContentRating, setMarketContentRating] = useState<MarketPluginContentRating>(
+    readStoredMarketContentRating,
+  );
   const [debouncedMarketSearch, setDebouncedMarketSearch] = useState("");
   const [marketGroups, setMarketGroups] = useState<{ id: string; label: string }[]>([
     { id: "all", label: "全部官方精选" },
   ]);
   const [marketGroupsLoading, setMarketGroupsLoading] = useState(false);
   const [marketPluginsForCount, setMarketPluginsForCount] = useState<MarketPluginItem[]>([]);
+  const [marketCategoryCounts, setMarketCategoryCounts] = useState<{
+    total: number;
+    counts: Record<string, number>;
+  } | null>(null);
   const [marketSidebarRefreshing, setMarketSidebarRefreshing] = useState(false);
 
   const loadMarketGroups = useCallback(async () => {
@@ -3683,12 +3729,23 @@ export function PluginManagerModal({
     }
   }, []);
 
+  const loadMarketCategoryCounts = useCallback(async () => {
+    try {
+      const data = await fetchPluginCategoryCounts();
+      setMarketCategoryCounts(data);
+    } catch (err) {
+      console.error("load plugin category counts failed", err);
+      setMarketCategoryCounts(null);
+    }
+  }, []);
+
   const loadMarketPlugins = useCallback(async () => {
     setMarketLoading(true);
     try {
       const { items, total } = await fetchMarketPlugins({
         category: marketCategory === MARKET_CATEGORY_UPDATES ? "all" : marketCategory,
         sort: marketSort,
+        contentRating: marketContentRating,
         search: debouncedMarketSearch,
         pageSize: 50,
       });
@@ -3701,7 +3758,7 @@ export function PluginManagerModal({
     } finally {
       setMarketLoading(false);
     }
-  }, [marketCategory, marketSort, debouncedMarketSearch]);
+  }, [marketCategory, marketSort, marketContentRating, debouncedMarketSearch]);
 
   const handleMarketSidebarRefresh = useCallback(async () => {
     if (marketSidebarRefreshing) return;
@@ -3709,20 +3766,22 @@ export function PluginManagerModal({
     try {
       await Promise.all([
         loadMarketGroups(),
+        loadMarketCategoryCounts(),
         loadMarketPluginsForCount(),
         loadMarketPlugins(),
       ]);
     } finally {
       setMarketSidebarRefreshing(false);
     }
-  }, [marketSidebarRefreshing, loadMarketGroups, loadMarketPluginsForCount, loadMarketPlugins]);
+  }, [marketSidebarRefreshing, loadMarketGroups, loadMarketCategoryCounts, loadMarketPluginsForCount, loadMarketPlugins]);
 
   useEffect(() => {
     if (activeTab !== "market") {
       return;
     }
     void loadMarketGroups();
-  }, [activeTab, loadMarketGroups]);
+    void loadMarketCategoryCounts();
+  }, [activeTab, loadMarketGroups, loadMarketCategoryCounts]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -3825,8 +3884,8 @@ export function PluginManagerModal({
                     type="button"
                     onClick={() => void handleMarketSidebarRefresh()}
                     disabled={marketSidebarRefreshing}
-                    title="刷新分组、列表与待更新数量"
-                    aria-label="刷新分组、列表与待更新数量"
+                    title="刷新分组、分类数量、列表与待更新数量"
+                    aria-label="刷新分组、分类数量、列表与待更新数量"
                     className={`p-1 rounded-md transition-colors text-neutral-400 hover:text-neutral-600 hover:bg-neutral-100 dark:hover:bg-neutral-800/50 disabled:opacity-50 disabled:pointer-events-none`}
                   >
                     <Icon
@@ -3839,7 +3898,13 @@ export function PluginManagerModal({
                   {marketGroupsLoading && marketGroups.length <= 1 ? (
                     <p className="px-3 py-2 text-xs text-neutral-400">加载分组…</p>
                   ) : (
-                    marketGroups.map(group => (
+                    marketGroups.map(group => {
+                      const categoryCount = marketCategoryCounts
+                        ? group.id === "all"
+                          ? marketCategoryCounts.total
+                          : (marketCategoryCounts.counts[group.id] ?? 0)
+                        : null;
+                      return (
                       <button
                         key={group.id}
                         type="button"
@@ -3849,9 +3914,13 @@ export function PluginManagerModal({
                         }`}
                       >
                         {group.id === "all" && <Icon name="sparkles" className="w-4 h-4 shrink-0" />}
-                        <span className="truncate text-left">{group.label}</span>
+                        <span className="truncate text-left">
+                          {group.label}
+                          {categoryCount !== null ? ` (${categoryCount})` : ""}
+                        </span>
                       </button>
-                    ))
+                      );
+                    })
                   )}
                 </nav>
                 <div className={`mt-4 pt-4 border-t ${subtleBorder}`}>
@@ -3901,6 +3970,23 @@ export function PluginManagerModal({
                         className={`py-2 px-3 text-xs rounded-xl ${mutedBg} ${subtleBorder}`}
                       >
                         {MARKET_SORT_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </StyledSelect>
+                    </div>
+                    <div className="w-32 shrink-0">
+                      <StyledSelect
+                        value={marketContentRating}
+                        onChange={e => {
+                          const rating = e.target.value as MarketPluginContentRating;
+                          setMarketContentRating(rating);
+                          persistMarketContentRating(rating);
+                        }}
+                        className={`py-2 px-3 text-xs rounded-xl ${mutedBg} ${subtleBorder}`}
+                      >
+                        {MARKET_CONTENT_RATING_OPTIONS.map(option => (
                           <option key={option.id} value={option.id}>
                             {option.label}
                           </option>

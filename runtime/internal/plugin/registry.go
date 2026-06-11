@@ -902,6 +902,44 @@ func (r *Registry) fetchDynamicChannel(
 	return items, nil
 }
 
+func (r *Registry) fetchDetailItem(
+	ctx context.Context,
+	rec *PluginRecord,
+	ch *FeedChannel,
+	item FeedItem,
+) (*FeedItem, error) {
+	if rec.Source != SourceWASM {
+		return nil, fmt.Errorf("detail channel requires wasm plugin: %s", rec.ID)
+	}
+	dir, ok := r.getPluginDir(rec.ID)
+	if !ok {
+		return nil, fmt.Errorf("plugin dir not found for %s", rec.ID)
+	}
+	overrides := BuildDetailParams(ch, item)
+	log.Printf(
+		"[orbit-feed] detail fetch plugin=%q channel=%q item_id=%q overrides=%s",
+		rec.ID, ch.ID, item.ID, mustJSON(overrides),
+	)
+	items, err := r.wasmExec.FetchChannelWithParams(ctx, dir, rec, ch, overrides)
+	if err != nil {
+		return nil, err
+	}
+	thirdPartyID := extractThirdPartyFeedID(item)
+	for i := range items {
+		items[i].ID = item.ID
+		if item.ChannelID != "" {
+			items[i].ChannelID = item.ChannelID
+		}
+		if items[i].ID == item.ID || extractThirdPartyFeedID(items[i]) == thirdPartyID {
+			return &items[i], nil
+		}
+	}
+	if len(items) > 0 {
+		return &items[0], nil
+	}
+	return nil, fmt.Errorf("detail fetch returned no items")
+}
+
 func mustJSON(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {

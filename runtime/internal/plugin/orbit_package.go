@@ -314,7 +314,7 @@ func extractOrbitPackage(data []byte) (*Manifest, string, error) {
 		return nil, "", fmt.Errorf("mkdir plugin dir: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(pluginDir, "manifest.json"), manifestData, 0o644); err != nil {
+	if err := SaveManifest(pluginDir, m); err != nil {
 		_ = os.RemoveAll(pluginDir)
 		return nil, "", fmt.Errorf("write manifest: %w", err)
 	}

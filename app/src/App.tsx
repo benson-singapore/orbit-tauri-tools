@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
 import { ImageGalleryFocusView } from "@/components/ImageGalleryFocusView";
+import { RatingDetailModal } from "@/components/RatingDetailModal";
+import { RatingFocusView } from "@/components/RatingFocusView";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginChannelBar } from "@/components/PluginChannelBar";
 import { YouTubeEmbed } from "@/components/YouTubeEmbed";
@@ -16,13 +18,19 @@ import {
   isBrowseDynamicChannel,
   isBrowseDynamicImageArticle,
   isBrowseDynamicPlugin,
+  isRatingPluginArticle,
   resolveBrowseDynamicChannel,
+  shouldSkipFeedItemDetailFetch,
 } from "@/lib/browseDynamicFeed";
 import { isImageGalleryPlugin } from "@/lib/imagePlugin";
+import { isRatingPlugin } from "@/lib/ratingPlugin";
 import { isVideoPluginChannel, resolveYouTubeVideoId } from "@/lib/youtube";
 import { isChannelDynamic, isChannelEnabled } from "@/lib/channelStatus";
+import { ProxiedImage } from "@/components/ProxiedImage";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
+import { rewriteHtmlImageUrls } from "@/lib/imageProxy";
+import { waitForRuntimeReady } from "@/lib/runtime";
 import {
   persistIgnoredArticleIds,
   readIgnoredArticleIds,
@@ -170,6 +178,13 @@ export default function App() {
   const [selectedItem, setSelectedItem] = useState<Article | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const articleContentRef = useRef<HTMLDivElement>(null);
+  const [runtimeBase, setRuntimeBase] = useState<string | null>(null);
+
+  useEffect(() => {
+    void waitForRuntimeReady().then(url => {
+      setRuntimeBase(url.replace(/\/$/, ""));
+    });
+  }, []);
   const readerPanelRef = useRef<HTMLElement>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("today");
 
@@ -193,6 +208,7 @@ export default function App() {
   }, [visibleArticles]);
 
   const [focusMode, setFocusMode] = useState(false);
+  const [ratingDetailItem, setRatingDetailItem] = useState<Article | null>(null);
   const [dimmerMode, setDimmerMode] = useState(false);
   const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
 
@@ -251,11 +267,12 @@ export default function App() {
 
   const selectedItemDisplayContent = useMemo(() => {
     if (!selectedItem?.content?.trim()) return "";
-    if (selectedItem.type !== "text" || !selectedItem.image) {
-      return selectedItem.content;
+    let content = selectedItem.content;
+    if (selectedItem.type === "text" && selectedItem.image) {
+      content = dedupeCoverImageFromContent(selectedItem.image, content);
     }
-    return dedupeCoverImageFromContent(selectedItem.image, selectedItem.content);
-  }, [selectedItem?.content, selectedItem?.image, selectedItem?.type]);
+    return rewriteHtmlImageUrls(content, runtimeBase);
+  }, [runtimeBase, selectedItem?.content, selectedItem?.image, selectedItem?.type]);
 
   useEffect(() => {
     highlightArticleCode(articleContentRef.current);
@@ -277,6 +294,9 @@ export default function App() {
   }, [visibleArticles, activeTab]);
 
   const selectedPluginMeta = selectedItem ? pluginById.get(selectedItem.pluginId) : undefined;
+  const isRatingCoverLayout = Boolean(
+    selectedItem && isRatingPluginArticle(selectedItem, selectedPluginMeta),
+  );
 
   const relatedRecentVideos = useMemo(() => {
     if (!selectedItem) return [];
@@ -347,6 +367,11 @@ export default function App() {
   const isImageGalleryMode =
     focusMode && activePlugin !== "all" && isImageGalleryPlugin(activePluginMeta);
 
+  const isRatingFocusMode =
+    focusMode && activePlugin !== "all" && isRatingPlugin(activePluginMeta);
+
+  const isPluginFocusMode = isImageGalleryMode || isRatingFocusMode;
+
   // TODO: 暗色主题待完善后恢复切换入口
   // const toggleTheme = () => {
   //   setTheme(prev => prev === 'light' ? 'dark' : 'light');
@@ -389,7 +414,7 @@ export default function App() {
     const pluginMeta = selectedItem
       ? pluginById.get(selectedItem.pluginId)
       : undefined;
-    if (isBrowseDynamicImageArticle(selectedItem, pluginMeta)) {
+    if (shouldSkipFeedItemDetailFetch(selectedItem, pluginMeta)) {
       setContentLoading(false);
       return;
     }
@@ -610,11 +635,10 @@ export default function App() {
     if (isSwitchingPlugin) {
       const plugin = pluginById.get(pluginId);
       const channels = (plugin?.channels ?? []).filter(ch => isChannelEnabled(ch.status));
-      if (plugin && isBrowseDynamicPlugin(plugin, channels)) {
-        setFocusMode(isImageGalleryPlugin(plugin));
-      } else {
-        setFocusMode(false);
-      }
+      const shouldFocus =
+        plugin != null
+        && (isRatingPlugin(plugin) || isBrowseDynamicPlugin(plugin, channels));
+      setFocusMode(shouldFocus);
     }
   };
 
@@ -874,58 +898,48 @@ export default function App() {
                   </button>
                 );
 
-                const visibleGroups = sidebarPluginGroups.filter(
-                  ({ group }) => !isGroupCollapsed(group.id),
-                );
-                const hiddenGroups = sidebarPluginGroups.filter(({ group }) =>
-                  isGroupCollapsed(group.id),
-                );
-
                 if (isSidebarCollapsed) {
-                  return visibleGroups.flatMap(({ plugins }) =>
-                    plugins.map(renderPluginButton),
-                  );
+                  return sidebarPluginGroups
+                    .filter(({ group }) => !isGroupCollapsed(group.id))
+                    .flatMap(({ plugins }) => plugins.map(renderPluginButton));
                 }
 
-                return (
-                  <>
-                    {visibleGroups.map(({ group, plugins }) => (
-                      <div key={group.id} className="space-y-0.5">
-                        <button
-                          type="button"
-                          onClick={() => togglePluginGroupCollapsed(group.id)}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-semibold text-neutral-400 uppercase tracking-wider hover:text-indigo-600 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
-                          title="收起分组（从侧栏隐藏）"
-                        >
-                          <Icon
-                            name="expand"
-                            className="w-3 h-3 shrink-0 transition-transform rotate-90"
-                          />
-                          <span className="flex-1 text-left truncate">{group.label}</span>
-                          <span className="text-neutral-400 font-normal normal-case">
-                            {plugins.length}
-                          </span>
-                        </button>
-                        {plugins.map(renderPluginButton)}
-                      </div>
-                    ))}
-                    {hiddenGroups.length > 0 && (
-                      <div className="pt-1 space-y-0.5">
-                        {hiddenGroups.map(({ group }) => (
-                          <button
-                            key={group.id}
-                            type="button"
-                            onClick={() => togglePluginGroupCollapsed(group.id)}
-                            className="w-full px-3 py-1.5 rounded-lg text-[10px] text-neutral-400 hover:text-indigo-600 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors text-left truncate"
-                            title="显示分组"
-                          >
-                            显示「{group.label}」
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                );
+                return sidebarPluginGroups.map(({ group, plugins }) => {
+                  if (isGroupCollapsed(group.id)) {
+                    return (
+                      <button
+                        key={group.id}
+                        type="button"
+                        onClick={() => togglePluginGroupCollapsed(group.id)}
+                        className="w-full px-3 py-1.5 rounded-lg text-[10px] text-neutral-400 hover:text-indigo-600 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors text-left truncate"
+                        title="显示分组"
+                      >
+                        显示「{group.label}」
+                      </button>
+                    );
+                  }
+
+                  return (
+                    <div key={group.id} className="space-y-0.5">
+                      <button
+                        type="button"
+                        onClick={() => togglePluginGroupCollapsed(group.id)}
+                        className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-semibold text-neutral-400 uppercase tracking-wider hover:text-indigo-600 hover:bg-neutral-50 dark:hover:bg-neutral-800/50 transition-colors"
+                        title="收起分组（从侧栏隐藏）"
+                      >
+                        <Icon
+                          name="expand"
+                          className="w-3 h-3 shrink-0 transition-transform rotate-90"
+                        />
+                        <span className="flex-1 text-left truncate">{group.label}</span>
+                        <span className="text-neutral-400 font-normal normal-case">
+                          {plugins.length}
+                        </span>
+                      </button>
+                      {plugins.map(renderPluginButton)}
+                    </div>
+                  );
+                });
               })()}
             </div>
 
@@ -1179,9 +1193,10 @@ export default function App() {
 
                           {item.image?.trim() && !failedThumbnailIds.has(item.id) && (
                             <div className="w-16 h-16 rounded-xl overflow-hidden flex-shrink-0 bg-neutral-100 relative">
-                              <img 
-                                src={item.image} 
-                                alt="Thumbnail" 
+                              <ProxiedImage
+                                runtimeBase={runtimeBase}
+                                src={item.image}
+                                alt="Thumbnail"
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                                 onError={() => {
                                   setFailedThumbnailIds(prev => new Set(prev).add(item.id));
@@ -1257,8 +1272,8 @@ export default function App() {
           } ${dimmerMode ? 'brightness-[0.85] contrast-105' : ''}`}
           >
             
-            {isImageGalleryMode || selectedItem ? (
-              <div className={`${isImageGalleryMode ? "w-[80%]" : "max-w-3xl"} mx-auto px-6 pb-8 md:pb-10`}>
+            {isPluginFocusMode || selectedItem ? (
+              <div className={`${isPluginFocusMode ? "w-[80%]" : "max-w-3xl"} mx-auto px-6 pb-8 md:pb-10`}>
                 {/* Reader toolbar — sticky near top */}
                 <div
                   className={`sticky top-0 z-10 -mx-6 px-6 pt-2 pb-2 ${theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"}`}
@@ -1273,18 +1288,18 @@ export default function App() {
                     <div className="flex items-center gap-2 p-2.5">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-1 rounded-lg shrink-0 inline-flex items-center gap-1.5">
-                          {(isImageGalleryMode ? activePluginMeta : selectedPluginMeta) ? (
+                          {(isPluginFocusMode ? activePluginMeta : selectedPluginMeta) ? (
                             <PluginAvatar
-                              plugin={(isImageGalleryMode ? activePluginMeta : selectedPluginMeta)!}
+                              plugin={(isPluginFocusMode ? activePluginMeta : selectedPluginMeta)!}
                               className="w-4 h-4 rounded-md"
                               textClassName="text-[8px]"
                             />
                           ) : null}
-                          {isImageGalleryMode
+                          {isPluginFocusMode
                             ? activePluginMeta?.name
                             : selectedItem?.pluginName}
                         </span>
-                        {!isImageGalleryMode && selectedItem ? (
+                        {!isPluginFocusMode && selectedItem ? (
                           <span className="text-xs text-neutral-400 truncate">
                             由 {selectedItem.author} 撰写
                           </span>
@@ -1294,10 +1309,15 @@ export default function App() {
                             图片观赏 · 共 {filteredArticles.length} 张
                           </span>
                         ) : null}
+                        {isRatingFocusMode ? (
+                          <span className="text-xs text-neutral-400 truncate">
+                            影视榜单 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 部
+                          </span>
+                        ) : null}
                       </div>
 
                       <div className="flex items-center justify-end gap-1 shrink-0 ml-auto">
-                        {!isImageGalleryMode ? (
+                        {!isPluginFocusMode ? (
                           <div className="flex items-center gap-0.5 mr-0.5">
                             <button
                               type="button"
@@ -1350,7 +1370,7 @@ export default function App() {
                           <span className="hidden sm:inline">微光高亮</span>
                         </button>
 
-                        {!isImageGalleryMode && selectedItem?.sourceUrl ? (
+                        {!isPluginFocusMode && selectedItem?.sourceUrl ? (
                           <a
                             href={selectedItem.sourceUrl}
                             target="_blank"
@@ -1363,7 +1383,7 @@ export default function App() {
                           </a>
                         ) : null}
 
-                        {!isImageGalleryMode && selectedItem ? (
+                        {!isPluginFocusMode && selectedItem ? (
                           <>
                             <button
                               onClick={() => handleIgnoreArticle(selectedItem.id)}
@@ -1394,7 +1414,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  {isImageGalleryMode && showPluginChannelBar ? (
+                  {isPluginFocusMode && showPluginChannelBar ? (
                     <PluginChannelBar
                       activeChannel={activeChannel}
                       channels={activePluginChannels}
@@ -1409,6 +1429,7 @@ export default function App() {
                   <ImageGalleryFocusView
                     key={`${activePlugin}-${activeChannel}`}
                     theme={theme}
+                    runtimeBase={runtimeBase}
                     articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
                     loading={feedLoading}
                     loadingMore={feedLoadingMore}
@@ -1418,6 +1439,24 @@ export default function App() {
                     }}
                     onImageOpen={(id) => {
                       void markArticleRead(id);
+                    }}
+                    scrollRootRef={readerPanelRef}
+                  />
+                ) : isRatingFocusMode ? (
+                  <RatingFocusView
+                    key={`${activePlugin}-${activeChannel}`}
+                    theme={theme}
+                    runtimeBase={runtimeBase}
+                    articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                    loading={feedLoading}
+                    loadingMore={feedLoadingMore}
+                    hasMore={feedHasMore}
+                    onLoadMore={() => {
+                      void loadMore().catch(console.error);
+                    }}
+                    onItemSelect={(item) => {
+                      void markArticleRead(item.id);
+                      setRatingDetailItem(item);
                     }}
                     scrollRootRef={readerPanelRef}
                   />
@@ -1449,14 +1488,23 @@ export default function App() {
                   </h1>
 
                   {/* Dynamic Interactive Media Section (Based on Resource Type) */}
-                  {showArticleMedia && (
+                  {showArticleMedia && isRatingCoverLayout && selectedItem.type === "text" && selectedItem.image?.trim() ? (
+                    <ProxiedImage
+                      runtimeBase={runtimeBase}
+                      src={selectedItem.image}
+                      alt="Article Cover"
+                      className="h-[380px] w-auto max-w-full object-contain mx-auto block"
+                      onError={() => setCoverImageFailed(true)}
+                    />
+                  ) : showArticleMedia ? (
                   <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                     
                     {/* Type 1: Standard Article Main Image */}
                     {selectedItem.type === 'text' && selectedItem.image?.trim() && (
-                      <img 
-                        src={selectedItem.image} 
-                        alt="Article Cover" 
+                      <ProxiedImage
+                        runtimeBase={runtimeBase}
+                        src={selectedItem.image}
+                        alt="Article Cover"
                         className="w-full h-auto max-h-[380px] object-cover"
                         onError={() => setCoverImageFailed(true)}
                       />
@@ -1479,7 +1527,8 @@ export default function App() {
                             poster={selectedItem.image}
                           />
                         ) : selectedItem.image ? (
-                          <img
+                          <ProxiedImage
+                            runtimeBase={runtimeBase}
                             src={selectedItem.image}
                             alt={selectedItem.title}
                             className="w-full h-full object-cover opacity-80"
@@ -1500,7 +1549,7 @@ export default function App() {
                           <div className={`w-28 h-28 rounded-full overflow-hidden border-4 border-neutral-700 flex-shrink-0 shadow-lg relative ${
                             isPlayingAudio ? 'animate-spin' : ''
                           }`} style={{ animationDuration: '15s' }}>
-                            <img src={selectedItem.image} alt="Podcast Cover" className="w-full h-full object-cover" />
+                            <ProxiedImage runtimeBase={runtimeBase} src={selectedItem.image ?? ""} alt="Podcast Cover" className="w-full h-full object-cover" />
                             <div className="absolute inset-0 m-auto w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700"></div>
                           </div>
                           
@@ -1561,7 +1610,8 @@ export default function App() {
                     {selectedItem.type === 'image'
                       && isBrowseDynamicImageArticle(selectedItem, selectedPluginMeta)
                       && selectedItem.image?.trim() && (
-                      <img
+                      <ProxiedImage
+                        runtimeBase={runtimeBase}
                         src={selectedItem.image}
                         alt={selectedItem.title}
                         className="w-full h-auto max-h-[70vh] object-contain"
@@ -1575,10 +1625,11 @@ export default function App() {
                       && selectedItem.galleryImages && (
                       <div className="relative bg-neutral-900 flex flex-col">
                         <div className="aspect-video w-full overflow-hidden flex items-center justify-center">
-                          <img 
-                            src={selectedItem.galleryImages[activeImageIndex]} 
+                          <ProxiedImage
+                            runtimeBase={runtimeBase}
+                            src={selectedItem.galleryImages[activeImageIndex]}
                             alt={`Gallery image ${activeImageIndex}`}
-                            className="max-h-[400px] object-contain w-full transition-all duration-300" 
+                            className="max-h-[400px] object-contain w-full transition-all duration-300"
                           />
                         </div>
 
@@ -1593,7 +1644,7 @@ export default function App() {
                                   activeImageIndex === idx ? 'border-indigo-500 scale-105' : 'border-transparent opacity-60'
                                 }`}
                               >
-                                <img src={img} className="w-full h-full object-cover" />
+                                <ProxiedImage runtimeBase={runtimeBase} src={img} className="w-full h-full object-cover" alt="" />
                               </button>
                             ))}
                           </div>
@@ -1606,7 +1657,7 @@ export default function App() {
                     )}
 
                   </div>
-                  )}
+                  ) : null}
 
                 </div>
 
@@ -1697,7 +1748,8 @@ export default function App() {
                         >
                           <div className="relative w-28 sm:w-32 aspect-video rounded-lg overflow-hidden shrink-0 bg-neutral-100 dark:bg-neutral-800">
                             {item.image?.trim() ? (
-                              <img
+                              <ProxiedImage
+                                runtimeBase={runtimeBase}
                                 src={item.image}
                                 alt=""
                                 className="w-full h-full object-cover"
@@ -1753,6 +1805,14 @@ export default function App() {
 
       </div>
 
+      {ratingDetailItem ? (
+        <RatingDetailModal
+          theme={theme}
+          runtimeBase={runtimeBase}
+          article={ratingDetailItem}
+          onClose={() => setRatingDetailItem(null)}
+        />
+      ) : null}
     </div>
   );
 }

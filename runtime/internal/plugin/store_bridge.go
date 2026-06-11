@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/orbit-tauri-tools/runtime/internal/store"
 )
@@ -201,32 +203,87 @@ func (r *Registry) loadFeedItems(ctx context.Context, pluginID, channelID, searc
 	return out, rowsNeedContentBackfill(rows), nil
 }
 
+func mergeFeedItemDetail(base, fetched FeedItem) FeedItem {
+	out := base
+	if strings.TrimSpace(fetched.Title) != "" {
+		out.Title = fetched.Title
+	}
+	if strings.TrimSpace(fetched.Summary) != "" {
+		out.Summary = fetched.Summary
+	}
+	if strings.TrimSpace(fetched.Content) != "" {
+		out.Content = fetched.Content
+	}
+	if strings.TrimSpace(fetched.Image) != "" {
+		out.Image = fetched.Image
+	}
+	if strings.TrimSpace(fetched.Author) != "" {
+		out.Author = fetched.Author
+	}
+	if strings.TrimSpace(fetched.SourceURL) != "" {
+		out.SourceURL = fetched.SourceURL
+	}
+	if len(fetched.Tags) > 0 {
+		out.Tags = fetched.Tags
+	}
+	if fetched.PublishedAt > 0 {
+		out.PublishedAt = fetched.PublishedAt
+		out.Time = fetched.Time
+	}
+	return out
+}
+
+func (r *Registry) upsertFeedItem(ctx context.Context, item FeedItem, channelID string) error {
+	if channelID == "" {
+		channelID = item.ChannelID
+	}
+	row, err := feedItemToRow(item, channelID)
+	if err != nil {
+		return err
+	}
+	return r.store.UpsertFeedItemsForChannel(ctx, item.PluginID, channelID, []store.FeedItemRow{row}, time.Now().Unix())
+}
+
 func (r *Registry) GetFeedItem(ctx context.Context, id string) (*FeedItem, error) {
 	row, err := r.store.GetFeedItem(ctx, id)
 	if err != nil {
 		return nil, err
 	}
 	item := rowToFeedItem(*row, true)
-	if item.PluginName == "" {
-		if rec, ok := r.Get(item.PluginID); ok {
-			item.PluginName = rec.Name
-		}
+	rec, hasRec := r.Get(item.PluginID)
+	if item.PluginName == "" && hasRec {
+		item.PluginName = rec.Name
 	}
-	if strings.TrimSpace(item.Content) == "" && rowNeedsContentBackfill(*row) {
-		if rec, ok := r.Get(item.PluginID); ok && rec.Active {
-			channelID := item.ChannelID
-			if channelID == "" {
-				channelID = row.ChannelID
-			}
-			if _, refreshErr := r.RefreshPlugin(ctx, item.PluginID, channelID); refreshErr == nil {
-				if updated, err := r.store.GetFeedItem(ctx, id); err == nil {
-					item = rowToFeedItem(*updated, true)
-					if item.PluginName == "" {
-						item.PluginName = rec.Name
-					}
-				}
-			}
-		}
+
+	if !hasRec || !rec.Active {
+		return &item, nil
 	}
-	return &item, nil
+
+	detailCh, hasDetail := FindDetailDynamicChannel(rec.Config.Channels)
+	if !hasDetail {
+		return &item, nil
+	}
+
+	if !rowNeedsContentBackfill(*row) {
+		return &item, nil
+	}
+
+	fetched, err := r.fetchDetailItem(ctx, rec, detailCh, item)
+	if err != nil {
+		log.Printf("[orbit-feed] detail fetch failed plugin=%q item_id=%q err=%v", rec.ID, id, err)
+		return &item, nil
+	}
+	if fetched == nil {
+		return &item, nil
+	}
+
+	merged := mergeFeedItemDetail(item, *fetched)
+	channelID := merged.ChannelID
+	if channelID == "" {
+		channelID = row.ChannelID
+	}
+	if upsertErr := r.upsertFeedItem(ctx, merged, channelID); upsertErr != nil {
+		log.Printf("[orbit-feed] detail persist failed plugin=%q item_id=%q err=%v", rec.ID, id, upsertErr)
+	}
+	return &merged, nil
 }

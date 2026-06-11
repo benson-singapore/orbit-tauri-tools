@@ -2,9 +2,11 @@ import type {
   DictItem,
   DictListResponse,
   MarketPluginItem,
+  MarketPluginContentRating,
   MarketPluginSort,
   MarketPluginsResponse,
   Plugin,
+  PluginCategoryCountsResponse,
 } from "@/types";
 
 function orbitApiBaseUrl(): string {
@@ -87,6 +89,7 @@ export function marketItemToPlugin(item: MarketPluginItem): Plugin {
 export async function fetchMarketPlugins(options?: {
   category?: string;
   sort?: MarketPluginSort;
+  contentRating?: MarketPluginContentRating;
   search?: string;
   pageSize?: number;
   page?: number;
@@ -98,6 +101,9 @@ export async function fetchMarketPlugins(options?: {
   }
   if (options?.sort) {
     params.set("sort", options.sort);
+  }
+  if (options?.contentRating) {
+    params.set("contentRating", options.contentRating);
   }
   if (options?.search?.trim()) {
     params.set("search", options.search.trim());
@@ -118,5 +124,24 @@ export async function fetchMarketPlugins(options?: {
   return {
     items: body.data.items,
     total: body.data.total ?? body.data.items.length,
+  };
+}
+
+export async function fetchPluginCategoryCounts(): Promise<{
+  total: number;
+  counts: Record<string, number>;
+}> {
+  const base = orbitApiBaseUrl();
+  const res = await fetch(`${base}/v1/plugins/category-counts`);
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+  const body = (await res.json()) as PluginCategoryCountsResponse;
+  if (body.code !== 200 || !body.data) {
+    throw new Error(body.message ?? "invalid category counts response");
+  }
+  return {
+    total: body.data.total ?? 0,
+    counts: body.data.counts ?? {},
   };
 }

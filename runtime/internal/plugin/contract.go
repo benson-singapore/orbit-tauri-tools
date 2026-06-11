@@ -16,6 +16,7 @@ const (
 	MediaImage   = "image"
 	MediaVideo   = "video"
 	MediaAudio   = "audio"
+	MediaRating  = "rating"
 
 	CapFeed    = "feed"
 	CapSearch  = "search"

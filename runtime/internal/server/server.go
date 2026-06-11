@@ -60,6 +60,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/feed/read", s.handleMarkFeedRead)
 	s.mux.HandleFunc("/v1/images/upload", s.handleUploadImage)
 	s.mux.HandleFunc("/v1/images/upload-url", s.handleUploadImageByURL)
+	s.mux.HandleFunc("/v1/images/proxy", s.handleProxyImage)
 	s.mux.HandleFunc("/openapi.json", s.handleOpenAPI)
 	s.mux.HandleFunc("/swagger", s.handleSwaggerRedirect)
 	s.mux.HandleFunc("/swagger/", s.handleSwaggerUI)

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from "react";
 import { Icon } from "@/components/Icon";
+import { ProxiedImage } from "@/components/ProxiedImage";
 
 export interface GalleryImageItem {
   id: string;
@@ -9,6 +10,7 @@ export interface GalleryImageItem {
 }
 
 interface ImageLightboxProps {
+  runtimeBase: string | null;
   images: GalleryImageItem[];
   currentIndex: number;
   onClose: () => void;
@@ -17,6 +19,7 @@ interface ImageLightboxProps {
 }
 
 export function ImageLightbox({
+  runtimeBase,
   images,
   currentIndex,
   onClose,
@@ -113,8 +116,9 @@ export function ImageLightbox({
           </svg>
         </button>
 
-        <img
+        <ProxiedImage
           key={current.id}
+          runtimeBase={runtimeBase}
           src={current.url}
           alt={current.title}
           className="max-w-full max-h-full object-contain select-none"
@@ -149,7 +153,7 @@ export function ImageLightbox({
                 : "border-transparent opacity-50 hover:opacity-80"
             }`}
           >
-            <img src={img.url} alt="" className="w-full h-full object-cover" draggable={false} />
+            <ProxiedImage runtimeBase={runtimeBase} src={img.url} alt="" className="w-full h-full object-cover" draggable={false} />
           </button>
         ))}
       </div>

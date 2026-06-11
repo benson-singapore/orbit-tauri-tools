@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { ImageLightbox, type GalleryImageItem } from "@/components/ImageLightbox";
+import { ProxiedImage } from "@/components/ProxiedImage";
 import type { Article, ThemeMode } from "@/types";
 
 interface ImageGalleryFocusViewProps {
   theme: ThemeMode;
+  runtimeBase: string | null;
   articles: Article[];
   loading: boolean;
   loadingMore: boolean;
@@ -63,6 +65,7 @@ function distributeShortestColumn(
 
 export function ImageGalleryFocusView({
   theme,
+  runtimeBase,
   articles,
   loading,
   loadingMore,
@@ -218,7 +221,8 @@ export function ImageGalleryFocusView({
                     theme === "dark" ? "bg-neutral-800" : "bg-neutral-100"
                   }`}
                 >
-                  <img
+                  <ProxiedImage
+                    runtimeBase={runtimeBase}
                     src={item.url}
                     alt={item.title}
                     loading="lazy"
@@ -256,6 +260,7 @@ export function ImageGalleryFocusView({
 
       {lightboxIndex !== null ? (
         <ImageLightbox
+          runtimeBase={runtimeBase}
           images={galleryItems}
           currentIndex={lightboxIndex}
           onClose={() => setLightboxIndex(null)}

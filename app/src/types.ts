@@ -13,7 +13,7 @@ export interface PluginChannel {
   params?: Record<string, string>;
   itemLimit?: number;
   status?: "enabled" | "disabled";
-  type?: "search" | string;
+  type?: "search" | "detail" | string;
   dynamic?: boolean;
 }
 
@@ -66,6 +66,8 @@ export interface DictListResponse {
 
 export type MarketPluginSort = "rating" | "downloads" | "size";
 
+export type MarketPluginContentRating = "general" | "under18" | "mature";
+
 export interface MarketPluginItem {
   id: string;
   name: string;
@@ -88,6 +90,7 @@ export interface MarketPluginItem {
   accentColor?: string;
   downloads?: number;
   version?: string;
+  contentRating?: MarketPluginContentRating;
 }
 
 export interface MarketPluginsResponse {
@@ -101,11 +104,20 @@ export interface MarketPluginsResponse {
   };
 }
 
+export interface PluginCategoryCountsResponse {
+  code: number;
+  message: string;
+  data: {
+    total: number;
+    counts: Record<string, number>;
+  };
+}
+
 export interface Plugin {
   id: string;
   name: string;
   icon: PluginContentType | string;
-  mediaType?: "article" | "manga" | "image" | "video" | "audio";
+  mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating";
   active?: boolean;
   desc: string;
   channels?: PluginChannel[];
@@ -154,7 +166,7 @@ export interface InstallRSSPluginRequest {
   defaultChannel?: string;
   name?: string;
   id?: string;
-  mediaType?: "article" | "manga" | "image" | "video" | "audio";
+  mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating";
   refreshInterval?: number;
   userAgent?: string;
   icon?: PluginContentType;
