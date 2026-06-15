@@ -139,6 +139,14 @@ func (r *Registry) GetDefaultManifestJSON(ctx context.Context, id string, downlo
 	return manifestData, nil
 }
 
+func saveManifestBytes(pluginDir string, manifestData []byte) error {
+	path := filepath.Join(pluginDir, "manifest.json")
+	if err := os.WriteFile(path, manifestData, 0o644); err != nil {
+		return fmt.Errorf("write manifest: %w", err)
+	}
+	return nil
+}
+
 func saveDefaultManifest(pluginDir string, manifestData []byte) error {
 	path := filepath.Join(pluginDir, defaultManifestFileName)
 	if err := os.WriteFile(path, manifestData, 0o644); err != nil {
@@ -314,9 +322,13 @@ func extractOrbitPackage(data []byte) (*Manifest, string, error) {
 		return nil, "", fmt.Errorf("mkdir plugin dir: %w", err)
 	}
 
-	if err := SaveManifest(pluginDir, m); err != nil {
+	if err := ValidateManifest(m); err != nil {
 		_ = os.RemoveAll(pluginDir)
-		return nil, "", fmt.Errorf("write manifest: %w", err)
+		return nil, "", err
+	}
+	if err := saveManifestBytes(pluginDir, manifestData); err != nil {
+		_ = os.RemoveAll(pluginDir)
+		return nil, "", err
 	}
 	if err := saveDefaultManifest(pluginDir, manifestData); err != nil {
 		_ = os.RemoveAll(pluginDir)

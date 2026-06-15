@@ -1,9 +1,16 @@
 package plugin
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orbit-tauri-tools/runtime/internal/market"
 )
 
 func TestExtractOrbitPackage_Juejin(t *testing.T) {
@@ -77,6 +84,69 @@ func TestExtractPackageFilesFromZip_ReplacesReadme(t *testing.T) {
 	}
 	if string(updated) != string(original) {
 		t.Fatalf("readme was not replaced on update")
+	}
+}
+
+func TestExtractOrbitPackage_PreservesManifestBytesForChecksum(t *testing.T) {
+	manifestRaw := []byte(`{"id":"checksum-test","name":"Checksum Test","version":"1.0.0","mediaType":"article","source":"wasm","capabilities":["feed"],"config":{"channels":[{"id":"all","label":"All","route":"list"}],"refreshInterval":3600,"wasm":{"entry":"plugin.wasm"}},"meta":{"description":"test","icon":"text","color":"bg-blue-500","logoText":"C","logoImageUrl":"","marketCategory":"blog","categoryTag":"Test"}}`)
+	wasmRaw := []byte("\x00asm\x01\x00\x00\x00")
+	sumManifest := sha256.Sum256(manifestRaw)
+	sumWasm := sha256.Sum256(wasmRaw)
+	checksums := "sha256:" + hex.EncodeToString(sumManifest[:]) + " manifest.json\n" +
+		"sha256:" + hex.EncodeToString(sumWasm[:]) + " plugin.wasm\n"
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, data := range map[string][]byte{
+		"manifest.json": manifestRaw,
+		"plugin.wasm":   wasmRaw,
+		"checksums.txt": []byte(checksums),
+	} {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write(data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	m, dir, err := extractOrbitPackage(buf.Bytes())
+	if err != nil {
+		t.Fatalf("extractOrbitPackage: %v", err)
+	}
+	if m.ID != "checksum-test" {
+		t.Fatalf("expected id checksum-test, got %q", m.ID)
+	}
+	onDisk, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, manifestRaw) {
+		t.Fatalf("manifest.json bytes were re-serialized")
+	}
+}
+
+func TestExtractOrbitPackage_MarketPackage(t *testing.T) {
+	if os.Getenv("RUN_MARKET_TEST") == "" {
+		t.Skip("set RUN_MARKET_TEST=1 to run")
+	}
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+
+	client := market.NewClient()
+	data, err := client.DownloadOrbitPackage(context.Background(), "f1570a74")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := extractOrbitPackage(data); err != nil {
+		t.Fatalf("extractOrbitPackage: %v", err)
 	}
 }
 
