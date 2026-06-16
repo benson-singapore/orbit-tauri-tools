@@ -154,6 +154,15 @@ func (s *Store) UpsertFeedItemsForChannel(
 	return tx.Commit()
 }
 
+func (s *Store) CountFeedItemsForChannel(ctx context.Context, pluginID, channelID string) (int, error) {
+	var count int
+	err := s.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM feed_items WHERE plugin_id = ? AND channel_id = ?`,
+		pluginID, channelID,
+	).Scan(&count)
+	return count, err
+}
+
 func (s *Store) TrimFeedItemsForChannel(
 	ctx context.Context,
 	pluginID, channelID string,
@@ -421,6 +430,17 @@ func (s *Store) CountUnreadFeedItems(
 func (s *Store) DeleteFeedItemsByPlugin(ctx context.Context, pluginID string) error {
 	_, err := s.DB.ExecContext(ctx, `DELETE FROM feed_items WHERE plugin_id = ?`, pluginID)
 	return err
+}
+
+// DeletePluginCachedData removes persisted feed list, chapter list, and plugin variables.
+func (s *Store) DeletePluginCachedData(ctx context.Context, pluginID string) error {
+	if err := s.DeleteFeedItemsByPlugin(ctx, pluginID); err != nil {
+		return err
+	}
+	if err := s.DeleteChapterItemsByPlugin(ctx, pluginID); err != nil {
+		return err
+	}
+	return s.DeletePluginVariables(ctx, pluginID)
 }
 
 func DecodeJSON(raw string, v any) error {

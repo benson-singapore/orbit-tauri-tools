@@ -13,28 +13,23 @@ import {
   uninstallPlugin,
   updatePluginManifest,
 } from "@/lib/feed";
-import { DYNAMIC_SEARCH_MAX_PAGES, isChannelDynamic, isChannelEnabled } from "@/lib/channelStatus";
-import {
-  isBrowseDynamicChannel,
-  isBrowseDynamicFeedMode,
-  isBrowseDynamicImageArticle,
-  isBrowseDynamicPlugin,
-  resolveFeedChannelId,
-} from "@/lib/browseDynamicFeed";
+import { isChannelEnabled } from "@/lib/channelStatus";
 import { isImageGalleryPlugin } from "@/lib/imagePlugin";
-import type { Article, InstallRSSPluginRequest, Plugin } from "@/types";
-
-function resolveActiveDynamicFeed(plugins: Plugin[], pluginId: string, channelId: string): boolean {
-  if (pluginId === "all" || channelId === "all") {
-    return false;
-  }
-  const plugin = plugins.find(p => p.id === pluginId);
-  const channel = plugin?.channels?.find(ch => ch.id === channelId);
-  if (isBrowseDynamicChannel(channel, plugin)) {
-    return true;
-  }
-  return isChannelDynamic(channel);
-}
+import {
+  fetchChannelCapabilities,
+  fetchRuntimeItems,
+  runtimeLoadMore,
+  runtimeRefresh,
+  runtimeSearch,
+  shouldUseRuntimeV2,
+} from "@/lib/runtimeV2";
+import { resolveDefaultPluginChannel } from "@/lib/browseDynamicFeed";
+import type {
+  Article,
+  ChannelCapabilities,
+  InstallRSSPluginRequest,
+  Plugin,
+} from "@/types";
 
 const ALL_PLUGIN: Plugin = INITIAL_PLUGINS[0]!;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
@@ -43,6 +38,22 @@ export const IMAGE_FEED_PAGE_SIZE = 40;
 
 function resolveFeedPageSize(plugin?: Plugin | null): number {
   return isImageGalleryPlugin(plugin) ? IMAGE_FEED_PAGE_SIZE : FEED_PAGE_SIZE;
+}
+
+function resolveFeedChannelId(
+  plugin: Plugin | undefined,
+  channels: Plugin["channels"],
+  channelFilter: string,
+  pluginId: string,
+): string {
+  if (channelFilter !== "all") {
+    return channelFilter;
+  }
+  if (pluginId === "all" || !plugin) {
+    return "all";
+  }
+  const enabled = (channels ?? []).filter(ch => isChannelEnabled(ch.status));
+  return resolveDefaultPluginChannel(plugin, enabled);
 }
 
 const FEED_RELOAD_DELAYS_MS = [3000, 5000, 10000, 20000, 40000, 60000];
@@ -58,6 +69,30 @@ function scheduleFeedReloadAfterBackgroundFetch(
   })().catch(console.error);
 }
 
+function capabilitiesEqual(a: ChannelCapabilities, b: ChannelCapabilities): boolean {
+  return a.canRefresh === b.canRefresh
+    && a.canLoadMore === b.canLoadMore
+    && a.canLoadMoreChapters === b.canLoadMoreChapters
+    && a.canRefreshChapters === b.canRefreshChapters
+    && a.canSearch === b.canSearch
+    && a.hasDetail === b.hasDetail
+    && a.hasChapters === b.hasChapters
+    && a.persistList === b.persistList
+    && a.chaptersLabel === b.chaptersLabel
+    && a.chaptersItemLabel === b.chaptersItemLabel;
+}
+
+const DEFAULT_CAPABILITIES: ChannelCapabilities = {
+  canRefresh: true,
+  canLoadMore: false,
+  canLoadMoreChapters: false,
+  canRefreshChapters: false,
+  canSearch: false,
+  hasDetail: false,
+  hasChapters: false,
+  persistList: true,
+};
+
 interface UseOrbitDataResult {
   plugins: Plugin[];
   articles: Article[];
@@ -68,6 +103,7 @@ interface UseOrbitDataResult {
   loadingMore: boolean;
   hasMore: boolean;
   feedPageSize: number;
+  channelCapabilities: ChannelCapabilities;
   error: string | null;
   reload: () => Promise<void>;
   refreshFromCache: () => Promise<void>;
@@ -100,9 +136,10 @@ export function useOrbitData(
   const [searching, setSearching] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
+  const [channelCapabilities, setChannelCapabilities] = useState<ChannelCapabilities>(DEFAULT_CAPABILITIES);
+  const channelCapabilitiesRef = useRef<ChannelCapabilities>(DEFAULT_CAPABILITIES);
   const [error, setError] = useState<string | null>(null);
   const feedRequestId = useRef(0);
-  const dynamicPageRef = useRef(1);
   const reorderPersistQueue = useRef(Promise.resolve());
   const pluginFilterRef = useRef(pluginFilter);
   const channelFilterRef = useRef(channelFilter);
@@ -118,10 +155,29 @@ export function useOrbitData(
   pluginGroupScopeIdRef.current = pluginGroupScopeId;
   getPluginGroupIdRef.current = getPluginGroupId;
   pluginsRef.current = plugins;
+  channelCapabilitiesRef.current = channelCapabilities;
 
   const loadPlugins = useCallback(async () => {
     const remote = await fetchPlugins();
     setPlugins([ALL_PLUGIN, ...remote]);
+  }, []);
+
+  const loadChannelCapabilities = useCallback(async (pluginId: string, channelId: string) => {
+    const plugin = pluginsRef.current.find(p => p.id === pluginId);
+    if (!shouldUseRuntimeV2(pluginId, plugin) || channelId === "all") {
+      setChannelCapabilities(DEFAULT_CAPABILITIES);
+      return;
+    }
+    try {
+      const cap = await fetchChannelCapabilities(pluginId, channelId);
+      setChannelCapabilities(prev =>
+        capabilitiesEqual(prev, cap) ? prev : cap,
+      );
+    } catch {
+      setChannelCapabilities(prev =>
+        capabilitiesEqual(prev, DEFAULT_CAPABILITIES) ? prev : DEFAULT_CAPABILITIES,
+      );
+    }
   }, []);
 
   const loadFeedPage = useCallback(async (options?: {
@@ -130,9 +186,6 @@ export function useOrbitData(
   }) => {
     const requestId = ++feedRequestId.current;
     const append = options?.append ?? false;
-    if (!append) {
-      dynamicPageRef.current = 1;
-    }
     const pluginId = pluginFilterRef.current;
     const channel = channelFilterRef.current;
     const contentType = contentTypeFilterRef.current;
@@ -142,34 +195,68 @@ export function useOrbitData(
     const pluginChannels = (plugin?.channels ?? []).filter(ch =>
       isChannelEnabled(ch.status),
     );
-    const feedChannel = resolveFeedChannelId(plugin, pluginChannels, channel);
-    const dynamicFeed = resolveActiveDynamicFeed(
-      pluginsRef.current,
-      pluginId,
-      feedChannel,
-    );
-    let offset = options?.offset ?? 0;
-    if (dynamicFeed) {
-      if (append) {
-        dynamicPageRef.current += 1;
-      }
-      offset = (dynamicPageRef.current - 1) * pageSize;
-    }
-    const browseDynamicFeed =
-      isBrowseDynamicPlugin(plugin, pluginChannels)
-      && isBrowseDynamicFeedMode(plugin, pluginChannels, feedChannel);
-    if (dynamicFeed && !search && !browseDynamicFeed) {
-      if (requestId !== feedRequestId.current) {
+    const feedChannel = resolveFeedChannelId(plugin, pluginChannels, channel, pluginId);
+    const offset = options?.offset ?? 0;
+
+    if (shouldUseRuntimeV2(pluginId, plugin) && feedChannel !== "all") {
+      if (search) {
+        const result = await runtimeSearch(pluginId, feedChannel, search);
+        if (requestId !== feedRequestId.current) return;
+        const items = result.items ?? [];
+        setFeedTotal(items.length);
+        setHasMore(Boolean(result.hasMore));
+        setArticles(prev => (append ? [...prev, ...items] : items));
+        if (!append) {
+          setUnreadTotal(items.filter(item => !item.isRead).length);
+        }
         return;
       }
-      setFeedTotal(0);
-      setHasMore(false);
-      setArticles(prev => (append ? prev : []));
+
+      const cap = channelCapabilitiesRef.current;
+      if (cap.canSearch && !search) {
+        if (requestId !== feedRequestId.current) return;
+        setFeedTotal(0);
+        setHasMore(false);
+        setArticles(prev => (append ? prev : []));
+        if (!append) setUnreadTotal(0);
+        return;
+      }
+
+      if (append) {
+        const cap = channelCapabilitiesRef.current;
+        const result = cap.canLoadMore
+          ? await runtimeLoadMore(pluginId, feedChannel)
+          : await fetchRuntimeItems({
+              pluginId,
+              channelId: feedChannel,
+              limit: pageSize,
+              offset,
+            });
+        if (requestId !== feedRequestId.current) return;
+        const items = result.items ?? [];
+        setArticles(prev => [...prev, ...items]);
+        setFeedTotal(offset + items.length);
+        setHasMore(Boolean(result.hasMore));
+        return;
+      }
+
+      const result = await fetchRuntimeItems({
+        pluginId,
+        channelId: feedChannel,
+        limit: pageSize,
+        offset,
+      });
+      if (requestId !== feedRequestId.current) return;
+      const items = result.items ?? [];
+      setFeedTotal(offset + items.length);
+      setHasMore(Boolean(result.hasMore));
+      setArticles(items);
       if (!append) {
-        setUnreadTotal(0);
+        setUnreadTotal(items.filter(item => !item.isRead).length);
       }
       return;
     }
+
     let scopeIds: string[] = [];
     const groupScopeId = pluginGroupScopeIdRef.current;
     if (pluginId === "all" && groupScopeId) {
@@ -185,18 +272,15 @@ export function useOrbitData(
           .map(p => p.id);
       }
       if (scopeIds.length === 0) {
-        if (requestId !== feedRequestId.current) {
-          return;
-        }
+        if (requestId !== feedRequestId.current) return;
         setFeedTotal(0);
         setHasMore(false);
         setArticles(prev => (append ? prev : []));
-        if (!append) {
-          setUnreadTotal(0);
-        }
+        if (!append) setUnreadTotal(0);
         return;
       }
     }
+
     const data = await fetchFeed({
       pluginId: scopeIds.length > 0 ? undefined : pluginId,
       pluginIds: scopeIds.length > 0 ? scopeIds : undefined,
@@ -210,18 +294,13 @@ export function useOrbitData(
       limit: pageSize,
       offset,
     });
-    if (requestId !== feedRequestId.current) {
-      return;
-    }
+    if (requestId !== feedRequestId.current) return;
     const items = data.items ?? [];
     const total = data.total ?? (offset + items.length);
     setFeedTotal(total);
-    const page = Math.floor(offset / pageSize) + 1;
     const moreFromApi = offset + items.length < total;
     if (typeof data.hasMore === "boolean") {
       setHasMore(data.hasMore);
-    } else if (dynamicFeed) {
-      setHasMore(items.length > 0 && page < DYNAMIC_SEARCH_MAX_PAGES);
     } else {
       setHasMore(moreFromApi);
     }
@@ -238,42 +317,29 @@ export function useOrbitData(
     setError(null);
     try {
       await loadPlugins();
-      await loadFeedPage({
-        offset: 0,
-        append: false,
-      });
+      const plugin = pluginsRef.current.find(p => p.id === pluginFilterRef.current);
+      const feedChannel = resolveFeedChannelId(
+        plugin,
+        plugin?.channels,
+        channelFilterRef.current,
+        pluginFilterRef.current,
+      );
+      if (shouldUseRuntimeV2(pluginFilterRef.current, plugin) && feedChannel !== "all") {
+        await loadChannelCapabilities(pluginFilterRef.current, feedChannel);
+      }
+      await loadFeedPage({ offset: 0, append: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
-  }, [loadPlugins, loadFeedPage]);
+  }, [loadPlugins, loadFeedPage, loadChannelCapabilities]);
 
   const loadMore = useCallback(async () => {
-    if (loadingMore || loading || !hasMore) {
-      return;
-    }
+    if (loadingMore || loading || !hasMore) return;
     setLoadingMore(true);
     try {
-      const plugin = pluginsRef.current.find(p => p.id === pluginFilterRef.current);
-      const pluginChannels = (plugin?.channels ?? []).filter(ch =>
-        isChannelEnabled(ch.status),
-      );
-      const feedChannel = resolveFeedChannelId(
-        plugin,
-        pluginChannels,
-        channelFilterRef.current,
-      );
-      const dynamicFeed = resolveActiveDynamicFeed(
-        pluginsRef.current,
-        pluginFilterRef.current,
-        feedChannel,
-      );
-      await loadFeedPage(
-        dynamicFeed
-          ? { append: true }
-          : { offset: articles.length, append: true },
-      );
+      await loadFeedPage({ offset: articles.length, append: true });
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -284,7 +350,6 @@ export function useOrbitData(
 
   const refreshInBackground = useCallback(async () => {
     try {
-      // 后端定时任务负责抓取；此处仅从数据库重新加载列表。
       await loadFeedPage({ offset: 0, append: false });
       setError(null);
     } catch (err) {
@@ -295,7 +360,6 @@ export function useOrbitData(
   const reloadFeedOnly = useCallback(async (options?: { searching?: boolean }) => {
     const isSearchReload = options?.searching === true;
     feedRequestId.current += 1;
-    dynamicPageRef.current = 1;
     setArticles([]);
     setHasMore(false);
     if (isSearchReload) {
@@ -305,6 +369,16 @@ export function useOrbitData(
     }
     setError(null);
     try {
+      const plugin = pluginsRef.current.find(p => p.id === pluginFilterRef.current);
+      const feedChannel = resolveFeedChannelId(
+        plugin,
+        plugin?.channels,
+        channelFilterRef.current,
+        pluginFilterRef.current,
+      );
+      if (shouldUseRuntimeV2(pluginFilterRef.current, plugin) && feedChannel !== "all") {
+        await loadChannelCapabilities(pluginFilterRef.current, feedChannel);
+      }
       await loadFeedPage({ offset: 0, append: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -315,7 +389,7 @@ export function useOrbitData(
         setLoading(false);
       }
     }
-  }, [loadFeedPage]);
+  }, [loadFeedPage, loadChannelCapabilities]);
 
   const refreshFromCache = useCallback(async () => {
     setError(null);
@@ -329,15 +403,22 @@ export function useOrbitData(
   }, [loadPlugins, loadFeedPage]);
 
   const initialMount = useRef(true);
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  const refreshInBackgroundRef = useRef(refreshInBackground);
+  refreshInBackgroundRef.current = refreshInBackground;
+  const reloadFeedOnlyRef = useRef(reloadFeedOnly);
+  reloadFeedOnlyRef.current = reloadFeedOnly;
+
   useEffect(() => {
-    void reload();
+    void reloadRef.current();
     const timer = window.setInterval(() => {
-      void refreshInBackground();
+      void refreshInBackgroundRef.current();
     }, REFRESH_INTERVAL_MS);
     return () => {
       window.clearInterval(timer);
     };
-  }, [reload, refreshInBackground]);
+  }, []);
 
   const prevSearchFilterRef = useRef(searchFilter);
   useEffect(() => {
@@ -348,8 +429,8 @@ export function useOrbitData(
     }
     const searchChanged = prevSearchFilterRef.current !== searchFilter;
     prevSearchFilterRef.current = searchFilter;
-    void reloadFeedOnly(searchChanged ? { searching: true } : undefined);
-  }, [pluginFilter, channelFilter, contentTypeFilter, searchFilter, pluginGroupScopeId, reloadFeedOnly]);
+    void reloadFeedOnlyRef.current(searchChanged ? { searching: true } : undefined);
+  }, [pluginFilter, channelFilter, contentTypeFilter, searchFilter, pluginGroupScopeId]);
 
   const installCustomRSS = useCallback(
     async (payload: InstallRSSPluginRequest) => {
@@ -401,17 +482,13 @@ export function useOrbitData(
       if (!target) return;
       const currentlyActive = target?.active !== false;
       const nextActive = !currentlyActive;
-
-      // 先做本地更新，保证按钮点击后立即有视觉反馈
       setPlugins(prev => prev.map(plugin => (
         plugin.id === id ? { ...plugin, active: nextActive } : plugin
       )));
-
       try {
         await setPluginActive(id, nextActive);
         await loadFeedPage({ offset: 0, append: false });
       } catch (err) {
-        // 失败时回滚并刷新，避免 UI 与后端状态不一致
         setPlugins(prev => prev.map(plugin => (
           plugin.id === id ? { ...plugin, active: currentlyActive } : plugin
         )));
@@ -440,8 +517,18 @@ export function useOrbitData(
 
   const forceRefreshPlugin = useCallback(
     async (id: string) => {
-      // 手动抓取：清空该插件本地缓存后重新拉取，完成后从数据库刷新列表。
-      await refreshPluginFeed(id, undefined, { force: true });
+      const plugin = pluginsRef.current.find(p => p.id === id);
+      const feedChannel = resolveFeedChannelId(
+        plugin,
+        plugin?.channels,
+        channelFilterRef.current,
+        id,
+      );
+      if (shouldUseRuntimeV2(id, plugin) && feedChannel !== "all") {
+        await runtimeRefresh(id, feedChannel);
+      } else {
+        await refreshPluginFeed(id, undefined, { force: true });
+      }
       await loadPlugins();
       await loadFeedPage({ offset: 0, append: false });
     },
@@ -460,14 +547,12 @@ export function useOrbitData(
   const applyPluginOrder = useCallback((orderedIds: string[]) => {
     const prev = pluginsRef.current;
     if (prev.length <= 1 || orderedIds.length === 0) return;
-
     const [allPlugin, ...rest] = prev;
     const byId = new Map(rest.map(plugin => [plugin.id, plugin]));
     const next = orderedIds
       .map(id => byId.get(id))
       .filter((plugin): plugin is Plugin => !!plugin);
     if (next.length !== rest.length) return;
-
     const withSort = next.map((plugin, sortIndex) => ({ ...plugin, sort: sortIndex }));
     setPlugins([allPlugin, ...withSort]);
     persistPluginOrder(withSort.map(plugin => plugin.id));
@@ -476,13 +561,11 @@ export function useOrbitData(
   const movePlugin = useCallback((id: string, direction: "up" | "down") => {
     const prev = pluginsRef.current;
     if (prev.length <= 2) return;
-
     const rest = prev.filter(plugin => plugin.id !== "all");
     const index = rest.findIndex(plugin => plugin.id === id);
     if (index < 0) return;
     if (direction === "up" && index === 0) return;
     if (direction === "down" && index === rest.length - 1) return;
-
     const next = [...rest];
     const targetIndex = direction === "up" ? index - 1 : index + 1;
     [next[index], next[targetIndex]] = [next[targetIndex]!, next[index]!];
@@ -495,15 +578,14 @@ export function useOrbitData(
 
   const markArticleRead = useCallback(async (id: string) => {
     let wasUnread = false;
-    let skipPersist = false;
+    let pluginId: string | undefined;
+    let channelId: string | undefined;
     setArticles(prev => {
       const target = prev.find(article => article.id === id);
-      if (!target || target.isRead) {
-        return prev;
-      }
+      if (!target || target.isRead) return prev;
       wasUnread = true;
-      const plugin = pluginsRef.current.find(p => p.id === target.pluginId);
-      skipPersist = isBrowseDynamicImageArticle(target, plugin);
+      pluginId = target.pluginId;
+      channelId = target.channelId;
       return prev.map(article =>
         article.id === id ? { ...article, isRead: true } : article,
       );
@@ -511,11 +593,8 @@ export function useOrbitData(
     if (wasUnread) {
       setUnreadTotal(prev => Math.max(0, prev - 1));
     }
-    if (skipPersist) {
-      return;
-    }
     try {
-      await markFeedItemRead(id);
+      await markFeedItemRead(id, { pluginId, channelId });
     } catch {
       setArticles(prev => prev.map(article => (
         article.id === id ? { ...article, isRead: false } : article
@@ -540,6 +619,7 @@ export function useOrbitData(
     loadingMore,
     hasMore,
     feedPageSize,
+    channelCapabilities,
     error,
     reload,
     refreshFromCache,

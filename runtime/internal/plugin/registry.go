@@ -21,6 +21,7 @@ type Registry struct {
 	store     *store.Store
 	fetcher   *RSSFetcher
 	wasmExec  *WASMExecutor
+	dispatch  *FeatureDispatcher
 	mu        sync.RWMutex
 	records   map[string]*PluginRecord
 	pluginDir        map[string]string // plugin id -> absolute package dir
@@ -29,7 +30,7 @@ type Registry struct {
 }
 
 func NewRegistry(st *store.Store) *Registry {
-	return &Registry{
+	reg := &Registry{
 		store:     st,
 		fetcher:   NewRSSFetcher(),
 		wasmExec:  NewWASMExecutor(),
@@ -37,6 +38,12 @@ func NewRegistry(st *store.Store) *Registry {
 		pluginDir:     make(map[string]string),
 		bundledOnDisk: make(map[string]manifestOnDisk),
 	}
+	reg.dispatch = NewFeatureDispatcher(reg)
+	return reg
+}
+
+func (r *Registry) Dispatcher() *FeatureDispatcher {
+	return r.dispatch
 }
 
 // Sync scans plugin directories and reconciles with SQLite.
@@ -116,7 +123,7 @@ func (r *Registry) Sync(ctx context.Context) error {
 		if err := r.store.DeletePlugin(ctx, id); err != nil {
 			return err
 		}
-		if err := r.store.DeleteFeedItemsByPlugin(ctx, id); err != nil {
+		if err := r.store.DeletePluginCachedData(ctx, id); err != nil {
 			return err
 		}
 	}
@@ -172,6 +179,11 @@ func (r *Registry) scanDir(root string, out map[string]manifestOnDisk) error {
 			return fmt.Errorf("%s: %w", manifestPath, err)
 		}
 		bundled := filepath.Clean(root) != userDir
+		if !bundled && rawManifestHasLegacyV1Fields(data) {
+			if err := SaveManifest(pluginDir, m); err != nil {
+				return fmt.Errorf("migrate manifest %s: %w", manifestPath, err)
+			}
+		}
 		dir := pluginDir
 		if prev, ok := out[m.ID]; ok {
 			// Later dirs override earlier; user dir wins over bundled.
@@ -565,9 +577,10 @@ func (r *Registry) Uninstall(ctx context.Context, id string) error {
 	if err := r.store.DeletePlugin(ctx, id); err != nil {
 		return err
 	}
-	if err := r.store.DeleteFeedItemsByPlugin(ctx, id); err != nil {
+	if err := r.store.DeletePluginCachedData(ctx, id); err != nil {
 		return err
 	}
+	r.dispatch.ClearPluginSessions(id)
 	r.mu.Lock()
 	delete(r.records, id)
 	r.mu.Unlock()
@@ -619,7 +632,7 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 		if !ChannelEnabled(ch) {
 			return []FeedItem{}, nil
 		}
-		if ChannelDynamic(ch) {
+		if !ChannelFeedRefresh(ch) {
 			return []FeedItem{}, nil
 		}
 		items, err := r.refreshChannel(ctx, rec, ch)
@@ -632,7 +645,7 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 			if !ChannelEnabled(&ch) {
 				continue
 			}
-			if ChannelDynamic(&ch) {
+			if !ChannelFeedRefresh(&ch) {
 				continue
 			}
 			items, err := r.refreshChannel(ctx, rec, &ch)
@@ -671,11 +684,11 @@ func (r *Registry) refreshChannel(ctx context.Context, rec *PluginRecord, ch *Fe
 	case SourceRSS:
 		items, err = r.fetcher.FetchFeedURL(ctx, &rec.Manifest, ch.FeedURL)
 	case SourceWASM:
-		dir, ok := r.getPluginDir(rec.ID)
-		if !ok {
-			return nil, fmt.Errorf("plugin dir not found for %s", rec.ID)
+		result, err := r.dispatch.Refresh(ctx, rec.ID, ch.ID)
+		if err != nil {
+			return nil, err
 		}
-		items, err = r.wasmExec.FetchChannel(ctx, dir, rec, ch)
+		return result.Items, nil
 	default:
 		return nil, fmt.Errorf("unsupported plugin source: %s", rec.Source)
 	}
@@ -686,7 +699,7 @@ func (r *Registry) refreshChannel(ctx context.Context, rec *PluginRecord, ch *Fe
 	for i := range items {
 		items[i].ChannelID = ch.ID
 	}
-	if err := r.persistFeedItemsForChannel(ctx, rec.ID, ch.ID, items, now, ChannelItemLimit(ch)); err != nil {
+	if err := r.persistFeedItemsForChannel(ctx, rec.ID, ch.ID, items, now, FeedItemLimit(ch)); err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -699,7 +712,7 @@ func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord
 			if !ChannelEnabled(ch) {
 				return []FeedItem{}, false, nil
 			}
-			if ChannelDynamic(ch) {
+			if !ChannelFeedPersist(ch) {
 				return []FeedItem{}, false, nil
 			}
 		}
@@ -711,7 +724,7 @@ func (r *Registry) loadFeedItemsForPlugin(ctx context.Context, rec *PluginRecord
 		if !ChannelEnabled(&ch) {
 			continue
 		}
-		if ChannelDynamic(&ch) {
+		if !ChannelFeedPersist(&ch) {
 			continue
 		}
 		items, backfill, err := r.loadFeedItems(ctx, rec.ID, ch.ID, search)
@@ -786,12 +799,30 @@ func (r *Registry) Feed(
 					"[orbit-feed] channel resolve plugin=%q channel=%q found=%v dynamic=%v browseDynamic=%v route=%q ch_params=%s",
 					rec.ID, effectiveChannel, ok, isDynamic, browseDynamic, ch.Route, mustJSON(ch.Params),
 				)
-				if isDynamic || browseDynamic {
-					items, err := r.fetchDynamicChannel(ctx, rec, ch, search, limit, offset)
+				if isDynamic {
+					var result DispatchResult
+					var err error
+					if strings.TrimSpace(search) != "" {
+						result, err = r.dispatch.Search(ctx, rec.ID, effectiveChannel, search)
+					} else {
+						result, err = r.dispatch.ListItems(ctx, rec.ID, effectiveChannel, limit, offset)
+					}
 					if err != nil {
 						return FeedQueryResult{}, err
 					}
-					all = append(all, items...)
+					all = append(all, result.Items...)
+					prePaged = true
+					continue
+				}
+				if browseDynamic {
+					result, err := r.dispatch.ListItems(ctx, rec.ID, effectiveChannel, limit, offset)
+					if err != nil {
+						return FeedQueryResult{}, err
+					}
+					for i := range result.Items {
+						result.Items[i].IsRead = true
+					}
+					all = append(all, result.Items...)
 					prePaged = true
 					continue
 				}
@@ -846,100 +877,6 @@ func (r *Registry) Feed(
 	}, nil
 }
 
-func (r *Registry) fetchDynamicChannel(
-	ctx context.Context,
-	rec *PluginRecord,
-	ch *FeedChannel,
-	search string,
-	limit, offset int,
-) ([]FeedItem, error) {
-	search = strings.TrimSpace(search)
-	browseDynamic := ChannelBrowseDynamic(ch, rec.MediaType)
-	if search == "" && !browseDynamic {
-		return []FeedItem{}, nil
-	}
-	if rec.Source != SourceWASM {
-		return nil, fmt.Errorf("dynamic channel requires wasm plugin: %s", rec.ID)
-	}
-	dir, ok := r.getPluginDir(rec.ID)
-	if !ok {
-		return nil, fmt.Errorf("plugin dir not found for %s", rec.ID)
-	}
-	page := WasmPageFromOffset(limit, offset)
-	if page > DynamicSearchMaxPages {
-		log.Printf(
-			"[orbit-feed] dynamic skip page limit plugin=%q channel=%q page=%d max=%d",
-			rec.ID, ch.ID, page, DynamicSearchMaxPages,
-		)
-		return []FeedItem{}, nil
-	}
-	var overrides map[string]string
-	if browseDynamic {
-		overrides = DynamicImageWasmOverrides(ch, limit, offset)
-	} else {
-		overrides = DynamicSearchWasmOverrides(ch, search, limit, offset)
-	}
-	log.Printf(
-		"[orbit-feed] dynamic fetch plugin=%q channel=%q browseDynamic=%v q=%q limit=%d offset=%d wasm_page=%d overrides=%s",
-		rec.ID, ch.ID, browseDynamic, search, limit, offset, page, mustJSON(overrides),
-	)
-	items, err := r.wasmExec.FetchChannelWithParams(ctx, dir, rec, ch, overrides)
-	if err != nil {
-		return nil, err
-	}
-	for i := range items {
-		items[i].ChannelID = ch.ID
-		items[i].IsRead = true
-	}
-	firstID := ""
-	if len(items) > 0 {
-		firstID = items[0].ID
-	}
-	log.Printf(
-		"[orbit-feed] dynamic result plugin=%q channel=%q wasm_page=%d count=%d first_item_id=%q",
-		rec.ID, ch.ID, page, len(items), firstID,
-	)
-	return items, nil
-}
-
-func (r *Registry) fetchDetailItem(
-	ctx context.Context,
-	rec *PluginRecord,
-	ch *FeedChannel,
-	item FeedItem,
-) (*FeedItem, error) {
-	if rec.Source != SourceWASM {
-		return nil, fmt.Errorf("detail channel requires wasm plugin: %s", rec.ID)
-	}
-	dir, ok := r.getPluginDir(rec.ID)
-	if !ok {
-		return nil, fmt.Errorf("plugin dir not found for %s", rec.ID)
-	}
-	overrides := BuildDetailParams(ch, item)
-	log.Printf(
-		"[orbit-feed] detail fetch plugin=%q channel=%q item_id=%q overrides=%s",
-		rec.ID, ch.ID, item.ID, mustJSON(overrides),
-	)
-	items, err := r.wasmExec.FetchChannelWithParams(ctx, dir, rec, ch, overrides)
-	if err != nil {
-		return nil, err
-	}
-	thirdPartyID := extractThirdPartyFeedID(item)
-	for i := range items {
-		items[i].ID = item.ID
-		if item.ChannelID != "" {
-			items[i].ChannelID = item.ChannelID
-		}
-		if items[i].ID == item.ID || extractThirdPartyFeedID(items[i]) == thirdPartyID {
-			return &items[i], nil
-		}
-	}
-	if len(items) > 0 {
-		return &items[0], nil
-	}
-	return nil, fmt.Errorf("detail fetch returned no items")
-}
-
 func mustJSON(v any) string {
 	data, err := json.Marshal(v)
 	if err != nil {
@@ -948,8 +885,15 @@ func mustJSON(v any) string {
 	return string(data)
 }
 
-func (r *Registry) MarkFeedItemRead(ctx context.Context, id string) error {
-	return r.store.MarkFeedItemRead(ctx, id, time.Now().Unix())
+func (r *Registry) MarkFeedItemRead(ctx context.Context, pluginID, channelID, id string) error {
+	id = strings.TrimSpace(id)
+	pluginID = strings.TrimSpace(pluginID)
+	channelID = strings.TrimSpace(channelID)
+	storageID := id
+	if pluginID != "" && channelID != "" && !strings.HasPrefix(id, pluginID+":") {
+		storageID = FeedFullID(pluginID, channelID, id)
+	}
+	return r.store.MarkFeedItemRead(ctx, storageID, time.Now().Unix())
 }
 
 func (r *Registry) CountUnread(

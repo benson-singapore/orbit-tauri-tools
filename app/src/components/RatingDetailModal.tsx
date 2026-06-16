@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
-import { rewriteHtmlImageUrls } from "@/lib/imageProxy";
+import { prepareArticleHtmlContent } from "@/lib/articleContent";
+import { bindArticleContentImages } from "@/lib/imageProxy";
 import {
   parseRatingScore,
   parseRatingSummary,
@@ -63,14 +64,15 @@ export function RatingDetailModal({
   const displayContent = useMemo(() => {
     const raw = article.content?.trim();
     if (!raw) return "";
-    return rewriteHtmlImageUrls(raw, runtimeBase);
+    return prepareArticleHtmlContent(raw, runtimeBase);
   }, [article.content, runtimeBase]);
 
   useEffect(() => {
     if (displayContent) {
       highlightArticleCode(contentRef.current);
+      bindArticleContentImages(contentRef.current, runtimeBase);
     }
-  }, [displayContent, theme]);
+  }, [displayContent, runtimeBase, theme]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {

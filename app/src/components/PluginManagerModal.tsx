@@ -20,9 +20,13 @@ import {
   readStoredMarketContentRating,
 } from "@/lib/marketContentRating";
 import { slugifyChannelId } from "@/lib/channelId";
-import { isChannelDynamic, normalizeChannelStatus, type ChannelStatus } from "@/lib/channelStatus";
+import { normalizeChannelStatus, type ChannelStatus } from "@/lib/channelStatus";
 import { resolveColorToHex } from "@/lib/pluginColor";
 import { waitForRuntimeReady } from "@/lib/runtime";
+import {
+  fetchPluginVariables,
+  savePluginVariables,
+} from "@/lib/runtimeV2";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
 import { ALL_MANAGE_GROUP_ID, DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import type {
@@ -96,16 +100,14 @@ type WasmChannelFormRow = {
   label: string;
   route: string;
   params: string;
-  itemLimit: string;
+  featuresJson: string;
   status: ChannelStatus;
-  dynamic?: boolean;
-  type?: string;
   idAuto: boolean;
 };
 
 function createWasmChannelRow(
   partial: Partial<
-    Pick<WasmChannelFormRow, "id" | "label" | "route" | "params" | "itemLimit" | "status" | "dynamic" | "type">
+    Pick<WasmChannelFormRow, "id" | "label" | "route" | "params" | "featuresJson" | "status">
   > = {},
   options?: { idAuto?: boolean },
 ): WasmChannelFormRow {
@@ -120,10 +122,8 @@ function createWasmChannelRow(
     label,
     route: partial.route ?? "",
     params: partial.params ?? "",
-    itemLimit: partial.itemLimit ?? "100",
+    featuresJson: partial.featuresJson ?? "{}",
     status: partial.status ?? "enabled",
-    dynamic: partial.dynamic,
-    type: partial.type,
     idAuto,
   };
 }
@@ -867,6 +867,9 @@ function WasmChannelEditorModal({
       if (draft.params.trim()) {
         parseWasmChannelParams(draft.params);
       }
+      if (draft.featuresJson.trim()) {
+        JSON.parse(draft.featuresJson);
+      }
     } catch (e) {
       setError(`params 无效：${e instanceof Error ? e.message : String(e)}`);
       return;
@@ -986,15 +989,14 @@ function WasmChannelEditorModal({
 
           <div className="space-y-1">
             <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-              抓取数量上限 itemLimit（默认 100）
+              features（JSON，v2 能力声明）
             </label>
-            <input
-              type="number"
-              min={1}
-              value={draft.itemLimit}
-              onChange={e => setDraft(prev => ({ ...prev, itemLimit: e.target.value }))}
-              placeholder="100"
-              className={`w-full sm:w-40 px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+            <textarea
+              value={draft.featuresJson}
+              onChange={e => setDraft(prev => ({ ...prev, featuresJson: e.target.value }))}
+              rows={8}
+              placeholder='{"feed":{"persist":true,"refresh":true},"detail":{"route":"/detail/:id"}}'
+              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 font-mono ${inputBg} ${inputBorder} ${inputText}`}
             />
           </div>
 
@@ -1065,6 +1067,8 @@ function WasmManifestEditorModal({
   const [userAgent, setUserAgent] = useState("");
   const [hasSecretsApiKey, setHasSecretsApiKey] = useState(false);
   const [secretsApiKey, setSecretsApiKey] = useState("");
+  const [pluginVariableValues, setPluginVariableValues] = useState<Record<string, string>>({});
+  const [pluginVariableSchema, setPluginVariableSchema] = useState<Record<string, { label: string; description?: string; required?: boolean; secret?: boolean; default?: string }>>({});
   const [executionMode, setExecutionMode] = useState("wasm");
   const [wasmEntry, setWasmEntry] = useState("plugin.wasm");
   const [wasmTimeoutMs, setWasmTimeoutMs] = useState("30000");
@@ -1102,10 +1106,8 @@ function WasmManifestEditorModal({
           label?: string;
           route?: string;
           params?: Record<string, string>;
-          itemLimit?: number;
           status?: string;
-          dynamic?: boolean;
-          type?: string;
+          features?: Record<string, unknown>;
         }[])
       : [];
     if (rawChannels.length > 0) {
@@ -1117,12 +1119,8 @@ function WasmManifestEditorModal({
               label: String(ch.label ?? ch.id ?? `频道 ${i + 1}`).trim(),
               route: String(ch.route ?? "").trim(),
               params: ch.params ? JSON.stringify(ch.params) : "",
-              itemLimit: String(
-                typeof ch.itemLimit === "number" && ch.itemLimit > 0 ? ch.itemLimit : 100,
-              ),
+              featuresJson: ch.features ? JSON.stringify(ch.features, null, 2) : "{}",
               status: normalizeChannelStatus(ch.status),
-              dynamic: ch.dynamic === true ? true : undefined,
-              type: typeof ch.type === "string" && ch.type.trim() ? ch.type.trim() : undefined,
             },
             { idAuto: false },
           ),
@@ -1130,6 +1128,22 @@ function WasmManifestEditorModal({
       );
     } else {
       setChannels([createWasmChannelRow({ label: "默认" }, { idAuto: true })]);
+    }
+
+    const variables = config.variables as Record<string, unknown> | undefined;
+    if (variables && typeof variables === "object") {
+      setPluginVariableSchema(
+        Object.fromEntries(
+          Object.entries(variables).map(([key, def]) => [
+            key,
+            typeof def === "object" && def != null
+              ? (def as { label: string; description?: string; required?: boolean; secret?: boolean; default?: string })
+              : { label: key },
+          ]),
+        ),
+      );
+    } else {
+      setPluginVariableSchema({});
     }
 
     setDefaultChannel(typeof config.defaultChannel === "string" ? config.defaultChannel : "");
@@ -1196,7 +1210,6 @@ function WasmManifestEditorModal({
 
     const config = (manifest.config ?? {}) as Record<string, unknown>;
     config.channels = channels.map(ch => {
-      const parsedLimit = Number.parseInt(ch.itemLimit.trim(), 10);
       const item: Record<string, unknown> = {
         id: ch.id.trim(),
         label: ch.label.trim(),
@@ -1206,18 +1219,14 @@ function WasmManifestEditorModal({
       if (params && Object.keys(params).length > 0) {
         item.params = params;
       }
-      if (Number.isFinite(parsedLimit) && parsedLimit > 0) {
-        item.itemLimit = parsedLimit;
-      }
       if (ch.status === "disabled") {
         item.status = "disabled";
       }
-      if (ch.dynamic === true) {
-        item.dynamic = true;
-      }
-      const channelType = ch.type?.trim();
-      if (channelType) {
-        item.type = channelType;
+      const featuresText = ch.featuresJson.trim();
+      if (featuresText && featuresText !== "{}") {
+        item.features = JSON.parse(featuresText);
+      } else {
+        item.features = {};
       }
       return item;
     });
@@ -1231,11 +1240,10 @@ function WasmManifestEditorModal({
     config.refreshInterval =
       Number.isFinite(parsedRefresh) && parsedRefresh > 0 ? parsedRefresh : 3600;
     config.userAgent = userAgent.trim();
-    if (hasSecretsApiKey) {
-      const secrets = (config.secrets ?? {}) as Record<string, unknown>;
-      secrets.apiKey = secretsApiKey.trim();
-      config.secrets = secrets;
+    if (Object.keys(pluginVariableSchema).length > 0) {
+      config.variables = pluginVariableSchema;
     }
+    delete config.secrets;
     const mode = executionMode.trim();
     if (mode) {
       config.executionMode = mode;
@@ -1308,6 +1316,13 @@ function WasmManifestEditorModal({
         if (!cancelled) {
           setLoading(false);
         }
+      });
+    void fetchPluginVariables(plugin.id)
+      .then(values => {
+        if (!cancelled) setPluginVariableValues(values);
+      })
+      .catch(() => {
+        if (!cancelled) setPluginVariableValues({});
       });
     return () => {
       cancelled = true;
@@ -1428,8 +1443,18 @@ function WasmManifestEditorModal({
       return "刷新间隔需为正整数（秒）";
     }
 
-    if (hasSecretsApiKey && !secretsApiKey.trim()) {
+    if (hasSecretsApiKey && !secretsApiKey.trim() && Object.keys(pluginVariableSchema).length === 0) {
       return "请填写 API Key（config.secrets.apiKey）";
+    }
+
+    for (const ch of channels) {
+      if (ch.featuresJson.trim()) {
+        try {
+          JSON.parse(ch.featuresJson);
+        } catch {
+          return `频道「${ch.label}」的 features JSON 无效`;
+        }
+      }
     }
 
     return null;
@@ -1450,6 +1475,9 @@ function WasmManifestEditorModal({
         viewMode === "json" ? formatPrettyJson(jsonText) : buildManifestJsonText();
       JSON.parse(text);
       await onSave(text);
+      if (Object.keys(pluginVariableValues).length > 0) {
+        await savePluginVariables(plugin.id, pluginVariableValues);
+      }
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -1667,7 +1695,9 @@ function WasmManifestEditorModal({
                                 <td className={`px-4 py-3 font-mono truncate max-w-[240px] ${isDark ? "text-neutral-300" : "text-neutral-600"}`}>
                                   {ch.route.trim() || "—"}
                                 </td>
-                                <td className="px-4 py-3">{ch.itemLimit.trim() || "100"}</td>
+                                <td className="px-4 py-3 font-mono text-[10px]">
+                                  {ch.featuresJson.trim() && ch.featuresJson.trim() !== "{}" ? "v2" : "默认"}
+                                </td>
                                 <td className="px-4 py-3">
                                   <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
                                     <button
@@ -1702,7 +1732,14 @@ function WasmManifestEditorModal({
                                         }`}
                                       />
                                     </button>
-                                    {isChannelDynamic(ch) && (
+                                    {(() => {
+                                      try {
+                                        const f = JSON.parse(ch.featuresJson || "{}") as { feed?: { persist?: boolean } };
+                                        return f.feed?.persist === false;
+                                      } catch {
+                                        return false;
+                                      }
+                                    })() && (
                                       <span
                                         title="dynamic: true"
                                         className={`inline-flex shrink-0 items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${
@@ -1787,27 +1824,49 @@ function WasmManifestEditorModal({
                       />
                     </div>
 
-                    {hasSecretsApiKey && (
+                    {(Object.keys(pluginVariableSchema).length > 0 || hasSecretsApiKey) && (
                       <div className={`p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
                         <div className="flex items-center gap-2 mb-5">
                           <div className="w-1 h-4 rounded-full bg-amber-500" />
-                          <h4 className="text-sm font-bold">密钥配置</h4>
+                          <h4 className="text-sm font-bold">用户变量（config.variables）</h4>
                         </div>
-                        <div className="space-y-1.5">
-                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                            API Key（config.secrets.apiKey）
-                          </label>
-                          <input
-                            type="password"
-                            value={secretsApiKey}
-                            onChange={e => setSecretsApiKey(e.target.value)}
-                            placeholder="输入 API Key"
-                            autoComplete="off"
-                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                          />
-                          <p className={`text-[10px] leading-relaxed ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-                            插件运行所需的外部服务密钥，保存后写入 manifest.json。
-                          </p>
+                        <div className="space-y-4">
+                          {Object.entries(pluginVariableSchema).map(([key, def]) => (
+                            <div key={key} className="space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                {def.label || key}
+                                {def.required ? " *" : ""}
+                              </label>
+                              <input
+                                type={def.secret === false ? "text" : "password"}
+                                value={pluginVariableValues[key] ?? ""}
+                                onChange={e =>
+                                  setPluginVariableValues(prev => ({ ...prev, [key]: e.target.value }))
+                                }
+                                placeholder={def.default ?? ""}
+                                autoComplete="off"
+                                className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                              {def.description ? (
+                                <p className={`text-[10px] leading-relaxed ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                                  {def.description}
+                                </p>
+                              ) : null}
+                            </div>
+                          ))}
+                          {hasSecretsApiKey && Object.keys(pluginVariableSchema).length === 0 ? (
+                            <div className="space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                API Key（旧版 secrets，请迁移到 variables）
+                              </label>
+                              <input
+                                type="password"
+                                value={secretsApiKey}
+                                onChange={e => setSecretsApiKey(e.target.value)}
+                                className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     )}

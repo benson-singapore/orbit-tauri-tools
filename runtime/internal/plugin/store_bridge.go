@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -32,6 +31,27 @@ func storePluginRow(rec *PluginRecord, manifestJSON string) store.PluginRow {
 	}
 }
 
+func feedStorageID(item FeedItem, channelID string) string {
+	if item.PluginID != "" && channelID != "" {
+		prefix := item.PluginID + ":"
+		if !strings.HasPrefix(item.ID, prefix) {
+			return FeedFullID(item.PluginID, channelID, item.ID)
+		}
+	}
+	return item.ID
+}
+
+func nativeFeedItemID(row store.FeedItemRow) string {
+	if native := extractThirdPartyFeedID(FeedItem{
+		ID:        row.ID,
+		PluginID:  row.PluginID,
+		ChannelID: row.ChannelID,
+	}); native != "" {
+		return native
+	}
+	return row.ID
+}
+
 func feedItemToRow(item FeedItem, channelID string) (store.FeedItemRow, error) {
 	payload, err := json.Marshal(map[string]any{
 		"tags":       item.Tags,
@@ -44,7 +64,7 @@ func feedItemToRow(item FeedItem, channelID string) (store.FeedItemRow, error) {
 		return store.FeedItemRow{}, err
 	}
 	return store.FeedItemRow{
-		ID:          item.ID,
+		ID:          feedStorageID(item, channelID),
 		PluginID:    item.PluginID,
 		ChannelID:   channelID,
 		Title:       item.Title,
@@ -60,7 +80,7 @@ func feedItemToRow(item FeedItem, channelID string) (store.FeedItemRow, error) {
 
 func rowToFeedItem(row store.FeedItemRow, includeContent bool) FeedItem {
 	item := FeedItem{
-		ID:          row.ID,
+		ID:          nativeFeedItemID(row),
 		PluginID:    row.PluginID,
 		Title:       row.Title,
 		Summary:     row.Summary,
@@ -147,7 +167,7 @@ func (r *Registry) preserveExistingArticleContent(ctx context.Context, items []F
 		if strings.TrimSpace(items[i].Content) != "" {
 			continue
 		}
-		existing, err := r.store.GetFeedItem(ctx, items[i].ID)
+		existing, err := r.store.GetFeedItem(ctx, feedStorageID(items[i], items[i].ChannelID))
 		if err != nil {
 			continue
 		}
@@ -245,7 +265,27 @@ func (r *Registry) upsertFeedItem(ctx context.Context, item FeedItem, channelID 
 }
 
 func (r *Registry) GetFeedItem(ctx context.Context, id string) (*FeedItem, error) {
-	row, err := r.store.GetFeedItem(ctx, id)
+	return r.ResolveFeedItem(ctx, "", "", id)
+}
+
+func (r *Registry) ResolveFeedItem(ctx context.Context, pluginID, channelID, id string) (*FeedItem, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, fmt.Errorf("feed item id is required")
+	}
+	pluginID = strings.TrimSpace(pluginID)
+	channelID = strings.TrimSpace(channelID)
+
+	var row *store.FeedItemRow
+	var err error
+	if pluginID != "" && channelID != "" {
+		row, err = r.store.GetFeedItem(ctx, FeedFullID(pluginID, channelID, id))
+		if err != nil {
+			row, err = r.store.GetFeedItem(ctx, id)
+		}
+	} else {
+		row, err = r.store.GetFeedItem(ctx, id)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -254,36 +294,5 @@ func (r *Registry) GetFeedItem(ctx context.Context, id string) (*FeedItem, error
 	if item.PluginName == "" && hasRec {
 		item.PluginName = rec.Name
 	}
-
-	if !hasRec || !rec.Active {
-		return &item, nil
-	}
-
-	detailCh, hasDetail := FindDetailDynamicChannel(rec.Config.Channels)
-	if !hasDetail {
-		return &item, nil
-	}
-
-	if !rowNeedsContentBackfill(*row) {
-		return &item, nil
-	}
-
-	fetched, err := r.fetchDetailItem(ctx, rec, detailCh, item)
-	if err != nil {
-		log.Printf("[orbit-feed] detail fetch failed plugin=%q item_id=%q err=%v", rec.ID, id, err)
-		return &item, nil
-	}
-	if fetched == nil {
-		return &item, nil
-	}
-
-	merged := mergeFeedItemDetail(item, *fetched)
-	channelID := merged.ChannelID
-	if channelID == "" {
-		channelID = row.ChannelID
-	}
-	if upsertErr := r.upsertFeedItem(ctx, merged, channelID); upsertErr != nil {
-		log.Printf("[orbit-feed] detail persist failed plugin=%q item_id=%q err=%v", rec.ID, id, upsertErr)
-	}
-	return &merged, nil
+	return &item, nil
 }

@@ -37,6 +37,7 @@ type wasmFetchData struct {
 	ChannelID string            `json:"channelId"`
 	Route     string            `json:"route"`
 	Params    map[string]string `json:"params"`
+	Vars      map[string]string `json:"vars,omitempty"`
 	Secrets   map[string]string `json:"secrets,omitempty"`
 }
 
@@ -84,9 +85,11 @@ type wasmResponse struct {
 }
 
 type wasmFeedResult struct {
-	Title       string         `json:"title"`
-	Description string         `json:"description,omitempty"`
-	Items       []wasmFeedItem `json:"items"`
+	Title       string            `json:"title"`
+	Description string            `json:"description,omitempty"`
+	Items       []wasmFeedItem    `json:"items"`
+	HasMore     *bool             `json:"hasMore,omitempty"`
+	Next        map[string]string `json:"next,omitempty"`
 }
 
 type wasmFeedItem struct {
@@ -130,6 +133,74 @@ func loadWasmBinary(path string) ([]byte, error) {
 		return decompressed, nil
 	}
 	return raw, nil
+}
+
+func (e *WASMExecutor) Fetch(ctx context.Context, pluginDir string, rec *PluginRecord, req FetchRequest) (FetchResult, error) {
+	if rec == nil {
+		return FetchResult{}, fmt.Errorf("plugin record is required")
+	}
+	entry := strings.TrimSpace(rec.Config.Wasm.Entry)
+	if entry == "" {
+		entry = DefaultWasmConfig().Entry
+	}
+	wasmPath := filepath.Join(pluginDir, entry)
+	data, err := loadWasmBinary(wasmPath)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("read wasm: %w", err)
+	}
+
+	timeout := time.Duration(rec.Config.Wasm.TimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = time.Duration(DefaultWasmConfig().TimeoutMs) * time.Millisecond
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	fetchData := wasmFetchData{
+		ChannelID: req.ChannelID,
+		Route:     req.Route,
+		Params:    req.Params,
+		Vars:      req.Vars,
+	}
+	if len(fetchData.Vars) > 0 {
+		fetchData.Secrets = fetchData.Vars
+	}
+	reqData, _ := json.Marshal(fetchData)
+	env, _ := json.Marshal(wasmEnvelope{Action: "fetch", Data: reqData})
+	stdinLine := string(env) + "\n"
+	log.Printf(
+		"[orbit-v2] wasm fetch plugin=%q channel=%q route=%q params=%s",
+		rec.ID, req.ChannelID, req.Route, mustJSONMap(req.Params),
+	)
+
+	raw, err := e.run(runCtx, data, stdinLine, rec, timeout)
+	if err != nil {
+		return FetchResult{}, err
+	}
+
+	var resp wasmResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return FetchResult{}, fmt.Errorf("parse wasm response: %w", err)
+	}
+	if !resp.OK {
+		if resp.Error != "" {
+			return FetchResult{}, fmt.Errorf("%s", resp.Error)
+		}
+		return FetchResult{}, fmt.Errorf("wasm plugin returned error")
+	}
+
+	var result wasmFeedResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return FetchResult{}, fmt.Errorf("parse wasm feed result: %w", err)
+	}
+	items := mapWasmFeedItems(rec, req.ChannelID, result)
+	return FetchResult{
+		Title:       result.Title,
+		Description: result.Description,
+		Items:       items,
+		HasMore:     result.HasMore,
+		Next:        result.Next,
+	}, nil
 }
 
 func (e *WASMExecutor) FetchChannel(ctx context.Context, pluginDir string, rec *PluginRecord, ch *FeedChannel) ([]FeedItem, error) {
@@ -330,7 +401,6 @@ func mapWasmFeedItems(rec *PluginRecord, channelID string, result wasmFeedResult
 		if id == "" {
 			id = sha256Hex(strings.TrimSpace(it.URL) + it.Title)
 		}
-		id = rec.ID + ":" + channelID + ":" + id
 
 		publishedAt := parsePublishedAt(it.PublishedAt)
 		img := strings.TrimSpace(it.Cover)

@@ -1,4 +1,7 @@
 import type { Article } from "@/types";
+import { isHttpImageUrl, rewriteHtmlImageUrls } from "@/lib/imageProxy";
+
+const LAZY_IMAGE_ATTRS = ["data-original", "data-src", "data-lazy-src"] as const;
 
 /** Normalize image URLs so CDN variants (query params, tpl suffix) compare equal. */
 export function normalizeImageUrl(url: string): string {
@@ -70,6 +73,46 @@ export function dedupeCoverImageFromContent(
   }
 
   return doc.body.innerHTML;
+}
+
+/** Resolve lazy-loaded forum images (e.g. Discuz `data-original`) to `src`. */
+export function resolveLazyLoadedImages(html: string): string {
+  if (!html.trim() || typeof DOMParser === "undefined") {
+    return html;
+  }
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  let changed = false;
+
+  for (const img of doc.querySelectorAll("img")) {
+    let lazyUrl = "";
+    for (const attr of LAZY_IMAGE_ATTRS) {
+      const value = img.getAttribute(attr)?.trim() ?? "";
+      if (isHttpImageUrl(value)) {
+        lazyUrl = value;
+        break;
+      }
+    }
+    if (!lazyUrl) continue;
+
+    const src = img.getAttribute("src")?.trim() ?? "";
+    if (src === lazyUrl) continue;
+
+    // Prefer the remote lazy URL over placeholders like ./images/thumb-ing.gif.
+    if (!src || !isHttpImageUrl(src) || !imagesReferToSameAsset(src, lazyUrl)) {
+      img.setAttribute("src", lazyUrl);
+      changed = true;
+    }
+  }
+
+  return changed ? doc.body.innerHTML : html;
+}
+
+export function prepareArticleHtmlContent(
+  html: string,
+  runtimeBase: string | null | undefined,
+): string {
+  return rewriteHtmlImageUrls(resolveLazyLoadedImages(html), runtimeBase);
 }
 
 /** Feed list items omit detail fields; keep them when syncing list metadata. */

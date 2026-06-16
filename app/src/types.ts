@@ -5,15 +5,96 @@ export type ThemeMode = "light" | "dark";
 export type ActiveTab = "today" | "bookmarks" | "trending" | "all";
 export type CategoryFilter = "all" | ContentType;
 
+export interface FeedFeature {
+  persist?: boolean;
+  refresh?: boolean;
+  limit?: number;
+}
+
+export interface PaginationFeature {
+  style: "offset" | "cursor" | "lastId";
+  param?: string;
+  default?: string;
+  idFrom?: string;
+  sizeParam?: string;
+  defaultSize?: number;
+}
+
+export interface SearchFeature {
+  param?: string;
+  required?: boolean;
+}
+
+export interface DetailFeature {
+  route: string;
+  idParam?: string;
+  idFrom?: string;
+  persist?: boolean;
+}
+
+export interface ChapterDetailFeature {
+  route: string;
+  idParam?: string;
+  idFrom?: string;
+  parentParam?: string;
+  parentFrom?: string;
+  persist?: boolean;
+}
+
+export interface ChaptersFeature {
+  route: string;
+  idParam?: string;
+  idFrom?: string;
+  label?: string;
+  itemLabel?: string;
+  persist?: boolean;
+  limit?: number;
+  pagination?: PaginationFeature;
+  detail?: ChapterDetailFeature;
+}
+
+export interface ChannelFeatures {
+  feed?: FeedFeature;
+  pagination?: PaginationFeature;
+  search?: SearchFeature;
+  detail?: DetailFeature;
+  chapters?: ChaptersFeature;
+}
+
+export interface ChannelCapabilities {
+  canRefresh: boolean;
+  canLoadMore: boolean;
+  canLoadMoreChapters: boolean;
+  canRefreshChapters: boolean;
+  canSearch: boolean;
+  hasDetail: boolean;
+  hasChapters: boolean;
+  persistList: boolean;
+  chaptersLabel?: string;
+  chaptersItemLabel?: string;
+}
+
+export interface VariableDefinition {
+  label: string;
+  description?: string;
+  required?: boolean;
+  secret?: boolean;
+  default?: string;
+}
+
 export interface PluginChannel {
   id: string;
   label: string;
   feedUrl?: string;
   route?: string;
   params?: Record<string, string>;
-  itemLimit?: number;
   status?: "enabled" | "disabled";
+  features?: ChannelFeatures;
+  /** @deprecated v1 only */
+  itemLimit?: number;
+  /** @deprecated v1 only */
   type?: "search" | "detail" | string;
+  /** @deprecated v1 only */
   dynamic?: boolean;
 }
 
@@ -137,6 +218,7 @@ export interface Plugin {
   lastError?: string;
   version?: string;
   marketId?: string;
+  variablesSchema?: Record<string, VariableDefinition>;
 }
 
 export interface FeedResponse {

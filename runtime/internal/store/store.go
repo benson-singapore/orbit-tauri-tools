@@ -114,6 +114,41 @@ func (s *Store) migrate() error {
 	if err := s.migratePluginGroups(); err != nil {
 		return err
 	}
+	if err := s.migrateFeaturesV2(); err != nil {
+		return err
+	}
+	if err := s.migrateChapterSortOrder(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) migrateFeaturesV2() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS plugin_variables (
+			plugin_id TEXT NOT NULL,
+			key TEXT NOT NULL,
+			value TEXT NOT NULL,
+			PRIMARY KEY (plugin_id, key)
+		)`,
+		`CREATE TABLE IF NOT EXISTS chapter_items (
+			id TEXT PRIMARY KEY,
+			plugin_id TEXT NOT NULL,
+			channel_id TEXT NOT NULL,
+			parent_id TEXT NOT NULL,
+			title TEXT,
+			summary TEXT,
+			cover TEXT,
+			payload_json TEXT,
+			fetched_at INTEGER NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_chapter_parent ON chapter_items(plugin_id, channel_id, parent_id)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.DB.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate features v2: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -137,6 +172,37 @@ func (s *Store) migratePluginGroups() error {
 		if _, err := s.DB.Exec(stmt); err != nil {
 			return fmt.Errorf("migrate plugin groups: %w", err)
 		}
+	}
+	return nil
+}
+
+func (s *Store) migrateChapterSortOrder() error {
+	var count int
+	err := s.DB.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('chapter_items') WHERE name = 'sort_order'`,
+	).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check chapter_items.sort_order: %w", err)
+	}
+	if count > 0 {
+		return nil
+	}
+	if _, err := s.DB.Exec(
+		`ALTER TABLE chapter_items ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0`,
+	); err != nil {
+		return fmt.Errorf("add chapter_items.sort_order: %w", err)
+	}
+	_, err = s.DB.Exec(`
+		UPDATE chapter_items SET sort_order = (
+			SELECT COUNT(*) - 1 FROM chapter_items c2
+			WHERE c2.plugin_id = chapter_items.plugin_id
+			  AND c2.channel_id = chapter_items.channel_id
+			  AND c2.parent_id = chapter_items.parent_id
+			  AND c2.rowid <= chapter_items.rowid
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("backfill chapter_items.sort_order: %w", err)
 	}
 	return nil
 }

@@ -65,3 +65,31 @@ export function rewriteHtmlImageUrls(
 export function isProxiedImageUrl(src: string): boolean {
   return src.includes("/v1/images/proxy?url=");
 }
+
+function resolveArticleImageOriginal(img: HTMLImageElement): string {
+  for (const attr of ["data-original", "data-src", "data-lazy-src"]) {
+    const value = img.getAttribute(attr)?.trim() ?? "";
+    if (isHttpImageUrl(value)) {
+      return value;
+    }
+  }
+  return img.getAttribute("src")?.trim() ?? "";
+}
+
+/** Retry article body images through the runtime proxy after a direct load fails. */
+export function bindArticleContentImages(
+  root: HTMLElement | null,
+  runtimeBase: string | null | undefined,
+): void {
+  if (!root || !runtimeBase) return;
+
+  root.querySelectorAll("img").forEach(img => {
+    const original = resolveArticleImageOriginal(img);
+    if (!original) return;
+
+    img.onerror = () => {
+      if (isProxiedImageUrl(img.src)) return;
+      img.src = buildImageProxyUrl(runtimeBase, original);
+    };
+  });
+}

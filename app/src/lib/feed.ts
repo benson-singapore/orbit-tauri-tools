@@ -137,10 +137,20 @@ export async function fetchFeedUnread(options?: {
   return data.unreadTotal ?? 0;
 }
 
-export async function fetchFeedItem(id: string): Promise<Article> {
+export async function fetchFeedItem(
+  id: string,
+  options?: { pluginId?: string; channelId?: string },
+): Promise<Article> {
   const base = await apiBase();
+  const params = new URLSearchParams({ id });
+  if (options?.pluginId) {
+    params.set("plugin_id", options.pluginId);
+  }
+  if (options?.channelId) {
+    params.set("channel_id", options.channelId);
+  }
   const res = await fetchGetWithDedupe(
-    `${base}/v1/feed/item?id=${encodeURIComponent(id)}`,
+    `${base}/v1/feed/item?${params.toString()}`,
   );
   if (!res.ok) {
     throw new Error(await parseError(res));
@@ -344,12 +354,19 @@ export async function refreshPluginFeed(
   }
 }
 
-export async function markFeedItemRead(id: string): Promise<void> {
+export async function markFeedItemRead(
+  id: string,
+  options?: { pluginId?: string; channelId?: string },
+): Promise<void> {
   const base = await apiBase();
   const res = await fetch(`${base}/v1/feed/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ id }),
+    body: JSON.stringify({
+      id,
+      pluginId: options?.pluginId,
+      channelId: options?.channelId,
+    }),
   });
   if (!res.ok) {
     throw new Error(await parseError(res));

@@ -37,16 +37,25 @@ type Manifest struct {
 	Bundled      bool           `json:"-"`
 }
 
+type VariableDefinition struct {
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty"`
+	Default     string `json:"default,omitempty"`
+}
+
 type ManifestConfig struct {
-	Channels        []FeedChannel     `json:"channels"`
-	DefaultChannel  string            `json:"defaultChannel,omitempty"`
-	RefreshInterval int               `json:"refreshInterval"` // seconds, default 3600
-	UserAgent       string            `json:"userAgent"`
-	Secrets         map[string]string `json:"secrets,omitempty"`
-	LegacyFeedURL   string            `json:"feedUrl,omitempty"` // migrated to channels on load; not persisted after save
-	ExecutionMode   string            `json:"executionMode,omitempty"` // wasm | browser | hybrid (Phase 3)
-	Wasm            WasmConfig        `json:"wasm,omitempty"`
-	Browser         BrowserConfig     `json:"browser,omitempty"`
+	Channels        []FeedChannel                  `json:"channels"`
+	DefaultChannel  string                         `json:"defaultChannel,omitempty"`
+	RefreshInterval int                            `json:"refreshInterval"` // seconds, default 3600
+	UserAgent       string                         `json:"userAgent"`
+	Variables       map[string]VariableDefinition  `json:"variables,omitempty"`
+	Secrets         map[string]string              `json:"secrets,omitempty"` // deprecated: use variables
+	LegacyFeedURL   string                         `json:"feedUrl,omitempty"` // migrated to channels on load; not persisted after save
+	ExecutionMode   string                         `json:"executionMode,omitempty"` // wasm | browser | hybrid (Phase 3)
+	Wasm            WasmConfig                     `json:"wasm,omitempty"`
+	Browser         BrowserConfig                  `json:"browser,omitempty"`
 }
 
 // WasmConfig describes the WASM binary for source=wasm plugins.

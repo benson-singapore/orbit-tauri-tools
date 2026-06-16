@@ -2,7 +2,6 @@ package plugin
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 )
 
@@ -20,36 +19,49 @@ const (
 
 // FeedChannel is one feed source within a plugin (RSS feedUrl or WASM route).
 type FeedChannel struct {
-	ID        string            `json:"id"`
-	Label     string            `json:"label"`
-	FeedURL   string            `json:"feedUrl,omitempty"`
-	Route     string            `json:"route,omitempty"`
-	Params    map[string]string `json:"params,omitempty"`
-	ItemLimit int               `json:"itemLimit,omitempty"`
-	Status    string            `json:"status,omitempty"` // enabled (default) | disabled
-	Type      string            `json:"type,omitempty"`   // search | empty (feed)
-	Dynamic   bool              `json:"dynamic,omitempty"`
+	ID       string            `json:"id"`
+	Label    string            `json:"label"`
+	FeedURL  string            `json:"feedUrl,omitempty"`
+	Route    string            `json:"route,omitempty"`
+	Params   map[string]string `json:"params,omitempty"`
+	Status   string            `json:"status,omitempty"` // enabled (default) | disabled
+	Features ChannelFeatures   `json:"features,omitempty"`
+	// Deprecated v1 fields — rejected for WASM plugins on validate.
+	ItemLimit int    `json:"itemLimit,omitempty"`
+	Type      string `json:"type,omitempty"`
+	Dynamic   bool   `json:"dynamic,omitempty"`
 }
 
 const DynamicSearchMaxPages = 20
 
 const DefaultFeedPageSize = 20
 
-// ChannelDynamic reports whether the channel is fetched on-demand (not cached by scheduler).
+// ChannelDynamic reports whether the channel list is ephemeral (not read from DB).
 func ChannelDynamic(ch *FeedChannel) bool {
 	if ch == nil {
 		return false
 	}
-	inferSearchChannelMetadata(ch)
-	return ch.Dynamic
+	f := ResolveFeatures(ch)
+	return !f.Feed.Persist
 }
 
-// ChannelBrowseDynamic reports image-plugin channels with explicit dynamic: true (browse by params, no q).
+// ChannelBrowseDynamic reports image channels with pagination and no search (legacy UI hint).
 func ChannelBrowseDynamic(ch *FeedChannel, mediaType string) bool {
 	if ch == nil || mediaType != MediaImage {
 		return false
 	}
-	return ch.Dynamic
+	f := ResolveFeatures(ch)
+	return f.Pagination != nil && f.Search == nil && f.Feed.Persist
+}
+
+// ChannelDetailDynamic is deprecated in v2 manifests.
+func ChannelDetailDynamic(ch *FeedChannel) bool {
+	return false
+}
+
+// FindDetailDynamicChannel is deprecated in v2 manifests.
+func FindDetailDynamicChannel(channels []FeedChannel) (*FeedChannel, bool) {
+	return nil, false
 }
 
 // ChannelStatus returns the effective channel status (empty means enabled).
@@ -70,56 +82,6 @@ func ChannelEnabled(ch *FeedChannel) bool {
 	return ChannelStatus(ch) != ChannelStatusDisabled
 }
 
-// ChannelDetailDynamic reports a hidden detail channel used for live single-item fetches.
-func ChannelDetailDynamic(ch *FeedChannel) bool {
-	if ch == nil {
-		return false
-	}
-	return ChannelStatus(ch) == ChannelStatusDisabled &&
-		strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeDetail) &&
-		ch.Dynamic
-}
-
-// FindDetailDynamicChannel returns the first detail channel across all channels (including disabled).
-func FindDetailDynamicChannel(channels []FeedChannel) (*FeedChannel, bool) {
-	for i := range channels {
-		if ChannelDetailDynamic(&channels[i]) {
-			return &channels[i], true
-		}
-	}
-	return nil, false
-}
-
-func channelDetailParamKey(ch *FeedChannel) string {
-	if ch == nil {
-		return "id"
-	}
-	if key := firstRouteParam(ch.Route); key != "" {
-		return key
-	}
-	for k, v := range ch.Params {
-		if strings.TrimSpace(v) == "" {
-			return k
-		}
-	}
-	return "id"
-}
-
-// BuildDetailParams merges channel defaults with the third-party item id for a detail fetch.
-func BuildDetailParams(ch *FeedChannel, item FeedItem) map[string]string {
-	params := make(map[string]string, len(ch.Params)+1)
-	for k, v := range ch.Params {
-		params[k] = v
-	}
-	paramKey := channelDetailParamKey(ch)
-	paramValue := extractThirdPartyFeedID(item)
-	if paramValue == "" {
-		paramValue = strings.TrimSpace(item.ID)
-	}
-	params[paramKey] = paramValue
-	return params
-}
-
 // EnabledChannels returns only channels that are not disabled.
 func EnabledChannels(channels []FeedChannel) []FeedChannel {
 	out := make([]FeedChannel, 0, len(channels))
@@ -129,13 +91,6 @@ func EnabledChannels(channels []FeedChannel) []FeedChannel {
 		}
 	}
 	return out
-}
-
-func ChannelItemLimit(ch *FeedChannel) int {
-	if ch == nil || ch.ItemLimit <= 0 {
-		return DefaultChannelItemLimit
-	}
-	return ch.ItemLimit
 }
 
 // MigrateManifestConfig converts legacy config.feedUrl into a single channel.
@@ -169,79 +124,13 @@ func normalizeChannels(cfg *ManifestConfig, mediaType string) {
 		case ChannelStatusDisabled:
 			cfg.Channels[i].Status = ChannelStatusDisabled
 		}
-		inferDetailChannelMetadata(&cfg.Channels[i])
-		inferSearchChannelMetadata(&cfg.Channels[i])
-		inferBrowseChannelMetadata(&cfg.Channels[i], mediaType)
 	}
+	MigrateManifestChannelsV2(cfg, mediaType)
 }
 
-func inferBrowseChannelMetadata(ch *FeedChannel, mediaType string) {
-	if ch == nil || ch.Dynamic {
-		return
-	}
-	if mediaType != MediaImage {
-		return
-	}
-	if isSearchRoute(ch.Route) || strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeSearch) {
-		return
-	}
-	if strings.TrimSpace(ch.Route) != "" && strings.TrimSpace(ch.FeedURL) == "" {
-		ch.Dynamic = true
-	}
-}
-
-func isSearchRoute(route string) bool {
-	route = strings.ToLower(strings.TrimSpace(route))
-	return strings.Contains(route, "/search/") || strings.HasSuffix(route, "/search")
-}
-
-func isDetailRoute(route string) bool {
-	route = strings.ToLower(strings.TrimSpace(route))
-	return strings.Contains(route, "/detail/") || strings.HasSuffix(route, "/detail")
-}
-
-// inferDetailChannelMetadata marks hidden detail routes used for live single-item fetches.
-func inferDetailChannelMetadata(ch *FeedChannel) {
-	if ch == nil {
-		return
-	}
-	if strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeDetail) {
-		return
-	}
-	if strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeSearch) {
-		return
-	}
-	if ChannelStatus(ch) != ChannelStatusDisabled {
-		return
-	}
-	if !isDetailRoute(ch.Route) {
-		return
-	}
-	ch.Type = ChannelTypeDetail
-	ch.Dynamic = true
-}
-
-// inferSearchChannelMetadata marks WASM search routes as dynamic feed channels.
-func inferSearchChannelMetadata(ch *FeedChannel) {
-	if ch == nil || ch.Dynamic {
-		return
-	}
-	if isSearchRoute(ch.Route) || strings.EqualFold(strings.TrimSpace(ch.Type), ChannelTypeSearch) {
-		ch.Dynamic = true
-		if strings.TrimSpace(ch.Type) == "" {
-			ch.Type = ChannelTypeSearch
-		}
-	}
-}
-
-// ChannelsForAPI returns enabled channels with search/browse metadata normalized for clients.
-func ChannelsForAPI(channels []FeedChannel, mediaType string) []FeedChannel {
-	out := EnabledChannels(channels)
-	for i := range out {
-		inferSearchChannelMetadata(&out[i])
-		inferBrowseChannelMetadata(&out[i], mediaType)
-	}
-	return out
+// ChannelsForAPI returns enabled channels for clients.
+func ChannelsForAPI(channels []FeedChannel, _ string) []FeedChannel {
+	return EnabledChannels(channels)
 }
 
 func validateChannelStatus(ch FeedChannel) error {
@@ -314,6 +203,12 @@ func validateWasmChannels(channels []FeedChannel) error {
 		if err := validateChannelStatus(ch); err != nil {
 			return err
 		}
+		if err := validateWasmChannelV1Fields(ch); err != nil {
+			return err
+		}
+		if err := ValidateChannelFeatures(ch); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -328,17 +223,17 @@ func findChannel(channels []FeedChannel, id string) (*FeedChannel, bool) {
 	return nil, false
 }
 
-// ResolveChannelID picks the channel to use when the client omits channel.
+// ResolveChannelID picks the channel to use when the client omits channel or asks for all.
 func ResolveChannelID(cfg *ManifestConfig, channelID string) string {
 	channelID = strings.TrimSpace(channelID)
-	if channelID != "" {
-		return channelID
+	if channelID == "" || channelID == "all" {
+		enabled := EnabledChannels(cfg.Channels)
+		if len(enabled) == 1 {
+			return enabled[0].ID
+		}
+		return ""
 	}
-	enabled := EnabledChannels(cfg.Channels)
-	if len(enabled) == 1 {
-		return enabled[0].ID
-	}
-	return ""
+	return channelID
 }
 
 // WasmPageFromOffset converts feed API offset/limit into a 1-based WASM page number.
@@ -347,120 +242,6 @@ func WasmPageFromOffset(limit, offset int) int {
 		limit = DefaultFeedPageSize
 	}
 	return offset/limit + 1
-}
-
-// DynamicImageWasmOverrides builds WASM param overrides for a paged image gallery feed.
-func DynamicImageWasmOverrides(ch *FeedChannel, limit, offset int) map[string]string {
-	page := WasmPageFromOffset(limit, offset)
-	if limit <= 0 {
-		limit = DefaultFeedPageSize
-	}
-	pageKey := channelPageParamKey(ch)
-	if pageKey == "" {
-		pageKey = "page"
-	}
-	sizeKey := channelSizeParamKey(ch)
-	if sizeKey == "" {
-		sizeKey = "size"
-	}
-	return map[string]string{
-		pageKey: strconv.Itoa(page),
-		sizeKey: strconv.Itoa(limit),
-	}
-}
-
-// DynamicSearchWasmOverrides builds WASM param overrides for a paged search request.
-func DynamicSearchWasmOverrides(ch *FeedChannel, query string, limit, offset int) map[string]string {
-	page := WasmPageFromOffset(limit, offset)
-	queryKey := channelSearchParamKey(ch)
-	if queryKey == "" {
-		queryKey = "query"
-	}
-	pageKey := channelPageParamKey(ch)
-	if pageKey == "" {
-		pageKey = "page"
-	}
-	return map[string]string{
-		queryKey: strings.TrimSpace(query),
-		pageKey:  strconv.Itoa(page),
-	}
-}
-
-// BuildDynamicSearchParams merges channel defaults with a live search query and page.
-func BuildDynamicSearchParams(ch *FeedChannel, query string, page int) map[string]string {
-	params := make(map[string]string, len(ch.Params)+2)
-	for k, v := range ch.Params {
-		params[k] = v
-	}
-	queryKey := channelSearchParamKey(ch)
-	if queryKey == "" {
-		queryKey = "query"
-	}
-	pageKey := channelPageParamKey(ch)
-	if pageKey == "" {
-		pageKey = "page"
-	}
-	params[queryKey] = strings.TrimSpace(query)
-	if page > 0 {
-		params[pageKey] = strconv.Itoa(page)
-	}
-	return params
-}
-
-func channelSearchParamKey(ch *FeedChannel) string {
-	if ch == nil {
-		return ""
-	}
-	if key := firstRouteParam(ch.Route); key != "" {
-		return key
-	}
-	for k, v := range ch.Params {
-		if k == "page" {
-			continue
-		}
-		if strings.TrimSpace(v) == "" {
-			return k
-		}
-	}
-	return ""
-}
-
-func channelPageParamKey(ch *FeedChannel) string {
-	if ch == nil {
-		return ""
-	}
-	if ch.Params != nil {
-		if _, ok := ch.Params["page"]; ok {
-			return "page"
-		}
-	}
-	if isSearchRoute(ch.Route) {
-		return "page"
-	}
-	return ""
-}
-
-func channelSizeParamKey(ch *FeedChannel) string {
-	if ch == nil {
-		return ""
-	}
-	if ch.Params != nil {
-		if _, ok := ch.Params["size"]; ok {
-			return "size"
-		}
-	}
-	return ""
-}
-
-func firstRouteParam(route string) string {
-	parts := strings.Split(strings.TrimSpace(route), "/")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, ":") {
-			return strings.TrimPrefix(part, ":")
-		}
-	}
-	return ""
 }
 
 func defaultChannelID(cfg *ManifestConfig) string {

@@ -5,7 +5,7 @@ function isImagePlugin(plugin?: Plugin | null): boolean {
   return plugin?.mediaType === "image";
 }
 
-/** 仅 image 插件且频道显式 dynamic: true 时为浏览型（隐藏搜索框与「全部」） */
+/** 仅 image 插件且频道显式 dynamic: true 时为浏览型（隐藏搜索框） */
 export function isBrowseDynamicChannel(
   channel?: PluginChannel | null,
   plugin?: Plugin | null,
@@ -36,23 +36,33 @@ export function isBrowseDynamicFeedMode(
   return isBrowseDynamicChannel(active, plugin);
 }
 
+export function resolveDefaultPluginChannel(
+  plugin: Plugin | undefined | null,
+  channels: PluginChannel[],
+  storedChannelId?: string | null,
+): string {
+  const enabled = channels.filter(ch => isChannelEnabled(ch.status));
+  if (enabled.length === 0) return "all";
+  if (
+    storedChannelId
+    && storedChannelId !== "all"
+    && enabled.some(ch => ch.id === storedChannelId)
+  ) {
+    return storedChannelId;
+  }
+  const defaultId = plugin?.defaultChannel?.trim();
+  if (defaultId && enabled.some(ch => ch.id === defaultId)) {
+    return defaultId;
+  }
+  return enabled[0]!.id;
+}
+
 export function resolveBrowseDynamicChannel(
   plugin: Plugin,
   channels: PluginChannel[],
   storedChannelId?: string | null,
 ): string {
-  if (
-    storedChannelId
-    && storedChannelId !== "all"
-    && channels.some(ch => ch.id === storedChannelId)
-  ) {
-    return storedChannelId;
-  }
-  const defaultId = plugin.defaultChannel?.trim();
-  if (defaultId && channels.some(ch => ch.id === defaultId)) {
-    return defaultId;
-  }
-  return channels[0]?.id ?? "all";
+  return resolveDefaultPluginChannel(plugin, channels, storedChannelId);
 }
 
 export function resolveFeedChannelId(

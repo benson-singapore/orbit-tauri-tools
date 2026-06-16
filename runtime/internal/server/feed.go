@@ -169,8 +169,10 @@ func (s *Server) handleFeedItem(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, errorBody("id is required"))
 		return
 	}
+	pluginID := strings.TrimSpace(r.URL.Query().Get("plugin_id"))
+	channelID := strings.TrimSpace(r.URL.Query().Get("channel_id"))
 
-	item, err := s.registry.GetFeedItem(r.Context(), id)
+	item, err := s.registry.ResolveFeedItem(r.Context(), pluginID, channelID, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusNotFound, errorBody("feed item not found"))
@@ -248,7 +250,9 @@ func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body struct {
-		ID string `json:"id"`
+		ID        string `json:"id"`
+		PluginID  string `json:"pluginId"`
+		ChannelID string `json:"channelId"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, errorBody("invalid json body"))
@@ -260,7 +264,7 @@ func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.registry.MarkFeedItemRead(r.Context(), id); err != nil {
+	if err := s.registry.MarkFeedItemRead(r.Context(), body.PluginID, body.ChannelID, id); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
 			return

@@ -7,12 +7,14 @@ import { RatingFocusView } from "@/components/RatingFocusView";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginChannelBar } from "@/components/PluginChannelBar";
 import { YouTubeEmbed } from "@/components/YouTubeEmbed";
+import { ChaptersSidebar } from "@/components/ChaptersSidebar";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import {
   dedupeCoverImageFromContent,
   mergeArticleListWithDetail,
+  prepareArticleHtmlContent,
 } from "@/lib/articleContent";
 import {
   isBrowseDynamicChannel,
@@ -20,6 +22,7 @@ import {
   isBrowseDynamicPlugin,
   isRatingPluginArticle,
   resolveBrowseDynamicChannel,
+  resolveDefaultPluginChannel,
   shouldSkipFeedItemDetailFetch,
 } from "@/lib/browseDynamicFeed";
 import { isImageGalleryPlugin } from "@/lib/imagePlugin";
@@ -29,7 +32,18 @@ import { isChannelDynamic, isChannelEnabled } from "@/lib/channelStatus";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
-import { rewriteHtmlImageUrls } from "@/lib/imageProxy";
+import {
+  channelHasChapters,
+  fetchRuntimeChapters,
+  runtimeOpenChapterDetail,
+  runtimeOpenChapters,
+  runtimeLoadMoreChapters,
+  runtimeRefreshChapters,
+  runtimeClearRefreshChapters,
+  runtimeOpenDetail,
+  shouldUseRuntimeV2,
+} from "@/lib/runtimeV2";
+import { bindArticleContentImages } from "@/lib/imageProxy";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import {
   persistIgnoredArticleIds,
@@ -65,9 +79,10 @@ export default function App() {
   useTitlebarEnv();
   const onTitlebarMouseDown = useTitlebarDrag();
 
-  const [theme, setTheme] = useState<ThemeMode>("light");
+  const [theme, _setTheme] = useState<ThemeMode>("light");
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-  const [layoutSwap, setLayoutSwap] = useState(false);
+  const [feedPanelVisible, setFeedPanelVisible] = useState(true);
+  const [chaptersPanelVisible, setChaptersPanelVisible] = useState(true);
   const [activePlugin, setActivePlugin] = useState("all");
   const [activePluginGroupId, setActivePluginGroupId] = useState<string | null>(null);
   const [activeChannel, setActiveChannel] = useState("all");
@@ -113,6 +128,7 @@ export default function App() {
     loadingMore: feedLoadingMore,
     hasMore: feedHasMore,
     feedPageSize,
+    channelCapabilities,
     error: feedError,
     reload,
     refreshFromCache,
@@ -176,6 +192,16 @@ export default function App() {
   );
 
   const [selectedItem, setSelectedItem] = useState<Article | null>(null);
+  const selectedItemRef = useRef<Article | null>(null);
+  selectedItemRef.current = selectedItem;
+  const [chaptersParent, setChaptersParent] = useState<Article | null>(null);
+  const [chaptersItems, setChaptersItems] = useState<Article[]>([]);
+  const [chaptersTitle, setChaptersTitle] = useState("");
+  const [chaptersLoading, setChaptersLoading] = useState(false);
+  const [chaptersLoadingMore, setChaptersLoadingMore] = useState(false);
+  const [chaptersRefreshing, setChaptersRefreshing] = useState(false);
+  const [chaptersHasMore, setChaptersHasMore] = useState(false);
+  const [activeChapterItem, setActiveChapterItem] = useState<Article | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const articleContentRef = useRef<HTMLDivElement>(null);
   const [runtimeBase, setRuntimeBase] = useState<string | null>(null);
@@ -185,27 +211,19 @@ export default function App() {
       setRuntimeBase(url.replace(/\/$/, ""));
     });
   }, []);
-  const readerPanelRef = useRef<HTMLElement>(null);
+  const readerPanelRef = useRef<HTMLDivElement>(null);
   const [activeTab, setActiveTab] = useState<ActiveTab>("today");
 
   const [showPluginStore, setShowPluginStore] = useState(false);
   const [isSidebarRefreshing, setIsSidebarRefreshing] = useState(false);
 
   useEffect(() => {
-    if (visibleArticles.length === 0) {
-      setSelectedItem(null);
-      return;
-    }
-    setSelectedItem(prev => {
-      if (prev) {
-        const listItem = visibleArticles.find(a => a.id === prev.id);
-        if (listItem) {
-          return mergeArticleListWithDetail(listItem, prev);
-        }
-      }
-      return visibleArticles[0] ?? null;
-    });
-  }, [visibleArticles]);
+    setChaptersParent(null);
+    setChaptersItems([]);
+    setChaptersTitle("");
+    setChaptersHasMore(false);
+    setActiveChapterItem(null);
+  }, [activePlugin, activeChannel]);
 
   const [focusMode, setFocusMode] = useState(false);
   const [ratingDetailItem, setRatingDetailItem] = useState<Article | null>(null);
@@ -271,12 +289,13 @@ export default function App() {
     if (selectedItem.type === "text" && selectedItem.image) {
       content = dedupeCoverImageFromContent(selectedItem.image, content);
     }
-    return rewriteHtmlImageUrls(content, runtimeBase);
+    return prepareArticleHtmlContent(content, runtimeBase);
   }, [runtimeBase, selectedItem?.content, selectedItem?.image, selectedItem?.type]);
 
   useEffect(() => {
     highlightArticleCode(articleContentRef.current);
-  }, [selectedItemDisplayContent, theme]);
+    bindArticleContentImages(articleContentRef.current, runtimeBase);
+  }, [runtimeBase, selectedItemDisplayContent, theme]);
 
   const filteredArticles = useMemo(() => {
     return visibleArticles.filter(item => {
@@ -330,39 +349,44 @@ export default function App() {
     return activePluginChannels.find(ch => ch.id === activeChannel);
   }, [activePlugin, activeChannel, activePluginChannels]);
 
-  const isActiveDynamicChannel = isChannelDynamic(activeChannelMeta);
+  void activeChannelMeta;
+
+  const isActiveDynamicChannel = channelCapabilities.canSearch;
 
   const isBrowseDynamicPluginActive = useMemo(
     () => isBrowseDynamicPlugin(activePluginMeta, activePluginChannels),
     [activePluginMeta, activePluginChannels],
   );
 
-  useEffect(() => {
-    if (activeChannel === "all") return;
-    if (!activePluginChannels.some(ch => ch.id === activeChannel)) {
-      setActiveChannel("all");
-      if (activePlugin !== "all") {
-        persistPluginChannel(activePlugin, "all");
+  const resolvePluginChannel = useCallback(
+    (pluginId: string): string => {
+      const plugin = pluginById.get(pluginId);
+      const channels = (plugin?.channels ?? []).filter(ch => isChannelEnabled(ch.status));
+      if (plugin && isBrowseDynamicPlugin(plugin, channels)) {
+        return resolveBrowseDynamicChannel(plugin, channels, getStoredPluginChannel(pluginId));
       }
-    }
-  }, [activeChannel, activePluginChannels, activePlugin]);
+      return resolveDefaultPluginChannel(plugin, channels, getStoredPluginChannel(pluginId));
+    },
+    [pluginById],
+  );
 
   useEffect(() => {
-    if (activePlugin === "all" || activeChannel !== "all") return;
-    if (!activePluginMeta || !isBrowseDynamicPlugin(activePluginMeta, activePluginChannels)) {
+    if (activePlugin === "all") return;
+    if (activeChannel !== "all" && activePluginChannels.some(ch => ch.id === activeChannel)) {
       return;
     }
-    const resolved = resolveBrowseDynamicChannel(
-      activePluginMeta,
-      activePluginChannels,
-      getStoredPluginChannel(activePlugin),
-    );
-    if (resolved !== "all") {
+    const resolved = resolvePluginChannel(activePlugin);
+    if (resolved !== activeChannel) {
       setActiveChannel(resolved);
+      if (resolved !== "all") {
+        persistPluginChannel(activePlugin, resolved);
+      }
     }
-  }, [activePlugin, activeChannel, activePluginMeta, activePluginChannels]);
+  }, [activeChannel, activePluginChannels, activePlugin, resolvePluginChannel]);
 
   const showPluginChannelBar = activePluginChannels.length > 1;
+  const showChaptersSidebar = chaptersParent != null;
+  const hideFeedPanel = focusMode || !feedPanelVisible;
 
   const isImageGalleryMode =
     focusMode && activePlugin !== "all" && isImageGalleryPlugin(activePluginMeta);
@@ -386,16 +410,208 @@ export default function App() {
       });
   };
 
-  const handleItemSelect = (item: Article) => {
+  const handleItemSelect = useCallback((item: Article) => {
     void markArticleRead(item.id);
+    setAiSummary(null);
+    setIsPlayingAudio(false);
+    setActiveImageIndex(0);
+    setActiveChapterItem(null);
+
+    const pluginMeta = pluginById.get(item.pluginId);
+    const channelId = item.channelId ?? activeChannel;
+
+    if (
+      shouldUseRuntimeV2(item.pluginId, pluginMeta)
+      && (channelCapabilities.hasChapters || channelHasChapters(pluginMeta, channelId))
+      && channelId !== "all"
+    ) {
+      setChaptersParent(item);
+      setChaptersItems([]);
+      setChaptersTitle("");
+      setChaptersHasMore(false);
+      setChaptersLoading(true);
+      setActiveChapterItem(null);
+      setSelectedItem(null);
+      const loadChapters = async () => {
+        if (channelCapabilities.canRefreshChapters) {
+          try {
+            const cached = await fetchRuntimeChapters({
+              pluginId: item.pluginId,
+              channelId,
+              parentId: item.id,
+            });
+            if ((cached.items ?? []).length > 0) {
+              return cached;
+            }
+          } catch (err) {
+            console.error("load cached chapters failed", err);
+          }
+        }
+        return runtimeOpenChapters(item.pluginId, channelId, item.id);
+      };
+      void loadChapters()
+        .then(result => {
+          const items = result.items ?? [];
+          setChaptersItems(items);
+          setChaptersHasMore(Boolean(result.hasMore));
+          setChaptersTitle(result.title ?? channelCapabilities.chaptersLabel ?? "目录");
+          const first = items[0];
+          if (!first) {
+            setSelectedItem(null);
+            return;
+          }
+          setActiveChapterItem(first);
+          setSelectedItem(first);
+          setContentLoading(true);
+          return runtimeOpenChapterDetail(
+            item.pluginId,
+            channelId,
+            item.id,
+            first.id,
+          );
+        })
+        .then(result => {
+          if (result?.item) {
+            setSelectedItem(result.item);
+          }
+        })
+        .catch(err => console.error("open chapters failed", err))
+        .finally(() => {
+          setChaptersLoading(false);
+          setContentLoading(false);
+        });
+      return;
+    }
+
+    setChaptersParent(null);
     setSelectedItem(prev =>
       prev?.id === item.id
         ? mergeArticleListWithDetail(item, prev)
         : item,
     );
-    setAiSummary(null);
-    setIsPlayingAudio(false);
-    setActiveImageIndex(0);
+  }, [
+    activeChannel,
+    channelCapabilities.chaptersLabel,
+    channelCapabilities.canRefreshChapters,
+    channelCapabilities.hasChapters,
+    markArticleRead,
+    pluginById,
+  ]);
+
+  useEffect(() => {
+    if (chaptersParent) return;
+    if (visibleArticles.length === 0) {
+      setSelectedItem(null);
+      return;
+    }
+
+    const prev = selectedItemRef.current;
+    if (prev) {
+      const listItem = visibleArticles.find(a => a.id === prev.id);
+      if (listItem) {
+        const merged = mergeArticleListWithDetail(listItem, prev);
+        if (merged !== prev) {
+          setSelectedItem(merged);
+        }
+        return;
+      }
+    }
+
+    const first = visibleArticles[0];
+    if (first) {
+      handleItemSelect(first);
+    }
+  }, [visibleArticles, chaptersParent, handleItemSelect]);
+
+  const handleChapterSelect = (chapter: Article) => {
+    if (!chaptersParent) return;
+    const channelId = chaptersParent.channelId ?? activeChannel;
+    setActiveChapterItem(chapter);
+    setSelectedItem(chapter);
+    setContentLoading(true);
+    void runtimeOpenChapterDetail(
+      chaptersParent.pluginId,
+      channelId,
+      chaptersParent.id,
+      chapter.id,
+    )
+      .then(result => {
+        if (result.item) {
+          setSelectedItem(result.item);
+        }
+      })
+      .catch(err => console.error("open chapter detail failed", err))
+      .finally(() => setContentLoading(false));
+  };
+
+  const handleChaptersLoadMore = () => {
+    if (!chaptersParent || chaptersLoadingMore || !chaptersHasMore) return;
+    const channelId = chaptersParent.channelId ?? activeChannel;
+    setChaptersLoadingMore(true);
+    void runtimeLoadMoreChapters(chaptersParent.pluginId, channelId, chaptersParent.id)
+      .then(result => {
+        const items = result.items ?? [];
+        setChaptersItems(prev => [...prev, ...items]);
+        setChaptersHasMore(Boolean(result.hasMore));
+        if (result.title) {
+          setChaptersTitle(result.title);
+        }
+      })
+      .catch(err => console.error("load more chapters failed", err))
+      .finally(() => setChaptersLoadingMore(false));
+  };
+
+  const applyChaptersRefreshResult = (result: { items?: Article[]; hasMore?: boolean; title?: string }) => {
+    const items = result.items ?? [];
+    setChaptersItems(items);
+    setChaptersHasMore(Boolean(result.hasMore));
+    if (result.title) {
+      setChaptersTitle(result.title);
+    }
+    const first = items[0];
+    if (!first) {
+      setActiveChapterItem(null);
+      setSelectedItem(null);
+      return;
+    }
+    setActiveChapterItem(first);
+    setSelectedItem(first);
+    setContentLoading(true);
+    const channelId = chaptersParent?.channelId ?? activeChannel;
+    if (!chaptersParent) return;
+    void runtimeOpenChapterDetail(
+      chaptersParent.pluginId,
+      channelId,
+      chaptersParent.id,
+      first.id,
+    )
+      .then(detail => {
+        if (detail.item) {
+          setSelectedItem(detail.item);
+        }
+      })
+      .catch(err => console.error("open chapter detail failed", err))
+      .finally(() => setContentLoading(false));
+  };
+
+  const handleChaptersRefresh = () => {
+    if (!chaptersParent || chaptersRefreshing) return;
+    const channelId = chaptersParent.channelId ?? activeChannel;
+    setChaptersRefreshing(true);
+    void runtimeRefreshChapters(chaptersParent.pluginId, channelId, chaptersParent.id)
+      .then(applyChaptersRefreshResult)
+      .catch(err => console.error("refresh chapters failed", err))
+      .finally(() => setChaptersRefreshing(false));
+  };
+
+  const handleChaptersClearAndRefresh = () => {
+    if (!chaptersParent || chaptersRefreshing) return;
+    const channelId = chaptersParent.channelId ?? activeChannel;
+    setChaptersRefreshing(true);
+    void runtimeClearRefreshChapters(chaptersParent.pluginId, channelId, chaptersParent.id)
+      .then(applyChaptersRefreshResult)
+      .catch(err => console.error("clear refresh chapters failed", err))
+      .finally(() => setChaptersRefreshing(false));
   };
 
   useEffect(() => {
@@ -419,11 +635,50 @@ export default function App() {
       return;
     }
 
+    const channelId = selectedItem.channelId ?? activeChannel;
+    if (
+      shouldUseRuntimeV2(selectedItem.pluginId, pluginMeta)
+      && channelId !== "all"
+      && !chaptersParent
+      && channelCapabilities.hasDetail
+    ) {
+      let cancelled = false;
+      setContentLoading(true);
+      void runtimeOpenDetail(selectedItem.pluginId, channelId, itemId)
+        .then(result => {
+          if (cancelled || !result.item) return;
+          setSelectedItem(prev =>
+            prev?.id === itemId ? { ...prev, ...result.item } : prev,
+          );
+        })
+        .catch(err => {
+          if (!cancelled) console.error("load article content failed", err);
+        })
+        .finally(() => {
+          if (!cancelled) setContentLoading(false);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (chaptersParent && activeChapterItem) {
+      return;
+    }
+
+    if (shouldUseRuntimeV2(selectedItem.pluginId, pluginMeta)) {
+      setContentLoading(false);
+      return;
+    }
+
     let cancelled = false;
     setContentLoading(true);
     void (async () => {
       try {
-        const detail = await fetchFeedItem(itemId);
+        const detail = await fetchFeedItem(itemId, {
+          pluginId: selectedItem.pluginId,
+          channelId,
+        });
         if (cancelled) {
           return;
         }
@@ -444,7 +699,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedItem?.id, pluginById]);
+  }, [selectedItem?.id, pluginById, activeChannel, channelCapabilities.hasDetail, chaptersParent, activeChapterItem]);
 
   const handleBookmarkToggle = (id: string) => {
     setBookmarkedIds(prev => {
@@ -549,40 +804,10 @@ export default function App() {
     setShowPluginStore(false);
   };
 
-  const resolvePluginChannel = useCallback(
-    (pluginId: string): string => {
-      const plugin = pluginById.get(pluginId);
-      const channels = (plugin?.channels ?? []).filter(ch =>
-        isChannelEnabled(ch.status),
-      );
-      if (plugin && isBrowseDynamicPlugin(plugin, channels)) {
-        return resolveBrowseDynamicChannel(plugin, channels, getStoredPluginChannel(pluginId));
-      }
-      const stored = getStoredPluginChannel(pluginId);
-      if (
-        stored
-        && (stored === "all" || channels.some(ch => ch.id === stored))
-      ) {
-        if (stored === "all") return "all";
-        const storedChannel = channels.find(ch => ch.id === stored);
-        if (storedChannel && isChannelDynamic(storedChannel)) {
-          return "all";
-        }
-        return stored;
-      }
-      return "all";
-    },
-    [pluginById],
-  );
-
   const selectChannel = useCallback(
     (channelId: string) => {
       setActiveChannel(channelId);
       if (activePlugin === "all") return;
-      if (channelId === "all") {
-        persistPluginChannel(activePlugin, channelId);
-        return;
-      }
       const channel = (pluginById.get(activePlugin)?.channels ?? []).find(
         ch => ch.id === channelId,
       );
@@ -614,7 +839,7 @@ export default function App() {
         isChannelDynamic(leavingChannel)
         && !isBrowseDynamicChannel(leavingChannel, leavingPlugin)
       ) {
-        persistPluginChannel(activePlugin, "all");
+        persistPluginChannel(activePlugin, resolvePluginChannel(activePlugin));
       }
     }
     const isSwitchingPlugin = pluginId !== activePlugin;
@@ -675,19 +900,39 @@ export default function App() {
 
         {/* Right Section: Visual Layout Control Actions */}
         <div className="app-titlebar-no-drag flex items-center gap-1 shrink-0">
-          {/* Swap Layout Button */}
-          <button 
-            onClick={() => setLayoutSwap(!layoutSwap)}
+          <button
+            type="button"
+            onClick={() => setFeedPanelVisible(v => !v)}
             className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-              layoutSwap 
-                ? 'bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-400' 
-                : 'bg-transparent border-neutral-200 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800'
+              feedPanelVisible
+                ? "bg-transparent border-neutral-200 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                : "bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-400"
             }`}
-            title="左右切换阅读列表与文章面板位置"
+            title={feedPanelVisible ? "隐藏左侧阅读列表" : "显示左侧阅读列表"}
           >
-            <Icon name="swap" className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">对调左右布局</span>
+            <Icon name={feedPanelVisible ? "collapse" : "expand"} className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">
+              {feedPanelVisible ? "隐藏左侧列表" : "显示左侧列表"}
+            </span>
           </button>
+
+          {showChaptersSidebar ? (
+            <button
+              type="button"
+              onClick={() => setChaptersPanelVisible(v => !v)}
+              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-all ${
+                chaptersPanelVisible
+                  ? "bg-transparent border-neutral-200 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
+                  : "bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-400"
+              }`}
+              title={chaptersPanelVisible ? "隐藏右侧章节目录" : "显示右侧章节目录"}
+            >
+              <Icon name={chaptersPanelVisible ? "collapse" : "expand"} className="w-3.5 h-3.5 scale-x-[-1]" />
+              <span className="hidden sm:inline">
+                {chaptersPanelVisible ? "隐藏右侧目录" : "显示右侧目录"}
+              </span>
+            </button>
+          ) : null}
 
           {/* Theme Switcher — 暂时隐藏，暗色主题待完善后恢复 */}
 
@@ -959,8 +1204,7 @@ export default function App() {
           </div>
         </aside>
 
-        {/* Dynamic Inner Layout Body: Swap handles Left <-> Right positions of (Feed panel vs Reader panel) */}
-        <main className={`flex-1 flex ${layoutSwap ? 'flex-row-reverse' : 'flex-row'} h-full overflow-hidden transition-all duration-300`}>
+        <main className="flex-1 flex flex-row h-full overflow-hidden transition-all duration-300">
           {showPluginStore ? (
             <PluginManagerModal
               theme={theme}
@@ -998,7 +1242,7 @@ export default function App() {
           {}
           <section className={`w-full md:w-80 lg:w-96 h-full flex flex-col border-r border-l transition-all duration-300 ${
             theme === 'dark' ? 'bg-[#121314] border-neutral-800' : 'bg-white border-neutral-100'
-          } ${focusMode ? 'hidden' : 'flex'}`}>
+          } ${hideFeedPanel ? 'hidden' : 'flex'}`}>
             
             {/* Search Column Container */}
             <div className="p-4 border-b dark:border-neutral-800 space-y-3">
@@ -1067,7 +1311,6 @@ export default function App() {
                         activeChannel={activeChannel}
                         channels={activePluginChannels}
                         onChannelChange={selectChannel}
-                        showAllChannel={!isBrowseDynamicPluginActive}
                       />
                     )}
                 </div>
@@ -1139,7 +1382,9 @@ export default function App() {
                     <p className="text-center text-xs text-neutral-400 py-1">正在搜索…</p>
                   )}
                   {filteredArticles.map((item) => {
-                    const isSelected = selectedItem && selectedItem.id === item.id;
+                    const isSelected =
+                      (selectedItem && selectedItem.id === item.id)
+                      || (chaptersParent != null && chaptersParent.id === item.id);
                     const isUnread = !item.isRead;
                     const pluginMeta = pluginById.get(item.pluginId);
                     return (
@@ -1266,11 +1511,16 @@ export default function App() {
 
           {}
           <section
-            ref={readerPanelRef}
-            className={`flex-1 h-full overflow-y-auto transition-all duration-300 ${
+            className={`flex-1 h-full flex flex-row min-h-0 overflow-hidden transition-all duration-300 ${
             theme === 'dark' ? 'bg-[#121314]' : 'bg-[#fafafa]'
           } ${dimmerMode ? 'brightness-[0.85] contrast-105' : ''}`}
           >
+            <div
+              ref={readerPanelRef}
+              className={`flex-1 h-full min-w-0 overflow-y-auto ${
+                theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"
+              }`}
+            >
             
             {isPluginFocusMode || selectedItem ? (
               <div className={`${isPluginFocusMode ? "w-[80%]" : "max-w-3xl"} mx-auto px-6 pb-8 md:pb-10`}>
@@ -1419,7 +1669,6 @@ export default function App() {
                       activeChannel={activeChannel}
                       channels={activePluginChannels}
                       onChannelChange={selectChannel}
-                      showAllChannel={!isBrowseDynamicPluginActive}
                       className="mt-2"
                     />
                   ) : null}
@@ -1505,7 +1754,7 @@ export default function App() {
                         runtimeBase={runtimeBase}
                         src={selectedItem.image}
                         alt="Article Cover"
-                        className="w-full h-auto max-h-[380px] object-cover"
+                        className="w-auto h-auto max-w-full mx-auto block"
                         onError={() => setCoverImageFailed(true)}
                       />
                     )}
@@ -1798,6 +2047,34 @@ export default function App() {
               </div>
             )}
 
+            </div>
+
+            {showChaptersSidebar && chaptersParent && chaptersPanelVisible ? (
+              <aside className={`w-full md:w-80 lg:w-96 h-full flex flex-col border-l shrink-0 transition-all duration-300 ${
+                theme === "dark"
+                  ? "bg-[#121314] border-neutral-800"
+                  : "bg-white border-neutral-100"
+              }`}>
+                <ChaptersSidebar
+                  theme={theme}
+                  title={chaptersTitle}
+                  items={chaptersItems}
+                  loading={chaptersLoading}
+                  loadingMore={chaptersLoadingMore}
+                  refreshing={chaptersRefreshing}
+                  hasMore={chaptersHasMore}
+                  canLoadMore={channelCapabilities.canLoadMoreChapters}
+                  canRefresh={channelCapabilities.canRefreshChapters || channelCapabilities.hasChapters}
+                  parentItem={chaptersParent}
+                  activeItemId={activeChapterItem?.id ?? selectedItem?.id}
+                  itemLabel={channelCapabilities.chaptersItemLabel}
+                  onSelect={handleChapterSelect}
+                  onLoadMore={handleChaptersLoadMore}
+                  onRefresh={handleChaptersRefresh}
+                  onClearAndRefresh={handleChaptersClearAndRefresh}
+                />
+              </aside>
+            ) : null}
           </section>
             </>
           )}
