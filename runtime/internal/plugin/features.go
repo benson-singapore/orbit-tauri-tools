@@ -114,16 +114,17 @@ type ResolvedFeatures struct {
 }
 
 type ChannelCapabilities struct {
-	CanRefresh          bool   `json:"canRefresh"`
-	CanLoadMore         bool   `json:"canLoadMore"`
-	CanLoadMoreChapters bool   `json:"canLoadMoreChapters"`
-	CanRefreshChapters  bool   `json:"canRefreshChapters"`
-	CanSearch           bool   `json:"canSearch"`
-	HasDetail           bool   `json:"hasDetail"`
-	HasChapters         bool   `json:"hasChapters"`
-	PersistList         bool   `json:"persistList"`
-	ChaptersLabel       string `json:"chaptersLabel,omitempty"`
-	ChaptersItemLabel   string `json:"chaptersItemLabel,omitempty"`
+	CanRefresh          bool               `json:"canRefresh"`
+	CanLoadMore         bool               `json:"canLoadMore"`
+	CanLoadMoreChapters bool               `json:"canLoadMoreChapters"`
+	CanRefreshChapters  bool               `json:"canRefreshChapters"`
+	CanSearch           bool               `json:"canSearch"`
+	HasDetail           bool               `json:"hasDetail"`
+	HasChapters         bool               `json:"hasChapters"`
+	PersistList         bool               `json:"persistList"`
+	Pagination          *PaginationFeature `json:"pagination,omitempty"`
+	ChaptersLabel       string             `json:"chaptersLabel,omitempty"`
+	ChaptersItemLabel   string             `json:"chaptersItemLabel,omitempty"`
 }
 
 type FetchRequest struct {
@@ -259,6 +260,7 @@ func GetChannelCapabilities(ch *FeedChannel) ChannelCapabilities {
 		HasDetail:   f.Detail != nil && f.Chapters == nil,
 		HasChapters: f.Chapters != nil,
 		PersistList: f.Feed.Persist,
+		Pagination:  f.Pagination,
 	}
 	if f.Chapters != nil {
 		cap.ChaptersLabel = f.Chapters.Label
@@ -524,6 +526,17 @@ func baseParams(ch *FeedChannel) map[string]string {
 	return params
 }
 
+// ParamsFromClient merges channel defaults with client-supplied pagination params.
+func ParamsFromClient(ch *FeedChannel, clientParams map[string]string) map[string]string {
+	params := baseParams(ch)
+	for k, v := range clientParams {
+		if strings.TrimSpace(v) != "" {
+			params[k] = strings.TrimSpace(v)
+		}
+	}
+	return params
+}
+
 func ParamsForRefresh(ch *FeedChannel, features ResolvedFeatures) map[string]string {
 	params := baseParams(ch)
 	if pag := features.Pagination; pag != nil {
@@ -542,6 +555,7 @@ func ParamsForRefresh(ch *FeedChannel, features ResolvedFeatures) map[string]str
 func ParamsForLoadMore(
 	ch *FeedChannel,
 	features ResolvedFeatures,
+	lastParams map[string]string,
 	lastResponse *FetchResult,
 	dbItems []FeedItem,
 ) (map[string]string, error) {
@@ -551,16 +565,26 @@ func ParamsForLoadMore(
 	params := baseParams(ch)
 	pag := features.Pagination
 
-	if lastResponse != nil && len(lastResponse.Next) > 0 {
-		for k, v := range lastResponse.Next {
+	if len(lastParams) > 0 {
+		for k, v := range lastParams {
 			params[k] = v
 		}
-		return params, nil
 	}
 
 	paramKey := pag.Param
 	if paramKey == "" {
 		paramKey = defaultParamForStyle(pag.Style)
+	}
+
+	if lastResponse != nil && len(lastResponse.Next) > 0 {
+		for k, v := range lastResponse.Next {
+			params[k] = v
+		}
+		if pag.Style == PaginationStyleOffset || pag.Style == PaginationStyleCursor {
+			if page := strings.TrimSpace(lastResponse.Next[paramKey]); page != "" {
+				return params, nil
+			}
+		}
 	}
 
 	switch pag.Style {
@@ -776,4 +800,25 @@ func InferHasMore(result FetchResult, features ResolvedFeatures) bool {
 		return *result.HasMore
 	}
 	return len(result.Items) > 0 && features.Pagination != nil
+}
+
+// InferPersistedListHasMore decides whether the client should offer "load more" for
+// a paginated feed served from SQLite. The DB only caches the first page; until the
+// plugin returns an empty page we assume more items may exist.
+func InferPersistedListHasMore(
+	features ResolvedFeatures,
+	sess *ChannelSession,
+	offset, itemCount, dbTotal int,
+) bool {
+	if features.Pagination == nil {
+		return offset+itemCount < dbTotal
+	}
+	if offset == 0 {
+		// Paginated feeds only cache page 1 in SQLite; the API may have more pages.
+		return true
+	}
+	if sess != nil {
+		return sess.HasMore
+	}
+	return itemCount > 0
 }

@@ -88,6 +88,108 @@ func TestIsHomePage(t *testing.T) {
 	}
 }
 
+func TestInferPersistedListHasMore(t *testing.T) {
+	features := ResolvedFeatures{
+		Pagination: &PaginationFeature{Style: PaginationStyleOffset, Param: "page", Default: "1"},
+	}
+	if !InferPersistedListHasMore(features, nil, 0, 20, 20) {
+		t.Fatal("paginated home view should allow load more")
+	}
+	if !InferPersistedListHasMore(features, nil, 0, 0, 0) {
+		t.Fatal("paginated home view should allow load more even when db cache is empty")
+	}
+	sess := &ChannelSession{HasMore: false}
+	if !InferPersistedListHasMore(features, sess, 0, 20, 20) {
+		t.Fatal("home view should ignore stale session hasMore and still allow load more")
+	}
+	if InferPersistedListHasMore(features, sess, 20, 0, 40) {
+		t.Fatal("offset view should respect session hasMore=false")
+	}
+	plain := ResolvedFeatures{}
+	if InferPersistedListHasMore(plain, nil, 0, 10, 10) {
+		t.Fatal("non-paginated feed at db end should not hasMore")
+	}
+	if !InferPersistedListHasMore(plain, nil, 0, 10, 30) {
+		t.Fatal("non-paginated feed with more rows in db should hasMore")
+	}
+}
+
+func TestParamsFromClient(t *testing.T) {
+	ch := &FeedChannel{
+		Params: map[string]string{"category": "latest/awarded", "page": "1", "size": "20"},
+	}
+	got := ParamsFromClient(ch, map[string]string{"page": "3"})
+	if got["category"] != "latest/awarded" || got["page"] != "3" || got["size"] != "20" {
+		t.Fatalf("ParamsFromClient = %#v", got)
+	}
+}
+
+func TestParamsForLoadMore1xOffsetPagination(t *testing.T) {
+	ch := &FeedChannel{
+		ID:     "latest-awarded",
+		Route:  "/1x/:category",
+		Params: map[string]string{"category": "latest/awarded", "page": "1", "size": "20"},
+		Features: ChannelFeatures{
+			Pagination: &PaginationFeature{
+				Style:   PaginationStyleOffset,
+				Param:   "page",
+				Default: "1",
+			},
+		},
+	}
+	features := ResolveFeatures(ch)
+	refreshParams := ParamsForRefresh(ch, features)
+
+	firstParams, err := ParamsForLoadMore(ch, features, refreshParams, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstParams["page"] != "2" || firstParams["size"] != "20" {
+		t.Fatalf("first load more = %#v, want page=2 size=20", firstParams)
+	}
+
+	partialNext := &FetchResult{
+		Next: map[string]string{"category": "latest/awarded"},
+	}
+	partialParams, err := ParamsForLoadMore(ch, features, refreshParams, partialNext, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partialParams["page"] != "2" {
+		t.Fatalf("partial next load more page = %q, want 2", partialParams["page"])
+	}
+
+	secondParams, err := ParamsForLoadMore(ch, features, firstParams, &FetchResult{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondParams["page"] != "3" {
+		t.Fatalf("second load more page = %q, want 3", secondParams["page"])
+	}
+
+	thirdParams, err := ParamsForLoadMore(ch, features, secondParams, &FetchResult{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if thirdParams["page"] != "4" {
+		t.Fatalf("third load more page = %q, want 4", thirdParams["page"])
+	}
+
+	explicitNext, err := ParamsForLoadMore(
+		ch,
+		features,
+		refreshParams,
+		&FetchResult{Next: map[string]string{"category": "latest/awarded", "page": "2"}},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if explicitNext["page"] != "2" {
+		t.Fatalf("explicit next page = %q, want 2", explicitNext["page"])
+	}
+}
+
 func TestMigrate1xLegacyChannel(t *testing.T) {
 	ch := FeedChannel{
 		ID:        "latest-awarded",

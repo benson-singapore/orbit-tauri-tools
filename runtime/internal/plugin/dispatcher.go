@@ -11,10 +11,11 @@ import (
 )
 
 type DispatchResult struct {
-	Items   []FeedItem `json:"items"`
-	HasMore bool       `json:"hasMore"`
-	Title   string     `json:"title,omitempty"`
-	Item    *FeedItem  `json:"item,omitempty"`
+	Items   []FeedItem        `json:"items"`
+	HasMore bool              `json:"hasMore"`
+	Title   string            `json:"title,omitempty"`
+	Item    *FeedItem         `json:"item,omitempty"`
+	Next    map[string]string `json:"next,omitempty"`
 }
 
 type FeatureDispatcher struct {
@@ -83,12 +84,11 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 		}
 		items = append(items, item)
 	}
-	hasMore := offset+len(items) < total
-	if features.Pagination != nil {
-		sess := d.sessions.Get(pluginID, channelID)
-		if sess != nil {
-			hasMore = sess.HasMore
-		}
+	sess := d.sessions.Get(pluginID, channelID)
+	hasMore := InferPersistedListHasMore(features, sess, offset, len(items), total)
+	if offset == 0 && features.Pagination != nil {
+		refreshParams := ParamsForRefresh(ch, features)
+		d.sessions.ResetFeedPagination(pluginID, channelID, refreshParams, true)
 	}
 	return DispatchResult{Items: items, HasMore: hasMore}, nil
 }
@@ -117,12 +117,76 @@ func (d *FeatureDispatcher) ListChapters(ctx context.Context, pluginID, channelI
 	return DispatchResult{Items: items}, nil
 }
 
+func (d *FeatureDispatcher) ClearChannelSession(pluginID, channelID string) {
+	d.sessions.Clear(pluginID, channelID)
+}
+
 func (d *FeatureDispatcher) Refresh(ctx context.Context, pluginID, channelID string) (DispatchResult, error) {
 	return d.dispatch(ctx, pluginID, channelID, TriggerRefresh, dispatchExtra{})
 }
 
-func (d *FeatureDispatcher) LoadMore(ctx context.Context, pluginID, channelID string) (DispatchResult, error) {
-	return d.dispatch(ctx, pluginID, channelID, TriggerLoadMore, dispatchExtra{})
+func (d *FeatureDispatcher) ClearAndRefresh(ctx context.Context, pluginID, channelID string) (DispatchResult, error) {
+	rec, ch, err := d.resolveChannel(pluginID, channelID)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+	if rec.Source != SourceWASM {
+		return DispatchResult{}, fmt.Errorf("v2 runtime requires wasm plugin")
+	}
+	dir, ok := d.registry.getPluginDir(rec.ID)
+	if !ok {
+		return DispatchResult{}, fmt.Errorf("plugin dir not found for %s", rec.ID)
+	}
+
+	vars, err := d.registry.MergePluginVars(ctx, rec)
+	if err != nil {
+		return DispatchResult{}, err
+	}
+
+	features := ResolveFeatures(ch)
+
+	if err := d.registry.store.DeleteFeedItemsByChannel(ctx, rec.ID, ch.ID); err != nil {
+		return DispatchResult{}, err
+	}
+	d.sessions.Clear(rec.ID, ch.ID)
+
+	params := ParamsForRefresh(ch, features)
+	result, err := d.registry.wasmExec.Fetch(ctx, dir, rec, FetchRequest{
+		ChannelID: ch.ID,
+		Route:     ch.Route,
+		Params:    params,
+		Vars:      vars,
+	})
+	if err != nil {
+		return DispatchResult{}, err
+	}
+
+	hasMore := InferHasMore(result, features)
+	d.sessions.SetListResponse(rec.ID, ch.ID, result, hasMore, params)
+
+	if !features.Feed.Persist {
+		d.sessions.SetEphemeral(rec.ID, ch.ID, result.Items, hasMore)
+		return DispatchResult{Items: result.Items, HasMore: hasMore, Title: result.Title}, nil
+	}
+
+	now := time.Now().Unix()
+	if err := d.persistFeedList(ctx, rec, ch, result.Items, now, features.Feed.Limit, "replace"); err != nil {
+		return DispatchResult{}, err
+	}
+
+	items, _, err := d.registry.loadFeedItems(ctx, pluginID, channelID, "")
+	if err != nil {
+		return DispatchResult{}, err
+	}
+	return DispatchResult{Items: items, HasMore: hasMore, Title: result.Title}, nil
+}
+
+func (d *FeatureDispatcher) LoadMore(
+	ctx context.Context,
+	pluginID, channelID string,
+	clientParams map[string]string,
+) (DispatchResult, error) {
+	return d.dispatch(ctx, pluginID, channelID, TriggerLoadMore, dispatchExtra{Params: clientParams})
 }
 
 func (d *FeatureDispatcher) Search(ctx context.Context, pluginID, channelID, query string) (DispatchResult, error) {
@@ -191,6 +255,7 @@ func (d *FeatureDispatcher) ScheduledRefresh(ctx context.Context, pluginID, chan
 
 type dispatchExtra struct {
 	Query       string
+	Params      map[string]string
 	Item        FeedItem
 	ParentItem  FeedItem
 	ChapterItem FeedItem
@@ -243,16 +308,23 @@ func (d *FeatureDispatcher) dispatch(
 		params = ParamsForRefresh(ch, features)
 		route = ch.Route
 	case TriggerLoadMore:
+		if len(extra.Params) > 0 {
+			params = ParamsFromClient(ch, extra.Params)
+			route = ch.Route
+			break
+		}
 		sess := d.sessions.Get(pluginID, channelID)
 		var lastResp *FetchResult
+		var lastParams map[string]string
 		if sess != nil {
 			lastResp = sess.LastResponse
+			lastParams = sess.LastParams
 		}
 		dbItems, _, err := d.registry.loadFeedItems(ctx, pluginID, channelID, "")
 		if err != nil {
 			return DispatchResult{}, err
 		}
-		params, err = ParamsForLoadMore(ch, features, lastResp, dbItems)
+		params, err = ParamsForLoadMore(ch, features, lastParams, lastResp, dbItems)
 		if err != nil {
 			return DispatchResult{}, err
 		}
@@ -278,7 +350,7 @@ func (d *FeatureDispatcher) dispatch(
 	}
 
 	hasMore := InferHasMore(result, features)
-	d.sessions.SetListResponse(pluginID, channelID, result, hasMore)
+	d.sessions.SetListResponse(pluginID, channelID, result, hasMore, params)
 
 	if trigger == TriggerLoadMore {
 		items := result.Items
@@ -296,7 +368,9 @@ func (d *FeatureDispatcher) dispatch(
 				}
 			}
 		}
-		return DispatchResult{Items: items, HasMore: hasMore, Title: result.Title}, nil
+		return DispatchResult{
+			Items: items, HasMore: hasMore, Title: result.Title, Next: result.Next,
+		}, nil
 	}
 
 	if !features.Feed.Persist {

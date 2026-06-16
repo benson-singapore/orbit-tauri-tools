@@ -6,6 +6,7 @@ export interface RuntimeDispatchResult {
   hasMore?: boolean;
   title?: string;
   item?: Article;
+  next?: Record<string, string>;
 }
 
 async function apiBase(): Promise<string> {
@@ -91,7 +92,10 @@ export async function fetchRuntimeChapters(options: {
   };
 }
 
-async function runtimePost(path: string, body: Record<string, string>): Promise<RuntimeDispatchResult> {
+async function runtimePost(
+  path: string,
+  body: Record<string, string | Record<string, string> | undefined>,
+): Promise<RuntimeDispatchResult> {
   const base = await apiBase();
   const res = await fetch(`${base}/v2/runtime/${path}`, {
     method: "POST",
@@ -113,8 +117,20 @@ export function runtimeRefresh(pluginId: string, channelId: string) {
   return runtimePost("refresh", { pluginId, channelId });
 }
 
-export function runtimeLoadMore(pluginId: string, channelId: string) {
-  return runtimePost("load-more", { pluginId, channelId });
+export function runtimeClearRefresh(pluginId: string, channelId: string) {
+  return runtimePost("clear-refresh", { pluginId, channelId });
+}
+
+export function runtimeLoadMore(
+  pluginId: string,
+  channelId: string,
+  params?: Record<string, string>,
+) {
+  return runtimePost("load-more", {
+    pluginId,
+    channelId,
+    ...(params ? { params } : {}),
+  });
 }
 
 export function runtimeSearch(pluginId: string, channelId: string, query: string) {

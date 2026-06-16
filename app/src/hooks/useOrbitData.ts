@@ -14,16 +14,17 @@ import {
   updatePluginManifest,
 } from "@/lib/feed";
 import { isChannelEnabled } from "@/lib/channelStatus";
-import { isImageGalleryPlugin } from "@/lib/imagePlugin";
 import {
   fetchChannelCapabilities,
   fetchRuntimeItems,
   runtimeLoadMore,
   runtimeRefresh,
+  runtimeClearRefresh,
   runtimeSearch,
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
 import { resolveDefaultPluginChannel } from "@/lib/browseDynamicFeed";
+import { buildFeedLoadMoreParams, channelSupportsLoadMore, resolveFeedHasMore } from "@/lib/paginationParams";
 import type {
   Article,
   ChannelCapabilities,
@@ -34,10 +35,9 @@ import type {
 const ALL_PLUGIN: Plugin = INITIAL_PLUGINS[0]!;
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 export const FEED_PAGE_SIZE = 20;
-export const IMAGE_FEED_PAGE_SIZE = 40;
 
-function resolveFeedPageSize(plugin?: Plugin | null): number {
-  return isImageGalleryPlugin(plugin) ? IMAGE_FEED_PAGE_SIZE : FEED_PAGE_SIZE;
+function resolveFeedPageSize(_plugin?: Plugin | null): number {
+  return FEED_PAGE_SIZE;
 }
 
 function resolveFeedChannelId(
@@ -70,7 +70,9 @@ function scheduleFeedReloadAfterBackgroundFetch(
 }
 
 function capabilitiesEqual(a: ChannelCapabilities, b: ChannelCapabilities): boolean {
-  return a.canRefresh === b.canRefresh
+  const pagEqual = JSON.stringify(a.pagination ?? null) === JSON.stringify(b.pagination ?? null);
+  return pagEqual
+    && a.canRefresh === b.canRefresh
     && a.canLoadMore === b.canLoadMore
     && a.canLoadMoreChapters === b.canLoadMoreChapters
     && a.canRefreshChapters === b.canRefreshChapters
@@ -118,6 +120,8 @@ interface UseOrbitDataResult {
   movePlugin: (id: string, direction: "up" | "down") => void;
   reorderPlugins: (orderedIds: string[]) => void;
   forceRefreshPlugin: (id: string) => Promise<void>;
+  refreshChannelFeed: () => Promise<void>;
+  clearRefreshChannelFeed: () => Promise<void>;
 }
 
 export function useOrbitData(
@@ -140,6 +144,8 @@ export function useOrbitData(
   const channelCapabilitiesRef = useRef<ChannelCapabilities>(DEFAULT_CAPABILITIES);
   const [error, setError] = useState<string | null>(null);
   const feedRequestId = useRef(0);
+  const feedNextParamsRef = useRef<Record<string, string> | null>(null);
+  const feedPaginationExhaustedRef = useRef(false);
   const reorderPersistQueue = useRef(Promise.resolve());
   const pluginFilterRef = useRef(pluginFilter);
   const channelFilterRef = useRef(channelFilter);
@@ -148,6 +154,7 @@ export function useOrbitData(
   const pluginGroupScopeIdRef = useRef(pluginGroupScopeId);
   const getPluginGroupIdRef = useRef(getPluginGroupId);
   const pluginsRef = useRef(plugins);
+  const articlesRef = useRef(articles);
   pluginFilterRef.current = pluginFilter;
   channelFilterRef.current = channelFilter;
   contentTypeFilterRef.current = contentTypeFilter;
@@ -155,6 +162,7 @@ export function useOrbitData(
   pluginGroupScopeIdRef.current = pluginGroupScopeId;
   getPluginGroupIdRef.current = getPluginGroupId;
   pluginsRef.current = plugins;
+  articlesRef.current = articles;
   channelCapabilitiesRef.current = channelCapabilities;
 
   const loadPlugins = useCallback(async () => {
@@ -165,15 +173,18 @@ export function useOrbitData(
   const loadChannelCapabilities = useCallback(async (pluginId: string, channelId: string) => {
     const plugin = pluginsRef.current.find(p => p.id === pluginId);
     if (!shouldUseRuntimeV2(pluginId, plugin) || channelId === "all") {
+      channelCapabilitiesRef.current = DEFAULT_CAPABILITIES;
       setChannelCapabilities(DEFAULT_CAPABILITIES);
       return;
     }
     try {
       const cap = await fetchChannelCapabilities(pluginId, channelId);
+      channelCapabilitiesRef.current = cap;
       setChannelCapabilities(prev =>
         capabilitiesEqual(prev, cap) ? prev : cap,
       );
     } catch {
+      channelCapabilitiesRef.current = DEFAULT_CAPABILITIES;
       setChannelCapabilities(prev =>
         capabilitiesEqual(prev, DEFAULT_CAPABILITIES) ? prev : DEFAULT_CAPABILITIES,
       );
@@ -197,6 +208,7 @@ export function useOrbitData(
     );
     const feedChannel = resolveFeedChannelId(plugin, pluginChannels, channel, pluginId);
     const offset = options?.offset ?? 0;
+    const activeChannel = pluginChannels.find(ch => ch.id === feedChannel);
 
     if (shouldUseRuntimeV2(pluginId, plugin) && feedChannel !== "all") {
       if (search) {
@@ -223,22 +235,48 @@ export function useOrbitData(
       }
 
       if (append) {
-        const cap = channelCapabilitiesRef.current;
-        const result = cap.canLoadMore
-          ? await runtimeLoadMore(pluginId, feedChannel)
-          : await fetchRuntimeItems({
-              pluginId,
-              channelId: feedChannel,
-              limit: pageSize,
-              offset,
-            });
+        const paginated = channelSupportsLoadMore(cap, activeChannel);
+        let result;
+        if (cap.canLoadMore) {
+          const pagination = cap.pagination ?? activeChannel?.features?.pagination;
+          const loadMoreParams = pagination
+            ? buildFeedLoadMoreParams({
+                pagination,
+                articles: articlesRef.current,
+                pageSize,
+                channelParams: activeChannel?.params,
+                nextParams: feedNextParamsRef.current,
+              })
+            : undefined;
+          result = await runtimeLoadMore(pluginId, feedChannel, loadMoreParams);
+          feedNextParamsRef.current = result.next ?? null;
+        } else {
+          result = await fetchRuntimeItems({
+            pluginId,
+            channelId: feedChannel,
+            limit: pageSize,
+            offset,
+          });
+        }
         if (requestId !== feedRequestId.current) return;
         const items = result.items ?? [];
+        if (paginated && items.length === 0) {
+          feedPaginationExhaustedRef.current = true;
+        }
         setArticles(prev => [...prev, ...items]);
         setFeedTotal(offset + items.length);
-        setHasMore(Boolean(result.hasMore));
+        setHasMore(resolveFeedHasMore({
+          append: true,
+          items,
+          apiHasMore: result.hasMore,
+          paginated,
+          paginationExhausted: feedPaginationExhaustedRef.current,
+        }));
         return;
       }
+
+      feedNextParamsRef.current = null;
+      feedPaginationExhaustedRef.current = false;
 
       const result = await fetchRuntimeItems({
         pluginId,
@@ -248,8 +286,15 @@ export function useOrbitData(
       });
       if (requestId !== feedRequestId.current) return;
       const items = result.items ?? [];
+      const paginated = channelSupportsLoadMore(cap, activeChannel);
       setFeedTotal(offset + items.length);
-      setHasMore(Boolean(result.hasMore));
+      setHasMore(resolveFeedHasMore({
+        append: false,
+        items,
+        apiHasMore: result.hasMore,
+        paginated,
+        paginationExhausted: feedPaginationExhaustedRef.current,
+      }));
       setArticles(items);
       if (!append) {
         setUnreadTotal(items.filter(item => !item.isRead).length);
@@ -360,6 +405,8 @@ export function useOrbitData(
   const reloadFeedOnly = useCallback(async (options?: { searching?: boolean }) => {
     const isSearchReload = options?.searching === true;
     feedRequestId.current += 1;
+    feedNextParamsRef.current = null;
+    feedPaginationExhaustedRef.current = false;
     setArticles([]);
     setHasMore(false);
     if (isSearchReload) {
@@ -535,6 +582,44 @@ export function useOrbitData(
     [loadPlugins, loadFeedPage],
   );
 
+  const refreshChannelFeed = useCallback(async () => {
+    const pluginId = pluginFilterRef.current;
+    if (pluginId === "all") return;
+    const plugin = pluginsRef.current.find(p => p.id === pluginId);
+    const feedChannel = resolveFeedChannelId(
+      plugin,
+      plugin?.channels,
+      channelFilterRef.current,
+      pluginId,
+    );
+    if (feedChannel === "all") return;
+    if (shouldUseRuntimeV2(pluginId, plugin)) {
+      await runtimeRefresh(pluginId, feedChannel);
+    } else {
+      await refreshPluginFeed(pluginId, feedChannel);
+    }
+    await loadFeedPage({ offset: 0, append: false });
+  }, [loadFeedPage]);
+
+  const clearRefreshChannelFeed = useCallback(async () => {
+    const pluginId = pluginFilterRef.current;
+    if (pluginId === "all") return;
+    const plugin = pluginsRef.current.find(p => p.id === pluginId);
+    const feedChannel = resolveFeedChannelId(
+      plugin,
+      plugin?.channels,
+      channelFilterRef.current,
+      pluginId,
+    );
+    if (feedChannel === "all") return;
+    if (shouldUseRuntimeV2(pluginId, plugin)) {
+      await runtimeClearRefresh(pluginId, feedChannel);
+    } else {
+      await refreshPluginFeed(pluginId, feedChannel, { force: true });
+    }
+    await loadFeedPage({ offset: 0, append: false });
+  }, [loadFeedPage]);
+
   const persistPluginOrder = useCallback((orderedIds: string[]) => {
     reorderPersistQueue.current = reorderPersistQueue.current
       .then(() => reorderPlugins(orderedIds))
@@ -634,5 +719,7 @@ export function useOrbitData(
     movePlugin,
     reorderPlugins: reorderPluginsByIds,
     forceRefreshPlugin,
+    refreshChannelFeed,
+    clearRefreshChannelFeed,
   };
 }

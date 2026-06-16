@@ -17,6 +17,7 @@ type chapterSessionKey struct {
 
 type ChannelSession struct {
 	LastResponse *FetchResult
+	LastParams   map[string]string
 	Ephemeral    []FeedItem
 	HasMore      bool
 }
@@ -64,7 +65,12 @@ func (s *SessionStore) GetOrCreate(pluginID, channelID string) *ChannelSession {
 	return sess
 }
 
-func (s *SessionStore) SetListResponse(pluginID, channelID string, result FetchResult, hasMore bool) {
+func (s *SessionStore) SetListResponse(
+	pluginID, channelID string,
+	result FetchResult,
+	hasMore bool,
+	params map[string]string,
+) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := s.key(pluginID, channelID)
@@ -75,6 +81,7 @@ func (s *SessionStore) SetListResponse(pluginID, channelID string, result FetchR
 	}
 	copyResult := result
 	sess.LastResponse = &copyResult
+	sess.LastParams = cloneStringMap(params)
 	sess.HasMore = hasMore
 }
 
@@ -109,6 +116,24 @@ func (s *SessionStore) Clear(pluginID, channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, s.key(pluginID, channelID))
+}
+
+func (s *SessionStore) ResetFeedPagination(
+	pluginID, channelID string,
+	params map[string]string,
+	hasMore bool,
+) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := s.key(pluginID, channelID)
+	sess := s.sessions[k]
+	if sess == nil {
+		sess = &ChannelSession{}
+		s.sessions[k] = sess
+	}
+	sess.LastResponse = nil
+	sess.LastParams = cloneStringMap(params)
+	sess.HasMore = hasMore
 }
 
 func (s *SessionStore) chapterKey(pluginID, channelID, parentID string) chapterSessionKey {

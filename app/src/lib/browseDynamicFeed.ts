@@ -99,7 +99,11 @@ export function isRatingPluginArticle(
 export function shouldSkipFeedItemDetailFetch(
   article: Pick<Article, "pluginId" | "channelId">,
   plugin?: Plugin | null,
+  hasDetail = true,
 ): boolean {
+  if (!hasDetail) {
+    return true;
+  }
   return (
     isBrowseDynamicImageArticle(article, plugin)
     || isRatingPluginArticle(article, plugin)

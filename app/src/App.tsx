@@ -18,7 +18,6 @@ import {
 } from "@/lib/articleContent";
 import {
   isBrowseDynamicChannel,
-  isBrowseDynamicImageArticle,
   isBrowseDynamicPlugin,
   isRatingPluginArticle,
   resolveBrowseDynamicChannel,
@@ -53,6 +52,11 @@ import {
   getStoredPluginChannel,
   persistPluginChannel,
 } from "@/lib/pluginChannelMemory";
+import {
+  clearStoredPluginPreviewMode,
+  getStoredPluginPreviewMode,
+  persistPluginPreviewMode,
+} from "@/lib/pluginPreviewMode";
 import {
   READER_FONT_SCALE_DEFAULT,
   READER_FONT_SCALE_MAX,
@@ -143,6 +147,8 @@ export default function App() {
     updateOfficialPlugin: orbitUpdateOfficialPlugin,
     savePluginManifest: orbitSavePluginManifest,
     forceRefreshPlugin: orbitForceRefreshPlugin,
+    refreshChannelFeed,
+    clearRefreshChannelFeed,
   } = useOrbitData(
     activePlugin,
     activeChannel,
@@ -227,7 +233,8 @@ export default function App() {
 
   const [focusMode, setFocusMode] = useState(false);
   const [ratingDetailItem, setRatingDetailItem] = useState<Article | null>(null);
-  const [dimmerMode, setDimmerMode] = useState(false);
+  const [previewModeSaveTick, setPreviewModeSaveTick] = useState(0);
+  const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
 
   useEffect(() => {
@@ -269,11 +276,10 @@ export default function App() {
       return true;
     }
     if (selectedItem.type === "image") {
-      const pluginMeta = pluginById.get(selectedItem.pluginId);
-      if (isBrowseDynamicImageArticle(selectedItem, pluginMeta)) {
-        return Boolean(selectedItem.image?.trim()) && !coverImageFailed;
+      if (selectedItem.galleryImages?.length) {
+        return true;
       }
-      return Boolean(selectedItem.galleryImages?.length);
+      return Boolean(selectedItem.image?.trim()) && !coverImageFailed;
     }
     return false;
   }, [selectedItem, coverImageFailed, pluginById]);
@@ -395,6 +401,47 @@ export default function App() {
     focusMode && activePlugin !== "all" && isRatingPlugin(activePluginMeta);
 
   const isPluginFocusMode = isImageGalleryMode || isRatingFocusMode;
+
+  const savedPluginPreviewMode = useMemo(() => {
+    if (activePlugin === "all") return null;
+    return getStoredPluginPreviewMode(activePlugin);
+  }, [activePlugin, previewModeSaveTick]);
+
+  const isPreviewModeSaved = savedPluginPreviewMode != null
+    && (savedPluginPreviewMode === "focus") === focusMode;
+
+  const handleSavePreviewMode = useCallback(() => {
+    if (activePlugin === "all") return;
+    if (isPreviewModeSaved) {
+      clearStoredPluginPreviewMode(activePlugin);
+    } else {
+      persistPluginPreviewMode(activePlugin, focusMode ? "focus" : "normal");
+    }
+    setPreviewModeSaveTick(tick => tick + 1);
+  }, [activePlugin, focusMode, isPreviewModeSaved]);
+
+  const showFeedChannelActions = activePlugin !== "all"
+    && channelCapabilities.canRefresh
+    && activeTab !== "bookmarks"
+    && activeTab !== "trending";
+
+  const feedListBusy = feedLoading || feedRefreshing;
+
+  const handleFeedRefresh = () => {
+    if (feedListBusy) return;
+    setFeedRefreshing(true);
+    void refreshChannelFeed()
+      .catch(err => console.error("refresh channel feed failed", err))
+      .finally(() => setFeedRefreshing(false));
+  };
+
+  const handleFeedClearAndRefresh = () => {
+    if (feedListBusy) return;
+    setFeedRefreshing(true);
+    void clearRefreshChannelFeed()
+      .catch(err => console.error("clear refresh channel feed failed", err))
+      .finally(() => setFeedRefreshing(false));
+  };
 
   // TODO: 暗色主题待完善后恢复切换入口
   // const toggleTheme = () => {
@@ -630,7 +677,7 @@ export default function App() {
     const pluginMeta = selectedItem
       ? pluginById.get(selectedItem.pluginId)
       : undefined;
-    if (shouldSkipFeedItemDetailFetch(selectedItem, pluginMeta)) {
+    if (shouldSkipFeedItemDetailFetch(selectedItem, pluginMeta, channelCapabilities.hasDetail)) {
       setContentLoading(false);
       return;
     }
@@ -858,12 +905,8 @@ export default function App() {
     setActivePluginGroupId(groupId ?? getPluginGroupId(pluginId));
     setShowPluginStore(false);
     if (isSwitchingPlugin) {
-      const plugin = pluginById.get(pluginId);
-      const channels = (plugin?.channels ?? []).filter(ch => isChannelEnabled(ch.status));
-      const shouldFocus =
-        plugin != null
-        && (isRatingPlugin(plugin) || isBrowseDynamicPlugin(plugin, channels));
-      setFocusMode(shouldFocus);
+      const saved = getStoredPluginPreviewMode(pluginId);
+      setFocusMode(saved === "focus");
     }
   };
 
@@ -1319,7 +1362,7 @@ export default function App() {
 
             {/* Scrollable list of feeds */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
-              <div className="flex items-center justify-between text-xs text-neutral-400 mb-2">
+              <div className="flex items-center justify-between text-xs text-neutral-400 mb-2 gap-2">
                 <span className="inline-flex items-center gap-1.5 min-w-0">
                   {activeTab === "bookmarks"
                     ? "收藏的文章"
@@ -1339,15 +1382,41 @@ export default function App() {
                     </span>
                   )}
                 </span>
-                <span>
-                  {isBrowseDynamicPluginActive
-                    ? `共 ${feedTotal || filteredArticles.length} ${isImageGalleryPlugin(activePluginMeta) ? "张" : "篇"}`
-                    : isActiveDynamicChannel
-                      ? submittedSearch
-                        ? `共 ${feedTotal} 条结果`
-                        : "实时搜索"
-                      : `共 ${submittedSearch ? feedTotal : filteredArticles.length} 篇`}
-                </span>
+                <div className="flex items-center gap-2 shrink-0">
+                  {showFeedChannelActions ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={handleFeedRefresh}
+                        disabled={feedListBusy}
+                        title="刷新"
+                        className="p-1 rounded-lg text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 dark:hover:text-neutral-200 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Icon name="refresh" className={`w-3.5 h-3.5 ${feedRefreshing ? "animate-spin" : ""}`} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleFeedClearAndRefresh}
+                        disabled={feedListBusy}
+                        title="清空并刷新"
+                        className="px-2 py-0.5 rounded-lg text-[11px] font-medium text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 dark:hover:text-neutral-200 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                      >
+                        清空
+                      </button>
+                    </div>
+                  ) : null}
+                  <span>
+                    {feedListBusy
+                      ? "加载中…"
+                      : isBrowseDynamicPluginActive
+                        ? `共 ${feedTotal || filteredArticles.length} ${isImageGalleryPlugin(activePluginMeta) ? "张" : "篇"}`
+                        : isActiveDynamicChannel
+                          ? submittedSearch
+                            ? `共 ${feedTotal} 条结果`
+                            : "实时搜索"
+                          : `共 ${submittedSearch ? feedTotal : filteredArticles.length} 篇`}
+                  </span>
+                </div>
               </div>
 
               {feedLoading ? (
@@ -1492,7 +1561,7 @@ export default function App() {
                       </div>
                     );
                   })}
-                  {feedHasMore && (
+                  {(feedHasMore || (channelCapabilities.canLoadMore && filteredArticles.length > 0)) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1513,7 +1582,7 @@ export default function App() {
           <section
             className={`flex-1 h-full flex flex-row min-h-0 overflow-hidden transition-all duration-300 ${
             theme === 'dark' ? 'bg-[#121314]' : 'bg-[#fafafa]'
-          } ${dimmerMode ? 'brightness-[0.85] contrast-105' : ''}`}
+          }`}
           >
             <div
               ref={readerPanelRef}
@@ -1608,16 +1677,24 @@ export default function App() {
                         </button>
 
                         <button
-                          onClick={() => setDimmerMode(!dimmerMode)}
-                          className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all ${
-                            dimmerMode
-                              ? "bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-400"
+                          type="button"
+                          onClick={handleSavePreviewMode}
+                          disabled={activePlugin === "all"}
+                          className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all disabled:opacity-30 disabled:pointer-events-none ${
+                            isPreviewModeSaved
+                              ? "bg-indigo-50 text-indigo-600 dark:bg-indigo-950/50 dark:text-indigo-400"
                               : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
                           }`}
-                          title="微光高亮阅读护眼模式"
+                          title={
+                            isPreviewModeSaved
+                              ? "点击取消保存预览方式"
+                              : "保存当前预览方式为该插件默认"
+                          }
                         >
-                          <span className="inline-block w-2 h-2 rounded-full bg-amber-500" />
-                          <span className="hidden sm:inline">微光高亮</span>
+                          <Icon name="bookmark" className="w-3.5 h-3.5" active={isPreviewModeSaved} />
+                          <span className="hidden sm:inline">
+                            {isPreviewModeSaved ? "取消保存" : "保存预览方式"}
+                          </span>
                         </button>
 
                         {!isPluginFocusMode && selectedItem?.sourceUrl ? (
@@ -1745,6 +1822,16 @@ export default function App() {
                       className="h-[380px] w-auto max-w-full object-contain mx-auto block"
                       onError={() => setCoverImageFailed(true)}
                     />
+                  ) : showArticleMedia
+                    && selectedItem.type === "image"
+                    && selectedItem.image?.trim()
+                    && !selectedItem.galleryImages?.length ? (
+                    <ProxiedImage
+                      runtimeBase={runtimeBase}
+                      src={selectedItem.image}
+                      alt={selectedItem.title}
+                      onError={() => setCoverImageFailed(true)}
+                    />
                   ) : showArticleMedia ? (
                   <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                     
@@ -1855,23 +1942,8 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Type 4a: Browse dynamic — single image */}
-                    {selectedItem.type === 'image'
-                      && isBrowseDynamicImageArticle(selectedItem, selectedPluginMeta)
-                      && selectedItem.image?.trim() && (
-                      <ProxiedImage
-                        runtimeBase={runtimeBase}
-                        src={selectedItem.image}
-                        alt={selectedItem.title}
-                        className="w-full h-auto max-h-[70vh] object-contain"
-                        onError={() => setCoverImageFailed(true)}
-                      />
-                    )}
-
-                    {/* Type 4b: Multi-image gallery */}
-                    {selectedItem.type === 'image'
-                      && !isBrowseDynamicImageArticle(selectedItem, selectedPluginMeta)
-                      && selectedItem.galleryImages && (
+                    {/* Type 4: Multi-image gallery */}
+                    {selectedItem.type === 'image' && selectedItem.galleryImages?.length ? (
                       <div className="relative bg-neutral-900 flex flex-col">
                         <div className="aspect-video w-full overflow-hidden flex items-center justify-center">
                           <ProxiedImage
@@ -1903,7 +1975,7 @@ export default function App() {
                           </div>
                         </div>
                       </div>
-                    )}
+                    ) : null}
 
                   </div>
                   ) : null}

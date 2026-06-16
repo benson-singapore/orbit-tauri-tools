@@ -591,7 +591,12 @@ func (r *Registry) ForceRefreshPlugin(ctx context.Context, pluginID, channelID s
 	if _, ok := r.Get(pluginID); !ok {
 		return nil, fmt.Errorf("plugin not found: %s", pluginID)
 	}
-	if err := r.store.DeleteFeedItemsByPlugin(ctx, pluginID); err != nil {
+	if channelID != "" {
+		if err := r.store.DeleteFeedItemsByChannel(ctx, pluginID, channelID); err != nil {
+			return nil, err
+		}
+		r.dispatch.ClearChannelSession(pluginID, channelID)
+	} else if err := r.store.DeleteFeedItemsByPlugin(ctx, pluginID); err != nil {
 		return nil, err
 	}
 	return r.RefreshPlugin(ctx, pluginID, channelID)

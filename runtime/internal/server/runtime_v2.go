@@ -20,6 +20,8 @@ func (s *Server) handleRuntimeV2(w http.ResponseWriter, r *http.Request) {
 		s.handleRuntimeChapters(w, r)
 	case "refresh":
 		s.handleRuntimeRefresh(w, r)
+	case "clear-refresh":
+		s.handleRuntimeClearRefresh(w, r)
 	case "load-more":
 		s.handleRuntimeLoadMore(w, r)
 	case "search":
@@ -146,12 +148,13 @@ func (s *Server) handleRuntimeChapters(w http.ResponseWriter, r *http.Request) {
 }
 
 type runtimeActionBody struct {
-	PluginID       string `json:"pluginId"`
-	ChannelID      string `json:"channelId"`
-	Query          string `json:"query,omitempty"`
-	ItemID         string `json:"itemId,omitempty"`
-	ParentItemID   string `json:"parentItemId,omitempty"`
-	ChapterItemID  string `json:"chapterItemId,omitempty"`
+	PluginID      string            `json:"pluginId"`
+	ChannelID     string            `json:"channelId"`
+	Query         string            `json:"query,omitempty"`
+	ItemID        string            `json:"itemId,omitempty"`
+	ParentItemID  string            `json:"parentItemId,omitempty"`
+	ChapterItemID string            `json:"chapterItemId,omitempty"`
+	Params        map[string]string `json:"params,omitempty"`
 }
 
 func (s *Server) handleRuntimeRefresh(w http.ResponseWriter, r *http.Request) {
@@ -160,9 +163,15 @@ func (s *Server) handleRuntimeRefresh(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) handleRuntimeClearRefresh(w http.ResponseWriter, r *http.Request) {
+	s.handleRuntimeAction(w, r, func(body runtimeActionBody) (plugin.DispatchResult, error) {
+		return s.registry.Dispatcher().ClearAndRefresh(r.Context(), body.PluginID, body.ChannelID)
+	})
+}
+
 func (s *Server) handleRuntimeLoadMore(w http.ResponseWriter, r *http.Request) {
 	s.handleRuntimeAction(w, r, func(body runtimeActionBody) (plugin.DispatchResult, error) {
-		return s.registry.Dispatcher().LoadMore(r.Context(), body.PluginID, body.ChannelID)
+		return s.registry.Dispatcher().LoadMore(r.Context(), body.PluginID, body.ChannelID, body.Params)
 	})
 }
 

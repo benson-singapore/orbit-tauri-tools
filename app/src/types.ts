@@ -70,6 +70,7 @@ export interface ChannelCapabilities {
   hasDetail: boolean;
   hasChapters: boolean;
   persistList: boolean;
+  pagination?: PaginationFeature;
   chaptersLabel?: string;
   chaptersItemLabel?: string;
 }
