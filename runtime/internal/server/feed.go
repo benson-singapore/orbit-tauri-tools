@@ -259,12 +259,18 @@ func (s *Server) handleMarkFeedRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimSpace(body.ID)
+	pluginID := strings.TrimSpace(body.PluginID)
+	channelID := strings.TrimSpace(body.ChannelID)
 	if id == "" {
 		writeJSON(w, http.StatusBadRequest, errorBody("id is required"))
 		return
 	}
+	if pluginID == "" && !strings.Contains(id, ":") {
+		writeJSON(w, http.StatusBadRequest, errorBody("pluginId is required for native feed item ids"))
+		return
+	}
 
-	if err := s.registry.MarkFeedItemRead(r.Context(), body.PluginID, body.ChannelID, id); err != nil {
+	if err := s.registry.MarkFeedItemRead(r.Context(), pluginID, channelID, id); err != nil {
 		if strings.Contains(err.Error(), "not found") {
 			writeJSON(w, http.StatusNotFound, errorBody(err.Error()))
 			return

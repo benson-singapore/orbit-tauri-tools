@@ -231,3 +231,22 @@ func TestChapterItemIDForAPI(t *testing.T) {
 		t.Fatalf("chapterItemIDForAPI() = %q, want 26:23072935", got)
 	}
 }
+
+func TestExtractNativeIDFromRestPreservesHTTPURL(t *testing.T) {
+	const url = "https://www.zaobao.com/news/china/story20260617-9217994"
+	if got := extractNativeIDFromRest(url); got != url {
+		t.Fatalf("extractNativeIDFromRest() = %q, want %q", got, url)
+	}
+}
+
+func TestExtractThirdPartyFeedIDZaobaoURL(t *testing.T) {
+	item := FeedItem{
+		ID:        "zaobao:china:https://www.zaobao.com/news/china/story20260617-9217994",
+		PluginID:  "zaobao",
+		ChannelID: "china",
+	}
+	want := "https://www.zaobao.com/news/china/story20260617-9217994"
+	if got := extractThirdPartyFeedID(item); got != want {
+		t.Fatalf("extractThirdPartyFeedID() = %q, want %q", got, want)
+	}
+}

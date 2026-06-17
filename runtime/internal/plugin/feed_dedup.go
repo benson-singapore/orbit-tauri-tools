@@ -68,6 +68,10 @@ func extractNativeIDFromRest(rest string) string {
 	if rest == "" {
 		return ""
 	}
+	lower := strings.ToLower(rest)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return rest
+	}
 	// Chapter rows encode parentNativeId:chapterNativeId after plugin/channel prefix.
 	if strings.Contains(rest, ":") && strings.Contains(rest, "/") {
 		if idx := strings.LastIndex(rest, ":"); idx >= 0 && idx < len(rest)-1 {

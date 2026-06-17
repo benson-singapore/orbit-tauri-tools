@@ -890,15 +890,95 @@ func mustJSON(v any) string {
 	return string(data)
 }
 
+func feedItemIDVariants(id string) []string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	seen := map[string]struct{}{id: {}}
+	out := []string{id}
+	add := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		if _, ok := seen[candidate]; ok {
+			return
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+	if strings.HasPrefix(id, "//") {
+		add("https:" + id)
+	}
+	lower := strings.ToLower(id)
+	if strings.HasPrefix(lower, "https://") {
+		add("//" + id[8:])
+	} else if strings.HasPrefix(lower, "http://") {
+		add("//" + id[7:])
+	}
+	return out
+}
+
+func feedReadStorageIDs(pluginID, channelID, id string) []string {
+	pluginID = strings.TrimSpace(pluginID)
+	channelID = strings.TrimSpace(channelID)
+
+	seen := make(map[string]struct{})
+	out := make([]string, 0, 8)
+	appendCandidate := func(candidate string) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			return
+		}
+		if _, ok := seen[candidate]; ok {
+			return
+		}
+		seen[candidate] = struct{}{}
+		out = append(out, candidate)
+	}
+
+	for _, itemID := range feedItemIDVariants(id) {
+		appendCandidate(itemID)
+		if pluginID != "" && !strings.HasPrefix(itemID, pluginID+":") {
+			appendCandidate(pluginID + ":" + itemID)
+			if channelID != "" {
+				appendCandidate(FeedFullID(pluginID, channelID, itemID))
+			}
+		}
+	}
+	return out
+}
+
 func (r *Registry) MarkFeedItemRead(ctx context.Context, pluginID, channelID, id string) error {
 	id = strings.TrimSpace(id)
 	pluginID = strings.TrimSpace(pluginID)
 	channelID = strings.TrimSpace(channelID)
-	storageID := id
-	if pluginID != "" && channelID != "" && !strings.HasPrefix(id, pluginID+":") {
-		storageID = FeedFullID(pluginID, channelID, id)
+	if id == "" {
+		return fmt.Errorf("feed item id is required")
 	}
-	return r.store.MarkFeedItemRead(ctx, storageID, time.Now().Unix())
+	if pluginID != "" {
+		if rec, ok := r.Get(pluginID); ok {
+			channelID = ResolveChannelID(&rec.Config, channelID)
+		}
+	}
+
+	var lastErr error
+	for _, storageID := range feedReadStorageIDs(pluginID, channelID, id) {
+		err := r.store.MarkFeedItemRead(ctx, storageID, time.Now().Unix())
+		if err == nil {
+			return nil
+		}
+		if strings.Contains(err.Error(), "not found") {
+			lastErr = err
+			continue
+		}
+		return err
+	}
+	if lastErr != nil {
+		return lastErr
+	}
+	return fmt.Errorf("feed item not found: %s", id)
 }
 
 func (r *Registry) CountUnread(

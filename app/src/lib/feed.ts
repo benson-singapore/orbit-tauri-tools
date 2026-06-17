@@ -356,17 +356,20 @@ export async function refreshPluginFeed(
 
 export async function markFeedItemRead(
   id: string,
-  options?: { pluginId?: string; channelId?: string },
+  options: { pluginId: string; channelId?: string },
 ): Promise<void> {
   const base = await apiBase();
+  const body: { id: string; pluginId: string; channelId?: string } = {
+    id,
+    pluginId: options.pluginId,
+  };
+  if (options.channelId) {
+    body.channelId = options.channelId;
+  }
   const res = await fetch(`${base}/v1/feed/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id,
-      pluginId: options?.pluginId,
-      channelId: options?.channelId,
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
     throw new Error(await parseError(res));

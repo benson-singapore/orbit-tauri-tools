@@ -58,6 +58,17 @@ function resolveFeedChannelId(
 
 const FEED_RELOAD_DELAYS_MS = [3000, 5000, 10000, 20000, 40000, 60000];
 
+function mergeArticlesPreservingReadState(prev: Article[], items: Article[]): Article[] {
+  if (prev.length === 0) {
+    return items;
+  }
+  const readIds = new Set(prev.filter(article => article.isRead).map(article => article.id));
+  if (readIds.size === 0) {
+    return items;
+  }
+  return items.map(item => (readIds.has(item.id) ? { ...item, isRead: true } : item));
+}
+
 function scheduleFeedReloadAfterBackgroundFetch(
   loadFeedPage: (options?: { offset?: number; append?: boolean }) => Promise<void>,
 ) {
@@ -110,7 +121,7 @@ interface UseOrbitDataResult {
   reload: () => Promise<void>;
   refreshFromCache: () => Promise<void>;
   loadMore: () => Promise<void>;
-  markArticleRead: (id: string) => Promise<void>;
+  markArticleRead: (target: string | Article) => Promise<void>;
   installCustomRSS: (payload: InstallRSSPluginRequest) => Promise<Plugin>;
   installOfficialPlugin: (marketId: string) => Promise<Plugin>;
   updateOfficialPlugin: (marketId: string, pluginId: string) => Promise<Plugin>;
@@ -122,6 +133,26 @@ interface UseOrbitDataResult {
   forceRefreshPlugin: (id: string) => Promise<void>;
   refreshChannelFeed: () => Promise<void>;
   clearRefreshChannelFeed: () => Promise<void>;
+}
+
+function resolveMarkReadContext(
+  target: string | Article,
+  articles: Article[],
+  pluginFilter: string,
+  channelFilter: string,
+): { id: string; pluginId: string; channelId?: string } | null {
+  const id = typeof target === "string" ? target : target.id;
+  const article = typeof target === "string"
+    ? articles.find(item => item.id === target)
+    : target;
+  const pluginId = article?.pluginId
+    ?? (pluginFilter !== "all" ? pluginFilter : undefined);
+  const channelId = article?.channelId
+    ?? (channelFilter !== "all" ? channelFilter : undefined);
+  if (!pluginId) {
+    return null;
+  }
+  return { id, pluginId, channelId };
 }
 
 export function useOrbitData(
@@ -217,7 +248,7 @@ export function useOrbitData(
         const items = result.items ?? [];
         setFeedTotal(items.length);
         setHasMore(Boolean(result.hasMore));
-        setArticles(prev => (append ? [...prev, ...items] : items));
+        setArticles(prev => (append ? [...prev, ...items] : mergeArticlesPreservingReadState(prev, items)));
         if (!append) {
           setUnreadTotal(items.filter(item => !item.isRead).length);
         }
@@ -295,7 +326,7 @@ export function useOrbitData(
         paginated,
         paginationExhausted: feedPaginationExhaustedRef.current,
       }));
-      setArticles(items);
+      setArticles(prev => mergeArticlesPreservingReadState(prev, items));
       if (!append) {
         setUnreadTotal(items.filter(item => !item.isRead).length);
       }
@@ -349,7 +380,7 @@ export function useOrbitData(
     } else {
       setHasMore(moreFromApi);
     }
-    setArticles(prev => (append ? [...prev, ...items] : items));
+    setArticles(prev => (append ? [...prev, ...items] : mergeArticlesPreservingReadState(prev, items)));
     if (!append) {
       setUnreadTotal(data.unreadTotal ?? items.filter(item => !item.isRead).length);
     } else if (typeof data.unreadTotal === "number") {
@@ -661,16 +692,23 @@ export function useOrbitData(
     applyPluginOrder(orderedIds);
   }, [applyPluginOrder]);
 
-  const markArticleRead = useCallback(async (id: string) => {
+  const markArticleRead = useCallback(async (target: string | Article) => {
+    const context = resolveMarkReadContext(
+      target,
+      articlesRef.current,
+      pluginFilterRef.current,
+      channelFilterRef.current,
+    );
+    if (!context) {
+      return;
+    }
+    const { id, pluginId, channelId } = context;
+
     let wasUnread = false;
-    let pluginId: string | undefined;
-    let channelId: string | undefined;
     setArticles(prev => {
-      const target = prev.find(article => article.id === id);
-      if (!target || target.isRead) return prev;
+      const item = prev.find(article => article.id === id);
+      if (!item || item.isRead) return prev;
       wasUnread = true;
-      pluginId = target.pluginId;
-      channelId = target.channelId;
       return prev.map(article =>
         article.id === id ? { ...article, isRead: true } : article,
       );
