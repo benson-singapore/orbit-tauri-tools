@@ -120,6 +120,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateChapterSortOrder(); err != nil {
 		return err
 	}
+	if err := s.migrateDicts(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -243,6 +246,26 @@ func (s *Store) migrateFeedItemsReadAt() error {
 	}
 	_, _ = s.DB.Exec(`CREATE INDEX IF NOT EXISTS idx_feed_items_unread ON feed_items(read_at) WHERE read_at IS NULL`)
 	return nil
+}
+
+func (s *Store) migrateDicts() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS dicts (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			type TEXT NOT NULL,
+			label TEXT NOT NULL,
+			value TEXT NOT NULL,
+			remarks TEXT,
+			UNIQUE(type, label)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_dicts_type ON dicts(type)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.DB.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate dicts: %w", err)
+		}
+	}
+	return s.seedDefaultDicts()
 }
 
 func (s *Store) Close() error {

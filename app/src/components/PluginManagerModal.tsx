@@ -46,6 +46,7 @@ import {
 } from "@/lib/runtimeV2";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
 import { ALL_MANAGE_GROUP_ID, DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
+import { SystemInfoPanel } from "@/components/SystemInfoPanel";
 import type {
   InstallRSSPluginRequest,
   MarketPluginContentRating,
@@ -140,9 +141,10 @@ interface PluginManagerModalProps {
   embedded?: boolean;
 }
 
-const TABS: { id: Extract<PluginManagerTab, "market" | "manage">; label: string; icon: string }[] = [
+const TABS: { id: Extract<PluginManagerTab, "market" | "manage" | "system">; label: string; icon: string }[] = [
   { id: "market", label: "插件市场", icon: "sparkles" },
   { id: "manage", label: "已安装插件", icon: "puzzle" },
+  { id: "system", label: "系统信息", icon: "info" },
 ];
 
 const MARKET_CATEGORY_UPDATES = "updates";
@@ -3502,7 +3504,7 @@ export function PluginManagerModal({
   getPluginGroupId,
   embedded = false,
 }: PluginManagerModalProps) {
-  const [activeTab, setActiveTab] = useState<Extract<PluginManagerTab, "market" | "manage">>("market");
+  const [activeTab, setActiveTab] = useState<Extract<PluginManagerTab, "market" | "manage" | "system">>("market");
   const [marketCategory, setMarketCategory] = useState<PluginMarketCategory>("all");
   const [marketSearch, setMarketSearch] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
@@ -3934,6 +3936,14 @@ export function PluginManagerModal({
                 </div>
               </div>
             </div>
+          )}
+
+          {activeTab === "system" && (
+            <SystemInfoPanel
+              theme={theme}
+              installedPluginCount={installedPlugins.length}
+              runningPluginCount={runningCount}
+            />
           )}
 
           {activeTab === "manage" && (

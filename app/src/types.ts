@@ -124,7 +124,7 @@ export interface Article {
 
 export type PluginContentType = "text" | "video" | "audio" | "image";
 
-export type PluginManagerTab = "market" | "manage" | "import";
+export type PluginManagerTab = "market" | "manage" | "system" | "import";
 
 export type PluginMarketCategory = "all" | string;
 
