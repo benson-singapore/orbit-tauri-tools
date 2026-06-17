@@ -22,7 +22,7 @@ var imageProxyClient = &http.Client{
 		if err := validateImageProxyTarget(req.URL); err != nil {
 			return err
 		}
-		req.Header.Set("Referer", imageProxyReferer(req.URL))
+		req.Header.Set("Referer", lbupupImageReferer(req.URL))
 		return nil
 	},
 }
@@ -54,7 +54,7 @@ func (s *Server) handleProxyImage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorBody("create request failed"))
 		return
 	}
-	req.Header.Set("Referer", imageProxyReferer(target))
+	req.Header.Set("Referer", lbupupImageReferer(target))
 	req.Header.Set("User-Agent", "OrbitReader/1.0")
 
 	resp, err := imageProxyClient.Do(req)
@@ -69,26 +69,42 @@ func (s *Server) handleProxyImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
-	if contentType == "" {
+	limited := io.LimitReader(resp.Body, maxImageProxyBytes+1)
+	body, err := io.ReadAll(limited)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, errorBody("read image failed"))
+		return
+	}
+	if int64(len(body)) > maxImageProxyBytes {
+		writeJSON(w, http.StatusBadGateway, errorBody("image too large"))
+		return
+	}
+
+	plain, contentType, err := maybeDecryptProxyImage(target, body)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, errorBody(fmt.Sprintf("decrypt image failed: %v", err)))
+		return
+	}
+
+	if contentType == "" || contentType == "application/octet-stream" {
+		if headerCT := strings.TrimSpace(resp.Header.Get("Content-Type")); headerCT != "" {
+			contentType = strings.TrimSpace(strings.Split(headerCT, ";")[0])
+		}
+	}
+	if contentType == "" || contentType == "application/octet-stream" {
 		contentType = contentTypeFromImagePath(target.Path)
 	}
-	if !isImageContentType(contentType) {
+	if !isImageContentType(contentType) && !looksLikeImageBytes(plain) {
 		writeJSON(w, http.StatusBadGateway, errorBody("upstream response is not an image"))
 		return
+	}
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		contentType = contentTypeFromImagePath(target.Path)
 	}
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
-
-	limited := io.LimitReader(resp.Body, maxImageProxyBytes+1)
-	written, err := io.Copy(w, limited)
-	if err != nil {
-		return
-	}
-	if written > maxImageProxyBytes {
-		return
-	}
+	_, _ = w.Write(plain)
 }
 
 func imageProxyReferer(target *url.URL) string {
@@ -125,7 +141,28 @@ func isImageContentType(contentType string) bool {
 	if strings.HasPrefix(mediaType, "image/") {
 		return true
 	}
-	return mediaType == "application/octet-stream"
+	switch mediaType {
+	case "application/octet-stream", "binary/octet-stream":
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikeImageBytes(body []byte) bool {
+	if len(body) >= 2 && body[0] == 0xFF && body[1] == 0xD8 {
+		return true
+	}
+	if len(body) >= 8 && string(body[:8]) == "\x89PNG\r\n\x1a\n" {
+		return true
+	}
+	if len(body) >= 6 && (string(body[:6]) == "GIF87a" || string(body[:6]) == "GIF89a") {
+		return true
+	}
+	if len(body) >= 12 && string(body[:4]) == "RIFF" && string(body[8:12]) == "WEBP" {
+		return true
+	}
+	return false
 }
 
 func contentTypeFromImagePath(path string) string {

@@ -95,6 +95,32 @@ export function buildFeedLoadMoreParams(options: {
   return params;
 }
 
+export function buildSearchLoadMoreParams(options: {
+  pagination?: PaginationFeature | null;
+  articles: Article[];
+  pageSize: number;
+  query: string;
+  searchParam?: string;
+  channelParams?: Record<string, string>;
+  nextParams?: Record<string, string> | null;
+}): Record<string, string> {
+  const searchKey = options.searchParam?.trim() || "query";
+  const params = options.pagination
+    ? buildFeedLoadMoreParams({
+        pagination: options.pagination,
+        articles: options.articles,
+        pageSize: options.pageSize,
+        channelParams: options.channelParams,
+        nextParams: options.nextParams,
+      })
+    : {
+        ...(options.channelParams ?? {}),
+        page: String(Math.max(1, Math.floor(options.articles.length / options.pageSize)) + 1),
+      };
+  params[searchKey] = options.query;
+  return params;
+}
+
 export function channelSupportsLoadMore(
   cap: Pick<ChannelCapabilities, "canLoadMore">,
   channel?: Pick<PluginChannel, "features"> | null,

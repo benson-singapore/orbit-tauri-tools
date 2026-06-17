@@ -24,7 +24,12 @@ import {
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
 import { resolveDefaultPluginChannel } from "@/lib/browseDynamicFeed";
-import { buildFeedLoadMoreParams, channelSupportsLoadMore, resolveFeedHasMore } from "@/lib/paginationParams";
+import {
+  buildFeedLoadMoreParams,
+  buildSearchLoadMoreParams,
+  channelSupportsLoadMore,
+  resolveFeedHasMore,
+} from "@/lib/paginationParams";
 import type {
   Article,
   ChannelCapabilities,
@@ -243,11 +248,41 @@ export function useOrbitData(
 
     if (shouldUseRuntimeV2(pluginId, plugin) && feedChannel !== "all") {
       if (search) {
-        const result = await runtimeSearch(pluginId, feedChannel, search);
+        const cap = channelCapabilitiesRef.current;
+        const pagination = cap.pagination ?? activeChannel?.features?.pagination;
+        const paginated = channelSupportsLoadMore(cap, activeChannel);
+        const searchParam = activeChannel?.features?.search?.param?.trim() || "query";
+        let result;
+        if (append) {
+          const loadMoreParams = buildSearchLoadMoreParams({
+            pagination,
+            articles: articlesRef.current,
+            pageSize,
+            query: search,
+            searchParam,
+            channelParams: activeChannel?.params,
+            nextParams: feedNextParamsRef.current,
+          });
+          result = await runtimeLoadMore(pluginId, feedChannel, loadMoreParams);
+        } else {
+          feedNextParamsRef.current = null;
+          feedPaginationExhaustedRef.current = false;
+          result = await runtimeSearch(pluginId, feedChannel, search);
+        }
+        feedNextParamsRef.current = result.next ?? null;
         if (requestId !== feedRequestId.current) return;
         const items = result.items ?? [];
-        setFeedTotal(items.length);
-        setHasMore(Boolean(result.hasMore));
+        if (append && paginated && items.length === 0) {
+          feedPaginationExhaustedRef.current = true;
+        }
+        setFeedTotal(append ? articlesRef.current.length + items.length : items.length);
+        setHasMore(resolveFeedHasMore({
+          append,
+          items,
+          apiHasMore: result.hasMore,
+          paginated,
+          paginationExhausted: feedPaginationExhaustedRef.current,
+        }));
         setArticles(prev => (append ? [...prev, ...items] : mergeArticlesPreservingReadState(prev, items)));
         if (!append) {
           setUnreadTotal(items.filter(item => !item.isRead).length);

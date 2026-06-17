@@ -3,6 +3,7 @@ package plugin
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -113,10 +114,11 @@ type hostHTTPRequest struct {
 }
 
 type hostHTTPResponse struct {
-	Status int               `json:"status"`
-	Headers map[string]string `json:"headers,omitempty"`
-	Body   string            `json:"body"`
-	Error  string            `json:"error,omitempty"`
+	Status     int               `json:"status"`
+	Headers    map[string]string `json:"headers,omitempty"`
+	Body       string            `json:"body"`
+	BodyBase64 string            `json:"body_base64,omitempty"`
+	Error      string            `json:"error,omitempty"`
 }
 
 func loadWasmBinary(path string) ([]byte, error) {
@@ -351,10 +353,30 @@ func wasmHostHTTP(
 	if err != nil {
 		return writeHostResp(mod, respPtr, respCap, hostHTTPResponse{Error: err.Error()})
 	}
-	return writeHostResp(mod, respPtr, respCap, hostHTTPResponse{
-		Status: resp.StatusCode,
-		Body:   string(body),
-	})
+	hostResp := hostHTTPResponse{Status: resp.StatusCode}
+	if isTextHTTPContentType(resp.Header.Get("Content-Type")) {
+		hostResp.Body = string(body)
+	} else {
+		hostResp.BodyBase64 = base64.StdEncoding.EncodeToString(body)
+	}
+	return writeHostResp(mod, respPtr, respCap, hostResp)
+}
+
+func isTextHTTPContentType(contentType string) bool {
+	ct := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if ct == "" {
+		return false
+	}
+	if strings.HasPrefix(ct, "text/") {
+		return true
+	}
+	switch ct {
+	case "application/json", "application/javascript", "application/xml",
+		"application/xhtml+xml", "application/ld+json":
+		return true
+	default:
+		return false
+	}
 }
 
 func writeHostResp(mod api.Module, respPtr, respCap uint32, resp hostHTTPResponse) uint32 {

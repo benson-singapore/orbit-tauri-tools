@@ -1,8 +1,9 @@
-/** Host suffixes that reject cross-origin Referer (hotlink protection). */
-const REFERER_PROTECTED_HOST_SUFFIXES = [
+/** Host suffixes that should load through the runtime image proxy. */
+const PROXY_IMAGE_HOST_SUFFIXES = [
   "doubanio.com",
   "douban.com",
   "hellogithub.com",
+  "lbupup.cn",
 ];
 
 export function isHttpImageUrl(url: string): boolean {
@@ -10,16 +11,21 @@ export function isHttpImageUrl(url: string): boolean {
   return trimmed.startsWith("http://") || trimmed.startsWith("https://");
 }
 
-export function imageNeedsRefererProxy(url: string): boolean {
+export function imageNeedsProxy(url: string): boolean {
   if (!isHttpImageUrl(url)) return false;
   try {
     const host = new URL(url.trim()).hostname.toLowerCase();
-    return REFERER_PROTECTED_HOST_SUFFIXES.some(
+    return PROXY_IMAGE_HOST_SUFFIXES.some(
       suffix => host === suffix || host.endsWith("." + suffix),
     );
   } catch {
     return false;
   }
+}
+
+/** @deprecated use imageNeedsProxy */
+export function imageNeedsRefererProxy(url: string): boolean {
+  return imageNeedsProxy(url);
 }
 
 export function buildImageProxyUrl(runtimeBase: string, imageUrl: string): string {
@@ -33,7 +39,7 @@ export function displayImageUrl(
   imageUrl: string,
 ): string {
   const trimmed = imageUrl.trim();
-  if (!trimmed || !runtimeBase || !imageNeedsRefererProxy(trimmed)) {
+  if (!trimmed || !runtimeBase || !imageNeedsProxy(trimmed)) {
     return trimmed;
   }
   return buildImageProxyUrl(runtimeBase, trimmed);
@@ -53,7 +59,7 @@ export function rewriteHtmlImageUrls(
   for (const img of doc.querySelectorAll("img")) {
     for (const attr of ["src", "data-src", "data-original"]) {
       const raw = img.getAttribute(attr);
-      if (!raw || !imageNeedsRefererProxy(raw)) continue;
+      if (!raw || !imageNeedsProxy(raw)) continue;
       img.setAttribute(attr, buildImageProxyUrl(runtimeBase, raw));
       changed = true;
     }
