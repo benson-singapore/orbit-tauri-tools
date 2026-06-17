@@ -42,6 +42,7 @@ func BuildOpenAPISpec() map[string]any {
 			map[string]any{"name": "Health", "description": "Health checks and runtime status"},
 			map[string]any{"name": "Plugin Groups", "description": "Plugin sidebar groups and assignments"},
 			map[string]any{"name": "Dicts", "description": "Dictionary CRUD (runtime-managed lookups)"},
+			map[string]any{"name": "LLM", "description": "LLM provider configuration and chat streaming"},
 			map[string]any{"name": "Plugins", "description": "Plugin install/manage/manifest/readme"},
 			map[string]any{"name": "Feed", "description": "Feed items and refresh/read state"},
 			map[string]any{"name": "Images", "description": "Image upload/proxy utilities"},
@@ -447,6 +448,54 @@ func BuildOpenAPISpec() map[string]any {
 						map[string]any{"name": "url", "in": "query", "required": true, "schema": map[string]any{"type": "string"}},
 					},
 					"responses": responseJSON(map[string]any{"ok": true}),
+				},
+			},
+			"/v1/llm/chat/stream": map[string]any{
+				"post": map[string]any{
+					"tags":      []any{"LLM"},
+					"summary":  "LLM chat (streaming SSE, OpenAI-compatible proxy)",
+					"requestBody": map[string]any{
+						"required": true,
+						"content": map[string]any{
+							"application/json": map[string]any{
+								"schema": map[string]any{
+									"type": "object",
+									"properties": map[string]any{
+										"providerId": map[string]any{"type": "string"},
+										"modelId": map[string]any{"type": "string"},
+										"messages": map[string]any{
+											"type": "array",
+											"items": map[string]any{
+												"type": "object",
+												"properties": map[string]any{
+													"role":    map[string]any{"type": "string"},
+													"content": map[string]any{"type": "string"},
+												},
+											},
+										},
+										"stream": map[string]any{"type": "boolean"},
+									},
+									"required": []any{"providerId", "modelId", "messages"},
+								},
+								"example": map[string]any{
+									"providerId": "openai",
+									"modelId": "gpt-4o-mini",
+									"messages": []any{map[string]any{"role": "user", "content": "Hello!"}},
+									"stream": true,
+								},
+							},
+						},
+					},
+					"responses": map[string]any{
+						"200": map[string]any{
+							"description": "SSE stream; each `data` payload contains JSON: {delta?:string, done?:bool, error?:string}",
+							"content": map[string]any{
+								"text/event-stream": map[string]any{
+									"schema": map[string]any{"type": "string"},
+								},
+							},
+						},
+					},
 				},
 			},
 			"/v2/runtime/capabilities": map[string]any{

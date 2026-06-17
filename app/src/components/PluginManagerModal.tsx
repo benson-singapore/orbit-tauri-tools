@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
 import { Icon } from "@/components/Icon";
+import { LLMSettingsPanel } from "@/components/LLMSettingsPanel";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginReadmeModal } from "@/components/PluginReadmeModal";
 import {
@@ -40,6 +41,7 @@ import { slugifyChannelId } from "@/lib/channelId";
 import { normalizeChannelStatus } from "@/lib/channelStatus";
 import { resolveColorToHex } from "@/lib/pluginColor";
 import { waitForRuntimeReady } from "@/lib/runtime";
+import { fetchSettingConfigDicts } from "@/lib/runtimeDicts";
 import {
   fetchPluginVariables,
   savePluginVariables,
@@ -141,11 +143,18 @@ interface PluginManagerModalProps {
   embedded?: boolean;
 }
 
-const TABS: { id: Extract<PluginManagerTab, "market" | "manage" | "system">; label: string; icon: string }[] = [
+type PluginManagerTopTab = Extract<PluginManagerTab, "market" | "manage" | "system" | "llm" | "tts">;
+
+const LEADING_TABS: { id: Extract<PluginManagerTopTab, "market" | "manage">; label: string; icon: string }[] = [
   { id: "market", label: "插件市场", icon: "sparkles" },
   { id: "manage", label: "已安装插件", icon: "puzzle" },
-  { id: "system", label: "系统信息", icon: "info" },
 ];
+
+const SYSTEM_TAB: { id: Extract<PluginManagerTopTab, "system">; label: string; icon: string } = {
+  id: "system",
+  label: "系统信息",
+  icon: "info",
+};
 
 const MARKET_CATEGORY_UPDATES = "updates";
 
@@ -3504,7 +3513,7 @@ export function PluginManagerModal({
   getPluginGroupId,
   embedded = false,
 }: PluginManagerModalProps) {
-  const [activeTab, setActiveTab] = useState<Extract<PluginManagerTab, "market" | "manage" | "system">>("market");
+  const [activeTab, setActiveTab] = useState<PluginManagerTopTab>("market");
   const [marketCategory, setMarketCategory] = useState<PluginMarketCategory>("all");
   const [marketSearch, setMarketSearch] = useState("");
   const [showImportModal, setShowImportModal] = useState(false);
@@ -3515,6 +3524,58 @@ export function PluginManagerModal({
   const [importTargetGroupId, setImportTargetGroupId] = useState<string | null>(null);
   const [showGroupManager, setShowGroupManager] = useState(false);
   const [activeManageGroupId, setActiveManageGroupId] = useState<string>(ALL_MANAGE_GROUP_ID);
+  const [settingsConfigTabs, setSettingsConfigTabs] = useState<{ llm: boolean; tts: boolean }>({
+    llm: false,
+    tts: false,
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const items = await fetchSettingConfigDicts();
+        const byLabel = new Map(items.map(item => [item.label, item.value] as const));
+        const hasValue = (label: string) => {
+          const value = byLabel.get(label);
+          return typeof value === "string" && value.trim() !== "";
+        };
+        if (!cancelled) {
+          setSettingsConfigTabs({
+            llm: hasValue("ai_mode"),
+            tts: hasValue("tts_mode"),
+          });
+        }
+      } catch (err) {
+        console.error("load setting_config dicts failed", err);
+        if (!cancelled) {
+          setSettingsConfigTabs({ llm: false, tts: false });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const topTabs = useMemo(() => {
+    const extra: { id: Extract<PluginManagerTopTab, "llm" | "tts">; label: string; icon: string }[] = [];
+    if (settingsConfigTabs.llm) {
+      extra.push({ id: "llm", label: "LLM设置", icon: "brain" });
+    }
+    if (settingsConfigTabs.tts) {
+      extra.push({ id: "tts", label: "TTS设置", icon: "audio" });
+    }
+    return [...LEADING_TABS, ...extra, SYSTEM_TAB];
+  }, [settingsConfigTabs.llm, settingsConfigTabs.tts]);
+
+  useEffect(() => {
+    if (
+      (activeTab === "llm" && !settingsConfigTabs.llm)
+      || (activeTab === "tts" && !settingsConfigTabs.tts)
+    ) {
+      setActiveTab("market");
+    }
+  }, [activeTab, settingsConfigTabs.llm, settingsConfigTabs.tts]);
 
   const allPluginsByInstallTime = useMemo(() => {
     const seen = new Set<string>();
@@ -3737,7 +3798,7 @@ export function PluginManagerModal({
       <div className={panelClass} onClick={embedded ? undefined : e => e.stopPropagation()}>
         <header className={`shrink-0 flex items-center justify-between gap-5 px-7 pt-4 pb-3 border-b ${subtleBorder}`}>
           <div className={`shrink-0 flex items-center gap-1 p-1 rounded-2xl ${mutedBg}`}>
-            {TABS.map(tab => (
+            {topTabs.map(tab => (
               <button
                 key={tab.id}
                 type="button"
@@ -4090,6 +4151,30 @@ export function PluginManagerModal({
                 ) : (
                   <p className="text-sm text-neutral-400 text-center py-16">暂无分组，请先在「分组管理」中创建。</p>
                 )}
+              </div>
+            </div>
+          )}
+
+          {activeTab === "llm" && (
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+              <LLMSettingsPanel theme={theme} />
+            </div>
+          )}
+
+          {activeTab === "tts" && (
+            <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+              <div className={`shrink-0 flex items-start justify-between gap-4 px-8 py-5 border-b ${subtleBorder}`}>
+                <div>
+                  <h3 className="text-base font-bold">TTS设置</h3>
+                  <p className="text-sm text-neutral-500 mt-1">根据系统字典开关动态显示的配置页</p>
+                </div>
+              </div>
+              <div className={`flex-1 min-h-0 overflow-y-auto px-8 py-6 ${isDark ? "bg-neutral-950/30" : "bg-neutral-100/80"}`}>
+                <div className={`rounded-2xl border p-5 ${subtleBorder} ${isDark ? "bg-neutral-900/40" : "bg-white"}`}>
+                  <p className="text-sm text-neutral-600 dark:text-neutral-300">
+                    这里将放置 TTS 相关设置项（tts_mode）。
+                  </p>
+                </div>
               </div>
             </div>
           )}

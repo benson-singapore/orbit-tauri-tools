@@ -643,6 +643,77 @@
         ]
       }
     },
+    "/v1/llm/chat/stream": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "messages": [
+                  {
+                    "content": "Hello!",
+                    "role": "user"
+                  }
+                ],
+                "modelId": "gpt-4o-mini",
+                "providerId": "openai",
+                "stream": true
+              },
+              "schema": {
+                "properties": {
+                  "messages": {
+                    "items": {
+                      "properties": {
+                        "content": {
+                          "type": "string"
+                        },
+                        "role": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "modelId": {
+                    "type": "string"
+                  },
+                  "providerId": {
+                    "type": "string"
+                  },
+                  "stream": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "providerId",
+                  "modelId",
+                  "messages"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "SSE stream; each `data` payload contains JSON: {delta?:string, done?:bool, error?:string}"
+          }
+        },
+        "summary": "LLM chat (streaming SSE, OpenAI-compatible proxy)",
+        "tags": [
+          "LLM"
+        ]
+      }
+    },
     "/v1/plugin-groups": {
       "get": {
         "responses": {
@@ -1652,6 +1723,10 @@
     {
       "description": "Dictionary CRUD (runtime-managed lookups)",
       "name": "Dicts"
+    },
+    {
+      "description": "LLM provider configuration and chat streaming",
+      "name": "LLM"
     },
     {
       "description": "Plugin install/manage/manifest/readme",

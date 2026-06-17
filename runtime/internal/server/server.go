@@ -48,6 +48,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/v1/plugin-groups", s.handlePluginGroups)
 	s.mux.HandleFunc("/v1/dicts/", s.handleDictByPath)
 	s.mux.HandleFunc("/v1/dicts", s.handleDicts)
+	s.mux.HandleFunc("/v1/llm/chat/stream", s.handleLLMChatStream)
 	s.mux.HandleFunc("/v1/plugins/install-orbit", s.handleInstallOrbit)
 	s.mux.HandleFunc("/v1/plugins/market/", s.handlePluginsMarket)
 	s.mux.HandleFunc("/v1/plugins/market", s.handlePluginsMarket)

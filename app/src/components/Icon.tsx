@@ -23,6 +23,8 @@ export type IconName =
   | "image"
   | "share"
   | "ai"
+  | "brain"
+  | "brian"
   | "close"
   | "eye-off"
   | "check"
@@ -394,6 +396,39 @@ export function Icon({
         className={className}
       >
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" />
+      </svg>
+    ),
+    brain: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+      >
+        <path d="M9.5 5.5a2.5 2.5 0 0 0-4.5 1.5v1a2.5 2.5 0 0 0 0 5v1a2.5 2.5 0 0 0 4.5 1.5" />
+        <path d="M14.5 5.5a2.5 2.5 0 0 1 4.5 1.5v1a2.5 2.5 0 0 1 0 5v1a2.5 2.5 0 0 1-4.5 1.5" />
+        <path d="M12 4v16" />
+        <path d="M9.5 8.5c.5 1 2 1.5 2.5 1.5s2-.5 2.5-1.5" />
+        <path d="M9.5 15.5c.5-1 2-1.5 2.5-1.5s2 .5 2.5 1.5" />
+      </svg>
+    ),
+    brian: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+      >
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 20c1.6-4 5.3-6 8-6s6.4 2 8 6" />
       </svg>
     ),
     close: (
