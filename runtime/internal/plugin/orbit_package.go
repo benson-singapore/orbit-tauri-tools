@@ -229,28 +229,36 @@ func (r *Registry) updateOrbitPackage(ctx context.Context, pluginID string, data
 		dir = filepath.Join(userDir, pluginID)
 	}
 
-	existingRaw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
-	if err != nil {
-		return nil, fmt.Errorf("read existing manifest: %w", err)
-	}
-
-	mergedRaw, err := mergeManifestForUpdate(existingRaw, incomingManifestRaw)
+	incoming, err := ParseManifestBytes(incomingManifestRaw)
 	if err != nil {
 		return nil, err
 	}
-	merged, err := ParseManifestBytes(mergedRaw)
-	if err != nil {
-		return nil, err
+	if incoming.ID != pluginID {
+		return nil, fmt.Errorf("package id %q does not match plugin %q", incoming.ID, pluginID)
 	}
-	merged.ID = pluginID
 
 	if err := extractPackageFilesFromZip(zr, dir); err != nil {
 		return nil, err
 	}
-	if err := SaveManifest(dir, merged); err != nil {
+	if err := saveManifestBytes(dir, incomingManifestRaw); err != nil {
 		return nil, err
 	}
-	if err := ValidateManifestOnDisk(dir, merged); err != nil {
+	if err := saveDefaultManifest(dir, incomingManifestRaw); err != nil {
+		return nil, err
+	}
+
+	for _, f := range zr.File {
+		rel := strings.TrimPrefix(filepath.ToSlash(f.Name), "./")
+		if rel != "checksums.txt" && filepath.Base(rel) != "checksums.txt" {
+			continue
+		}
+		if err := verifyChecksums(dir, f); err != nil {
+			return nil, err
+		}
+		break
+	}
+
+	if err := ValidateManifestOnDisk(dir, incoming); err != nil {
 		return nil, err
 	}
 
@@ -258,7 +266,7 @@ func (r *Registry) updateOrbitPackage(ctx context.Context, pluginID string, data
 	if !ok {
 		return nil, fmt.Errorf("plugin not found: %s", pluginID)
 	}
-	rec.Manifest = *merged
+	rec.Manifest = *incoming
 	rec.Manifest.Bundled = false
 	if err := r.upsertPlugin(ctx, rec); err != nil {
 		return nil, err

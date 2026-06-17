@@ -267,12 +267,22 @@ func (r *Registry) ListMarketPlugins() []*PluginRecord {
 }
 
 // InstallOrbitFromMarket downloads a .orbit package from the remote market API and installs it.
+// If the plugin is already installed, the package is applied as a full replace (same as update).
 func (r *Registry) InstallOrbitFromMarket(ctx context.Context, marketDownloader func(context.Context, string) ([]byte, error), marketID string) (*PluginRecord, error) {
 	data, err := marketDownloader(ctx, marketID)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := r.InstallOrbit(ctx, data)
+	_, m, _, err := parseOrbitZip(data)
+	if err != nil {
+		return nil, err
+	}
+	var rec *PluginRecord
+	if _, exists := r.Get(m.ID); exists {
+		rec, err = r.updateOrbitPackage(ctx, m.ID, data)
+	} else {
+		rec, err = r.InstallOrbit(ctx, data)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -287,7 +297,7 @@ func (r *Registry) InstallOrbitFromMarket(ctx context.Context, marketDownloader 
 	return r.UpdateManifest(ctx, rec.ID, &rec.Manifest)
 }
 
-// UpdateOrbitFromMarket downloads a newer .orbit package and updates package assets while merging manifest.
+// UpdateOrbitFromMarket downloads a newer .orbit package and fully replaces on-disk assets and manifest.
 func (r *Registry) UpdateOrbitFromMarket(ctx context.Context, marketDownloader func(context.Context, string) ([]byte, error), marketID, pluginID string) (*PluginRecord, error) {
 	pluginID = strings.TrimSpace(pluginID)
 	if pluginID == "" {

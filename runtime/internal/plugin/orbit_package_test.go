@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/orbit-tauri-tools/runtime/internal/market"
+	"github.com/orbit-tauri-tools/runtime/internal/store"
 )
 
 func TestExtractOrbitPackage_Juejin(t *testing.T) {
@@ -130,6 +131,91 @@ func TestExtractOrbitPackage_PreservesManifestBytesForChecksum(t *testing.T) {
 	}
 	if !bytes.Equal(onDisk, manifestRaw) {
 		t.Fatalf("manifest.json bytes were re-serialized")
+	}
+}
+
+func TestUpdateOrbitPackage_ReplacesManifest(t *testing.T) {
+	manifestV1 := []byte(`{"id":"update-test","name":"Update Test","version":"1.0.0","mediaType":"article","source":"wasm","capabilities":["feed"],"config":{"channels":[{"id":"old","label":"Old","route":"list"}],"refreshInterval":999,"wasm":{"entry":"plugin.wasm"}},"meta":{"description":"old","icon":"text","color":"bg-blue-500","logoText":"U","logoImageUrl":"","marketCategory":"blog","categoryTag":"Test"}}`)
+	manifestV2 := []byte(`{"id":"update-test","name":"Update Test","version":"2.0.0","mediaType":"article","source":"wasm","capabilities":["feed"],"config":{"channels":[{"id":"new","label":"New","route":"list"}],"refreshInterval":1800,"wasm":{"entry":"plugin.wasm"}},"meta":{"description":"new","icon":"text","color":"bg-blue-500","logoText":"U","logoImageUrl":"","marketCategory":"blog","categoryTag":"Test"}}`)
+	wasmRaw := []byte("\x00asm\x01\x00\x00\x00")
+
+	buildPackage := func(manifest []byte) []byte {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		for name, data := range map[string][]byte{
+			"manifest.json": manifest,
+			"plugin.wasm":   wasmRaw,
+		} {
+			w, err := zw.Create(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.Write(data); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	m, dir, err := extractOrbitPackage(buildPackage(manifestV1))
+	if err != nil {
+		t.Fatalf("extractOrbitPackage: %v", err)
+	}
+	if m.Version != "1.0.0" {
+		t.Fatalf("expected version 1.0.0, got %q", m.Version)
+	}
+
+	st, err := store.Open()
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	reg := NewRegistry(st)
+	reg.setRecord(&PluginRecord{
+		Manifest:  *m,
+		Active:    true,
+		SortOrder: 1000,
+		Installed: 1,
+	})
+	reg.setPluginDir(m.ID, dir)
+
+	updated, err := reg.updateOrbitPackage(context.Background(), m.ID, buildPackage(manifestV2))
+	if err != nil {
+		t.Fatalf("updateOrbitPackage: %v", err)
+	}
+	if updated.Version != "2.0.0" {
+		t.Fatalf("expected version 2.0.0, got %q", updated.Version)
+	}
+	if updated.Config.RefreshInterval != 1800 {
+		t.Fatalf("expected refreshInterval 1800, got %d", updated.Config.RefreshInterval)
+	}
+	if len(updated.Config.Channels) != 1 || updated.Config.Channels[0].ID != "new" {
+		t.Fatalf("expected new channel, got %+v", updated.Config.Channels)
+	}
+	if updated.Meta.Description != "new" {
+		t.Fatalf("expected description new, got %q", updated.Meta.Description)
+	}
+
+	onDisk, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(onDisk, manifestV2) {
+		t.Fatalf("manifest.json was not replaced with incoming bytes")
+	}
+	defaultManifest, err := os.ReadFile(filepath.Join(dir, defaultManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(defaultManifest, manifestV2) {
+		t.Fatalf("manifest.default.json was not replaced with incoming bytes")
 	}
 }
 

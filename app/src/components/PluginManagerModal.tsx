@@ -3,6 +3,23 @@ import { Icon } from "@/components/Icon";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginReadmeModal } from "@/components/PluginReadmeModal";
 import {
+  WasmChannelEditorModal,
+  createWasmChannelRow,
+  type WasmChannelEditorState,
+  type WasmChannelFormRow,
+} from "@/components/WasmChannelEditorModal";
+import {
+  WASM_FORM_TABS,
+  channelFeatureBadges,
+  channelFeedLimitDisplay,
+  featuresFromChannel,
+  featuresToChannel,
+  paramsFromRecord,
+  paramsToRecord,
+  validateFeaturesForm,
+  type WasmFormTab,
+} from "@/lib/wasmManifestForm";
+import {
   fetchMarketPlugins,
   fetchPluginCategoryCounts,
   fetchPluginTypeDicts,
@@ -20,7 +37,7 @@ import {
   readStoredMarketContentRating,
 } from "@/lib/marketContentRating";
 import { slugifyChannelId } from "@/lib/channelId";
-import { normalizeChannelStatus, type ChannelStatus } from "@/lib/channelStatus";
+import { normalizeChannelStatus } from "@/lib/channelStatus";
 import { resolveColorToHex } from "@/lib/pluginColor";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import {
@@ -94,63 +111,8 @@ function isChannelIdSyncedWithLabel(row: ChannelFormRow): boolean {
   return row.id === "main" && row.label === "全部";
 }
 
-type WasmChannelFormRow = {
-  _key: string;
-  id: string;
-  label: string;
-  route: string;
-  params: string;
-  featuresJson: string;
-  status: ChannelStatus;
-  idAuto: boolean;
-};
-
-function createWasmChannelRow(
-  partial: Partial<
-    Pick<WasmChannelFormRow, "id" | "label" | "route" | "params" | "featuresJson" | "status">
-  > = {},
-  options?: { idAuto?: boolean },
-): WasmChannelFormRow {
-  const label = partial.label ?? "默认";
-  const idAuto = options?.idAuto ?? partial.id === undefined;
-  const id =
-    partial.id ??
-    (idAuto ? slugifyChannelId(label) || "main" : "main");
-  return {
-    _key: `wch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-    id,
-    label,
-    route: partial.route ?? "",
-    params: partial.params ?? "",
-    featuresJson: partial.featuresJson ?? "{}",
-    status: partial.status ?? "enabled",
-    idAuto,
-  };
-}
-
-function isWasmChannelIdSyncedWithLabel(row: WasmChannelFormRow): boolean {
-  if (row.idAuto) return true;
-  const slug = slugifyChannelId(row.label);
-  if (slug && row.id === slug) return true;
-  return row.id === "main" && row.label === "默认";
-}
-
 function formatPrettyJson(input: string): string {
   return JSON.stringify(JSON.parse(input), null, 2);
-}
-
-function parseWasmChannelParams(paramsStr: string): Record<string, string> | undefined {
-  const trimmed = paramsStr.trim();
-  if (!trimmed) return undefined;
-  const parsed = JSON.parse(trimmed) as unknown;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("params 须为 JSON 对象");
-  }
-  const result: Record<string, string> = {};
-  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
-    result[k] = String(v);
-  }
-  return result;
 }
 
 interface PluginManagerModalProps {
@@ -822,210 +784,6 @@ function PluginSection(props: PluginSectionProps) {
   );
 }
 
-type WasmChannelEditorState =
-  | { mode: "add" }
-  | { mode: "edit"; key: string };
-
-function WasmChannelEditorModal({
-  theme,
-  mode,
-  initialRow,
-  onClose,
-  onSave,
-}: {
-  theme: ThemeMode;
-  mode: "add" | "edit";
-  initialRow: WasmChannelFormRow;
-  onClose: () => void;
-  onSave: (row: WasmChannelFormRow) => void;
-}) {
-  const isDark = theme === "dark";
-  const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
-  const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
-  const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
-  const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
-  const inputBorder = isDark ? "border-neutral-800" : "border-neutral-200";
-  const inputText = isDark ? "text-neutral-100 placeholder:text-neutral-500" : "text-neutral-900 placeholder:text-neutral-400";
-
-  const [draft, setDraft] = useState<WasmChannelFormRow>(initialRow);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSave = () => {
-    const id = draft.id.trim();
-    const label = draft.label.trim();
-    const route = draft.route.trim();
-
-    if (!id || !label || !route) {
-      setError("请填写 ID、名称与 route");
-      return;
-    }
-    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(id)) {
-      setError(`频道 ID「${id}」格式无效`);
-      return;
-    }
-    try {
-      if (draft.params.trim()) {
-        parseWasmChannelParams(draft.params);
-      }
-      if (draft.featuresJson.trim()) {
-        JSON.parse(draft.featuresJson);
-      }
-    } catch (e) {
-      setError(`params 无效：${e instanceof Error ? e.message : String(e)}`);
-      return;
-    }
-
-    onSave({
-      ...draft,
-      id,
-      label,
-      route,
-    });
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-[80] bg-black/55 backdrop-blur-sm flex items-center justify-center p-6"
-      onClick={e => {
-        e.stopPropagation();
-        onClose();
-      }}
-    >
-      <div
-        className={`w-full max-w-lg rounded-[24px] overflow-hidden border shadow-2xl ${panelBg} ${subtleBorder}`}
-        onClick={e => e.stopPropagation()}
-      >
-        <div className={`px-6 py-4 border-b ${subtleBorder}`}>
-          <h4 className="text-sm font-semibold">{mode === "add" ? "添加频道" : "编辑频道"}</h4>
-          <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-            配置频道 ID、名称、route、params、状态与抓取数量上限
-          </p>
-        </div>
-
-        <div className="px-6 py-5 space-y-4 max-h-[min(520px,70vh)] overflow-y-auto">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-                显示名称
-              </label>
-              <input
-                value={draft.label}
-                onChange={e => {
-                  const v = e.target.value;
-                  setDraft(prev => {
-                    const slug = slugifyChannelId(v);
-                    const synced = isWasmChannelIdSyncedWithLabel(prev);
-                    return {
-                      ...prev,
-                      label: v,
-                      ...(synced && slug ? { id: slug, idAuto: true } : {}),
-                    };
-                  });
-                }}
-                placeholder="显示名称"
-                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-              />
-            </div>
-            <div className="space-y-1">
-              <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-                ID
-              </label>
-              <input
-                value={draft.id}
-                onChange={e => {
-                  const v = e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "");
-                  setDraft(prev => ({ ...prev, id: v, idAuto: false }));
-                }}
-                placeholder="id（根据名称自动生成）"
-                className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText} ${
-                  draft.idAuto ? (isDark ? "text-neutral-400" : "text-neutral-500") : ""
-                }`}
-              />
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-              route
-            </label>
-            <input
-              value={draft.route}
-              onChange={e => setDraft(prev => ({ ...prev, route: e.target.value }))}
-              placeholder="/plugin/route"
-              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-              params（JSON 对象，可选）
-            </label>
-            <input
-              value={draft.params}
-              onChange={e => setDraft(prev => ({ ...prev, params: e.target.value }))}
-              placeholder='{"category":"frontend"}'
-              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 font-mono ${inputBg} ${inputBorder} ${inputText}`}
-            />
-          </div>
-
-          <div className="space-y-1">
-            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-              状态 status（默认 enabled）
-            </label>
-            <StyledSelect
-              value={draft.status}
-              onChange={e =>
-                setDraft(prev => ({
-                  ...prev,
-                  status: normalizeChannelStatus(e.target.value),
-                }))
-              }
-              className={`${inputBg} ${inputBorder} ${inputText}`}
-            >
-              <option value="enabled">启用</option>
-              <option value="disabled">停用</option>
-            </StyledSelect>
-          </div>
-
-          <div className="space-y-1">
-            <label className={`text-[10px] font-semibold ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-              features（JSON，v2 能力声明）
-            </label>
-            <textarea
-              value={draft.featuresJson}
-              onChange={e => setDraft(prev => ({ ...prev, featuresJson: e.target.value }))}
-              rows={8}
-              placeholder='{"feed":{"persist":true,"refresh":true},"detail":{"route":"/detail/:id"}}'
-              className={`w-full px-3 py-2 text-xs rounded-xl border outline-none focus:border-[#5856D6]/50 font-mono ${inputBg} ${inputBorder} ${inputText}`}
-            />
-          </div>
-
-          {error ? <p className="text-xs text-rose-500">{error}</p> : null}
-        </div>
-
-        <div className={`px-6 py-4 flex items-center justify-end gap-3 border-t ${subtleBorder} ${mutedBg}`}>
-          <button
-            type="button"
-            onClick={onClose}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold border ${subtleBorder} ${
-              isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
-            }`}
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className={`px-4 py-2 rounded-xl text-xs font-semibold text-white ${PRIMARY}`}
-          >
-            {mode === "add" ? "添加" : "保存"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function WasmManifestEditorModal({
   theme,
   plugin,
@@ -1051,6 +809,7 @@ function WasmManifestEditorModal({
   const [restoring, setRestoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"form" | "json">("form");
+  const [formTab, setFormTab] = useState<WasmFormTab>("channels");
   const [jsonText, setJsonText] = useState("");
   const [isEditingJson, setIsEditingJson] = useState(false);
 
@@ -1107,7 +866,7 @@ function WasmManifestEditorModal({
           route?: string;
           params?: Record<string, string>;
           status?: string;
-          features?: Record<string, unknown>;
+          features?: import("@/types").ChannelFeatures;
         }[])
       : [];
     if (rawChannels.length > 0) {
@@ -1118,8 +877,8 @@ function WasmManifestEditorModal({
               id: String(ch.id ?? `channel-${i + 1}`).trim(),
               label: String(ch.label ?? ch.id ?? `频道 ${i + 1}`).trim(),
               route: String(ch.route ?? "").trim(),
-              params: ch.params ? JSON.stringify(ch.params) : "",
-              featuresJson: ch.features ? JSON.stringify(ch.features, null, 2) : "{}",
+              paramRows: paramsFromRecord(ch.params),
+              features: featuresFromChannel(ch.features),
               status: normalizeChannelStatus(ch.status),
             },
             { idAuto: false },
@@ -1215,18 +974,16 @@ function WasmManifestEditorModal({
         label: ch.label.trim(),
         route: ch.route.trim(),
       };
-      const params = parseWasmChannelParams(ch.params);
+      const params = paramsToRecord(ch.paramRows);
       if (params && Object.keys(params).length > 0) {
         item.params = params;
       }
       if (ch.status === "disabled") {
         item.status = "disabled";
       }
-      const featuresText = ch.featuresJson.trim();
-      if (featuresText && featuresText !== "{}") {
-        item.features = JSON.parse(featuresText);
-      } else {
-        item.features = {};
+      const features = featuresToChannel(ch.features);
+      if (features) {
+        item.features = features;
       }
       return item;
     });
@@ -1411,7 +1168,6 @@ function WasmManifestEditorModal({
       id: ch.id.trim(),
       label: ch.label.trim(),
       route: ch.route.trim(),
-      params: ch.params,
     }));
 
     if (normalizedChannels.length === 0) {
@@ -1423,13 +1179,6 @@ function WasmManifestEditorModal({
       }
       if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(ch.id)) {
         return `频道 ID「${ch.id}」格式无效`;
-      }
-      try {
-        if (ch.params.trim()) {
-          parseWasmChannelParams(ch.params);
-        }
-      } catch (e) {
-        return `频道「${ch.label}」的 params 无效：${e instanceof Error ? e.message : String(e)}`;
       }
     }
 
@@ -1448,12 +1197,9 @@ function WasmManifestEditorModal({
     }
 
     for (const ch of channels) {
-      if (ch.featuresJson.trim()) {
-        try {
-          JSON.parse(ch.featuresJson);
-        } catch {
-          return `频道「${ch.label}」的 features JSON 无效`;
-        }
+      const featureError = validateFeaturesForm(ch.features);
+      if (featureError) {
+        return `频道「${ch.label}」：${featureError}`;
       }
     }
 
@@ -1601,235 +1347,406 @@ function WasmManifestEditorModal({
                 加载 manifest.json…
               </p>
             ) : viewMode === "form" ? (
-              <div className="flex-1 min-h-0 overflow-y-auto p-7">
-                <div className="max-w-3xl mx-auto w-full">
-                  <div className="flex items-center gap-2 mb-5">
-                    <div className="w-1 h-4 rounded-full bg-[#5856D6]" />
-                    <h4 className="text-sm font-bold">核心配置</h4>
-                  </div>
+              <div className="flex-1 min-h-0 flex">
+                <aside className={`w-52 shrink-0 border-r ${subtleBorder} p-4 space-y-1 overflow-y-auto`}>
+                  {WASM_FORM_TABS.filter(
+                    tab =>
+                      tab.id !== "variables" ||
+                      Object.keys(pluginVariableSchema).length > 0 ||
+                      hasSecretsApiKey,
+                  ).map(tab => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setFormTab(tab.id)}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-semibold transition-colors ${
+                        formTab === tab.id
+                          ? isDark
+                            ? "bg-neutral-800 text-[#B7B5FF]"
+                            : "bg-[#5856D6]/10 text-[#5856D6]"
+                          : isDark
+                            ? "text-neutral-400 hover:bg-neutral-900/50 hover:text-neutral-200"
+                            : "text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700"
+                      }`}
+                    >
+                      <Icon name={tab.icon} className="w-4 h-4 shrink-0" />
+                      {tab.label}
+                    </button>
+                  ))}
+                </aside>
 
-                  <div className="space-y-5">
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                          频道 (config.channels)
-                        </label>
-                        <button
-                          type="button"
-                          onClick={() => setChannelEditor({ mode: "add" })}
-                          className="text-[11px] font-semibold text-[#5856D6] hover:underline"
-                        >
-                          + 添加频道
-                        </button>
-                      </div>
-                      <div className={`rounded-2xl border overflow-hidden ${subtleBorder}`}>
-                        <table className="w-full text-xs">
-                          <thead>
-                            <tr className={`border-b ${subtleBorder} ${mutedBg}`}>
-                              <th className={`px-3 py-2.5 w-10 ${isDark ? "text-neutral-400" : "text-neutral-500"}`} aria-label="排序" />
-                              <th className={`px-4 py-2.5 text-left font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                                名称
-                              </th>
-                              <th className={`px-4 py-2.5 text-left font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                                route
-                              </th>
-                              <th className={`px-4 py-2.5 text-left font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                                抓取数量上限
-                              </th>
-                              <th className={`px-4 py-2.5 text-left font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                                状态
-                              </th>
-                              <th className={`px-4 py-2.5 text-right font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                                操作
-                              </th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {channels.map((ch, index) => {
-                              const isChannelEnabled = ch.status !== "disabled";
-                              return (
-                              <tr
-                                key={ch._key}
-                                className={`border-b last:border-b-0 ${subtleBorder} transition-colors ${
-                                  dragOverChannelKey === ch._key
-                                    ? "ring-2 ring-inset ring-[#5856D6]/35"
-                                    : isDark
-                                      ? "hover:bg-neutral-900/40"
-                                      : "hover:bg-neutral-50"
-                                } ${draggingChannelKey === ch._key ? "opacity-50" : ""}`}
-                                onDragOver={event => {
-                                  event.preventDefault();
-                                  setDragOverChannelKey(ch._key);
-                                }}
-                                onDragLeave={() => {
-                                  if (dragOverChannelKey === ch._key) {
-                                    setDragOverChannelKey(null);
-                                  }
-                                }}
-                                onDrop={event => {
-                                  event.preventDefault();
-                                  handleChannelDropReorder(ch._key);
-                                }}
-                              >
-                                <td className="px-3 py-3">
-                                  <button
-                                    type="button"
-                                    draggable
-                                    onDragStart={() => setDraggingChannelKey(ch._key)}
-                                    onDragEnd={() => {
-                                      setDraggingChannelKey(null);
-                                      setDragOverChannelKey(null);
-                                    }}
-                                    className={`px-2 py-1.5 text-[11px] rounded-lg border cursor-grab active:cursor-grabbing ${
-                                      isDark
-                                        ? "border-neutral-700 text-neutral-400 hover:bg-neutral-800"
-                                        : "border-neutral-200 text-neutral-500 hover:bg-white"
-                                    }`}
-                                    title="拖拽排序"
-                                    aria-label="拖拽排序"
-                                  >
-                                    <span aria-hidden className="text-[10px] leading-none">⋮⋮</span>
-                                  </button>
-                                </td>
-                                <td className="px-4 py-3 font-medium">{ch.label.trim() || "—"}</td>
-                                <td className={`px-4 py-3 font-mono truncate max-w-[240px] ${isDark ? "text-neutral-300" : "text-neutral-600"}`}>
-                                  {ch.route.trim() || "—"}
-                                </td>
-                                <td className="px-4 py-3 font-mono text-[10px]">
-                                  {ch.featuresJson.trim() && ch.featuresJson.trim() !== "{}" ? "v2" : "默认"}
-                                </td>
-                                <td className="px-4 py-3">
-                                  <div className="flex flex-nowrap items-center gap-1.5 whitespace-nowrap">
-                                    <button
-                                      type="button"
-                                      role="switch"
-                                      aria-checked={isChannelEnabled}
-                                      aria-label={isChannelEnabled ? "停用频道" : "启用频道"}
-                                      onClick={() => {
-                                        setChannels(prev =>
-                                          prev.map(row =>
-                                            row._key === ch._key
-                                              ? {
-                                                  ...row,
-                                                  status: isChannelEnabled ? "disabled" : "enabled",
-                                                }
-                                              : row,
-                                          ),
-                                        );
-                                      }}
-                                      className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
-                                        isChannelEnabled
-                                          ? "bg-emerald-500"
-                                          : isDark
-                                            ? "bg-neutral-600"
-                                            : "bg-neutral-300"
-                                      }`}
-                                      title={isChannelEnabled ? "点击停用" : "点击启用"}
-                                    >
-                                      <span
-                                        className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                                          isChannelEnabled ? "translate-x-3.5" : "translate-x-0.5"
-                                        }`}
-                                      />
-                                    </button>
-                                    {(() => {
-                                      try {
-                                        const f = JSON.parse(ch.featuresJson || "{}") as { feed?: { persist?: boolean } };
-                                        return f.feed?.persist === false;
-                                      } catch {
-                                        return false;
-                                      }
-                                    })() && (
-                                      <span
-                                        title="dynamic: true"
-                                        className={`inline-flex shrink-0 items-center px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${
-                                          isDark
-                                            ? "bg-amber-950/40 text-amber-400"
-                                            : "bg-amber-50 text-amber-700"
-                                        }`}
-                                      >
-                                        动态
-                                      </span>
-                                    )}
-                                  </div>
-                                </td>
-                                <td className="px-4 py-3">
-                                  <div className="flex items-center justify-end gap-3">
-                                    <button
-                                      type="button"
-                                      onClick={() => setChannelEditor({ mode: "edit", key: ch._key })}
-                                      className="text-[11px] font-semibold text-[#5856D6] hover:underline"
-                                    >
-                                      编辑
-                                    </button>
-                                    {channels.length > 1 && (
-                                      <button
-                                        type="button"
-                                        onClick={() => setChannels(prev => prev.filter((_, i) => i !== index))}
-                                        className="text-[11px] text-rose-500 hover:underline"
-                                      >
-                                        删除
-                                      </button>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                          默认频道 defaultChannel
-                        </label>
-                        <StyledSelect
-                          value={defaultChannel}
-                          onChange={e => setDefaultChannel(e.target.value)}
-                          className={`${inputBg} ${inputBorder} ${inputText}`}
-                        >
-                          <option value="">（不指定）</option>
-                          {channels.map(ch => (
-                            <option key={ch._key} value={ch.id.trim()}>
-                              {ch.label.trim() || ch.id.trim()}
-                            </option>
-                          ))}
-                        </StyledSelect>
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                          刷新间隔 refreshInterval（秒）
-                        </label>
-                        <input
-                          value={refreshInterval}
-                          onChange={e => setRefreshInterval(e.target.value)}
-                          placeholder="3600"
-                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                        />
-                      </div>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                        User-Agent（可选）
-                      </label>
-                      <input
-                        value={userAgent}
-                        onChange={e => setUserAgent(e.target.value)}
-                        placeholder="OrbitReader/0.1"
-                        className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                      />
-                    </div>
-
-                    {(Object.keys(pluginVariableSchema).length > 0 || hasSecretsApiKey) && (
-                      <div className={`p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
-                        <div className="flex items-center gap-2 mb-5">
-                          <div className="w-1 h-4 rounded-full bg-amber-500" />
-                          <h4 className="text-sm font-bold">用户变量（config.variables）</h4>
+                <div className="flex-1 min-h-0 overflow-y-auto p-7">
+                  <div className="max-w-4xl w-full space-y-5">
+                    {formTab === "channels" ? (
+                      <>
+                        <div>
+                          <h4 className="text-sm font-bold mb-1">频道配置</h4>
+                          <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                            config.channels — 每个频道包含 id、label、route、params 与 features
+                          </p>
                         </div>
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              频道列表
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => setChannelEditor({ mode: "add" })}
+                              className="text-[11px] font-semibold text-[#5856D6] hover:underline"
+                            >
+                              + 添加频道
+                            </button>
+                          </div>
+                          <div className={`rounded-2xl border overflow-hidden ${subtleBorder}`}>
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className={`border-b ${subtleBorder} ${mutedBg}`}>
+                                  <th className={`px-3 py-2.5 w-10 ${isDark ? "text-neutral-400" : "text-neutral-500"}`} aria-label="排序" />
+                                  <th className={`px-4 py-2.5 text-left font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                    名称 / ID
+                                  </th>
+                                  <th className={`px-4 py-2.5 text-left font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                    route
+                                  </th>
+                                  <th className={`px-4 py-2.5 text-left font-semibold w-24 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                    limit
+                                  </th>
+                                  <th className={`px-4 py-2.5 text-left font-semibold w-32 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                    能力
+                                  </th>
+                                  <th className={`px-4 py-2.5 text-left font-semibold w-20 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                    状态
+                                  </th>
+                                  <th className={`px-4 py-2.5 text-right font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                    操作
+                                  </th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {channels.map((ch, index) => {
+                                  const isChannelEnabled = ch.status !== "disabled";
+                                  const badges = channelFeatureBadges(ch.features);
+                                  return (
+                                    <tr
+                                      key={ch._key}
+                                      className={`border-b last:border-b-0 ${subtleBorder} transition-colors ${
+                                        dragOverChannelKey === ch._key
+                                          ? "ring-2 ring-inset ring-[#5856D6]/35"
+                                          : isDark
+                                            ? "hover:bg-neutral-900/40"
+                                            : "hover:bg-neutral-50"
+                                      } ${draggingChannelKey === ch._key ? "opacity-50" : ""}`}
+                                      onDragOver={event => {
+                                        event.preventDefault();
+                                        setDragOverChannelKey(ch._key);
+                                      }}
+                                      onDragLeave={() => {
+                                        if (dragOverChannelKey === ch._key) {
+                                          setDragOverChannelKey(null);
+                                        }
+                                      }}
+                                      onDrop={event => {
+                                        event.preventDefault();
+                                        handleChannelDropReorder(ch._key);
+                                      }}
+                                    >
+                                      <td className="px-3 py-3">
+                                        <button
+                                          type="button"
+                                          draggable
+                                          onDragStart={() => setDraggingChannelKey(ch._key)}
+                                          onDragEnd={() => {
+                                            setDraggingChannelKey(null);
+                                            setDragOverChannelKey(null);
+                                          }}
+                                          className={`px-2 py-1.5 text-[11px] rounded-lg border cursor-grab active:cursor-grabbing ${
+                                            isDark
+                                              ? "border-neutral-700 text-neutral-400 hover:bg-neutral-800"
+                                              : "border-neutral-200 text-neutral-500 hover:bg-white"
+                                          }`}
+                                          title="拖拽排序"
+                                          aria-label="拖拽排序"
+                                        >
+                                          <span aria-hidden className="text-[10px] leading-none">⋮⋮</span>
+                                        </button>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="font-medium">{ch.label.trim() || "—"}</div>
+                                        <div className={`font-mono text-[10px] mt-0.5 ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                                          {ch.id.trim() || "—"}
+                                        </div>
+                                      </td>
+                                      <td className={`px-4 py-3 font-mono truncate max-w-[200px] ${isDark ? "text-neutral-300" : "text-neutral-600"}`}>
+                                        {ch.route.trim() || "—"}
+                                      </td>
+                                      <td className="px-4 py-3 font-mono text-[10px]">
+                                        {channelFeedLimitDisplay(ch.features)}
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex flex-wrap gap-1">
+                                          {badges.length > 0 ? (
+                                            badges.map(badge => (
+                                              <span
+                                                key={badge}
+                                                className={`inline-flex px-1.5 py-0.5 rounded-full text-[9px] font-semibold ${
+                                                  badge === "动态"
+                                                    ? isDark
+                                                      ? "bg-amber-950/40 text-amber-400"
+                                                      : "bg-amber-50 text-amber-700"
+                                                    : isDark
+                                                      ? "bg-neutral-800 text-neutral-300"
+                                                      : "bg-neutral-100 text-neutral-600"
+                                                }`}
+                                              >
+                                                {badge}
+                                              </span>
+                                            ))
+                                          ) : (
+                                            <span className={`text-[10px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                                              默认
+                                            </span>
+                                          )}
+                                        </div>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <button
+                                          type="button"
+                                          role="switch"
+                                          aria-checked={isChannelEnabled}
+                                          aria-label={isChannelEnabled ? "停用频道" : "启用频道"}
+                                          onClick={() => {
+                                            setChannels(prev =>
+                                              prev.map(row =>
+                                                row._key === ch._key
+                                                  ? {
+                                                      ...row,
+                                                      status: isChannelEnabled ? "disabled" : "enabled",
+                                                    }
+                                                  : row,
+                                              ),
+                                            );
+                                          }}
+                                          className={`relative inline-flex h-4 w-7 shrink-0 items-center rounded-full transition-colors cursor-pointer ${
+                                            isChannelEnabled
+                                              ? "bg-emerald-500"
+                                              : isDark
+                                                ? "bg-neutral-600"
+                                                : "bg-neutral-300"
+                                          }`}
+                                        >
+                                          <span
+                                            className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
+                                              isChannelEnabled ? "translate-x-3.5" : "translate-x-0.5"
+                                            }`}
+                                          />
+                                        </button>
+                                      </td>
+                                      <td className="px-4 py-3">
+                                        <div className="flex items-center justify-end gap-3">
+                                          <button
+                                            type="button"
+                                            onClick={() => setChannelEditor({ mode: "edit", key: ch._key })}
+                                            className="text-[11px] font-semibold text-[#5856D6] hover:underline"
+                                          >
+                                            编辑
+                                          </button>
+                                          {channels.length > 1 ? (
+                                            <button
+                                              type="button"
+                                              onClick={() => setChannels(prev => prev.filter((_, i) => i !== index))}
+                                              className="text-[11px] text-rose-500 hover:underline"
+                                            >
+                                              删除
+                                            </button>
+                                          ) : null}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        <div className="space-y-1.5 max-w-sm">
+                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                            默认频道 defaultChannel
+                          </label>
+                          <StyledSelect
+                            value={defaultChannel}
+                            onChange={e => setDefaultChannel(e.target.value)}
+                            className={`${inputBg} ${inputBorder} ${inputText}`}
+                          >
+                            <option value="">（不指定）</option>
+                            {channels.map(ch => (
+                              <option key={ch._key} value={ch.id.trim()}>
+                                {ch.label.trim() || ch.id.trim()}
+                              </option>
+                            ))}
+                          </StyledSelect>
+                        </div>
+                      </>
+                    ) : null}
+
+                    {formTab === "runtime" ? (
+                      <>
+                        <div>
+                          <h4 className="text-sm font-bold mb-1">运行时参数</h4>
+                          <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                            config.refreshInterval、userAgent、executionMode 与 config.wasm
+                          </p>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              刷新间隔 refreshInterval（秒）
+                            </label>
+                            <input
+                              value={refreshInterval}
+                              onChange={e => setRefreshInterval(e.target.value)}
+                              placeholder="3600"
+                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            />
+                          </div>
+                          <div className="space-y-1.5 sm:col-span-2">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              User-Agent（可选）
+                            </label>
+                            <input
+                              value={userAgent}
+                              onChange={e => setUserAgent(e.target.value)}
+                              placeholder="OrbitReader/0.1"
+                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                            />
+                          </div>
+                        </div>
+
+                        <div className={`p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
+                          <h5 className="text-xs font-bold mb-4">WASM 运行时 (config.wasm)</h5>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                入口文件 entry
+                              </label>
+                              <input
+                                value={wasmEntry}
+                                onChange={e => setWasmEntry(e.target.value)}
+                                placeholder="main.wasm.br"
+                                className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                执行模式 executionMode
+                              </label>
+                              <StyledSelect
+                                value={executionMode}
+                                onChange={e => setExecutionMode(e.target.value)}
+                                className={`${inputBg} ${inputBorder} ${inputText}`}
+                              >
+                                <option value="wasm">wasm</option>
+                                <option value="browser">browser</option>
+                                <option value="hybrid">hybrid</option>
+                              </StyledSelect>
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                超时 timeoutMs（毫秒）
+                              </label>
+                              <input
+                                value={wasmTimeoutMs}
+                                onChange={e => setWasmTimeoutMs(e.target.value)}
+                                placeholder="30000"
+                                className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                内存上限 maxMemoryMB
+                              </label>
+                              <input
+                                value={wasmMaxMemoryMB}
+                                onChange={e => setWasmMaxMemoryMB(e.target.value)}
+                                placeholder="64"
+                                className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+
+                    {formTab === "basic" ? (
+                      <>
+                        <div>
+                          <h4 className="text-sm font-bold mb-1">插件信息</h4>
+                          <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                            manifest.name、id（只读）与 mediaType
+                          </p>
+                        </div>
+
+                        <div className="space-y-1.5">
+                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                            插件名称 name
+                          </label>
+                          <input
+                            value={pluginName}
+                            onChange={e => setPluginName(e.target.value)}
+                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div className="space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              插件 ID id（只读）
+                            </label>
+                            <input
+                              value={plugin.id}
+                              readOnly
+                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none ${inputBg} ${inputBorder} ${
+                                isDark ? "text-neutral-500" : "text-neutral-400"
+                              }`}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                              媒体类型 mediaType
+                            </label>
+                            <StyledSelect
+                              value={mediaType}
+                              onChange={e =>
+                                setMediaType(
+                                  e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>,
+                                )
+                              }
+                              className={`${inputBg} ${inputBorder} ${inputText}`}
+                            >
+                              <option value="article">article</option>
+                              <option value="manga">manga</option>
+                              <option value="image">image</option>
+                              <option value="video">video</option>
+                              <option value="audio">audio</option>
+                              <option value="rating">rating</option>
+                            </StyledSelect>
+                          </div>
+                        </div>
+                      </>
+                    ) : null}
+
+                    {formTab === "variables" ? (
+                      <>
+                        <div>
+                          <h4 className="text-sm font-bold mb-1">用户变量</h4>
+                          <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                            config.variables — 用户填写的运行时变量值（schema 定义在 manifest 中）
+                          </p>
+                        </div>
+
                         <div className="space-y-4">
                           {Object.entries(pluginVariableSchema).map(([key, def]) => (
                             <div key={key} className="space-y-1.5">
@@ -1868,206 +1785,108 @@ function WasmManifestEditorModal({
                             </div>
                           ) : null}
                         </div>
-                      </div>
-                    )}
+                      </>
+                    ) : null}
 
-                    <div className={`mt-6 p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
-                      <div className="flex items-center gap-2 mb-5">
-                        <div className="w-1 h-4 rounded-full bg-emerald-500" />
-                        <h4 className="text-sm font-bold">WASM 运行时</h4>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1.5">
-                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                            入口文件 config.wasm.entry
-                          </label>
-                          <input
-                            value={wasmEntry}
-                            onChange={e => setWasmEntry(e.target.value)}
-                            placeholder="main.wasm.br"
-                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                          />
+                    {formTab === "brand" ? (
+                      <>
+                        <div>
+                          <h4 className="text-sm font-bold mb-1">品牌与展示</h4>
+                          <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                            manifest.meta — 图标、颜色、分类与描述
+                          </p>
                         </div>
-                        <div className="space-y-1.5">
-                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                            执行模式 executionMode
-                          </label>
-                          <StyledSelect
-                            value={executionMode}
-                            onChange={e => setExecutionMode(e.target.value)}
-                            className={`${inputBg} ${inputBorder} ${inputText}`}
-                          >
-                            <option value="wasm">wasm</option>
-                            <option value="browser">browser</option>
-                            <option value="hybrid">hybrid</option>
-                          </StyledSelect>
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                            超时 timeoutMs（毫秒）
-                          </label>
-                          <input
-                            value={wasmTimeoutMs}
-                            onChange={e => setWasmTimeoutMs(e.target.value)}
-                            placeholder="30000"
-                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                            内存上限 maxMemoryMB
-                          </label>
-                          <input
-                            value={wasmMaxMemoryMB}
-                            onChange={e => setWasmMaxMemoryMB(e.target.value)}
-                            placeholder="64"
-                            className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                          />
-                        </div>
-                      </div>
-                    </div>
 
-                    <div className="space-y-1.5">
-                      <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                        插件名称
-                      </label>
-                      <input
-                        value={pluginName}
-                        onChange={e => setPluginName(e.target.value)}
-                        className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                      />
-                    </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                          插件 ID（只读）
-                        </label>
-                        <input
-                          value={plugin.id}
-                          readOnly
-                          className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none ${inputBg} ${inputBorder} ${
-                            isDark ? "text-neutral-500" : "text-neutral-400"
-                          }`}
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                          媒体类型 mediaType
-                        </label>
-                        <StyledSelect
-                          value={mediaType}
-                          onChange={e =>
-                            setMediaType(
-                              e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>,
-                            )
-                          }
-                          className={`${inputBg} ${inputBorder} ${inputText}`}
-                        >
-                          <option value="article">article</option>
-                          <option value="manga">manga</option>
-                          <option value="image">image</option>
-                          <option value="video">video</option>
-                          <option value="audio">audio</option>
-                          <option value="rating">rating</option>
-                        </StyledSelect>
-                      </div>
-                    </div>
-
-                    <div className={`mt-2 p-6 rounded-[24px] border ${subtleBorder} ${isDark ? "bg-neutral-950/20" : "bg-neutral-50/60"}`}>
-                      <div className="flex items-center gap-2 mb-5">
-                        <div className="w-1 h-4 rounded-full bg-orange-500" />
-                        <h4 className="text-sm font-bold">品牌与展示</h4>
-                      </div>
-                      <div className="flex flex-col md:flex-row md:items-start gap-6">
-                        <div className="shrink-0 w-full md:w-[200px]">
-                          <PluginAvatar
-                            plugin={{
-                              name: pluginName || plugin.name,
-                              color,
-                              iconUrl: logoImageUrl,
-                              logoImageUrl,
-                            }}
-                            className="w-16 h-16 rounded-2xl shadow-lg"
-                            textClassName="text-2xl font-black"
-                          />
-                          <div className="mt-4 space-y-1.5">
-                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                              颜色
-                            </label>
-                            <div className="flex items-center gap-2">
+                        <div className="flex flex-col md:flex-row md:items-start gap-6">
+                          <div className="shrink-0 w-full md:w-[200px]">
+                            <PluginAvatar
+                              plugin={{
+                                name: pluginName || plugin.name,
+                                color,
+                                iconUrl: logoImageUrl,
+                                logoImageUrl,
+                              }}
+                              className="w-16 h-16 rounded-2xl shadow-lg"
+                              textClassName="text-2xl font-black"
+                            />
+                            <div className="mt-4 space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                颜色 color
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="color"
+                                  value={resolveColorToHex(color)}
+                                  onChange={e => setColor(e.target.value)}
+                                  className={COLOR_PICKER_CLASS}
+                                />
+                                <input
+                                  value={color}
+                                  onChange={e => setColor(e.target.value)}
+                                  placeholder="#7c3aed"
+                                  className={`w-[88px] shrink-0 px-2.5 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                                />
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                排版分类 marketCategory
+                              </label>
+                              <StyledSelect
+                                value={marketCategory}
+                                onChange={e =>
+                                  setMarketCategory(
+                                    e.target.value as Exclude<PluginMarketCategory, "all">,
+                                  )
+                                }
+                                className={`${inputBg} ${inputBorder} ${inputText}`}
+                              >
+                                <option value="blog">个人博客</option>
+                                <option value="news">新闻资讯</option>
+                                <option value="manga">二次元漫画</option>
+                                <option value="video">流媒体/视频</option>
+                                <option value="audio">有声播客</option>
+                              </StyledSelect>
+                            </div>
+                            <div className="space-y-1.5">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                分类标签 categoryTag
+                              </label>
                               <input
-                                type="color"
-                                value={resolveColorToHex(color)}
-                                onChange={e => setColor(e.target.value)}
-                                className={COLOR_PICKER_CLASS}
+                                value={categoryTag}
+                                onChange={e => setCategoryTag(e.target.value)}
+                                className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
                               />
+                            </div>
+                            <div className="space-y-1.5 sm:col-span-2">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                图标 URL logoImageUrl
+                              </label>
                               <input
-                                value={color}
-                                onChange={e => setColor(e.target.value)}
-                                placeholder="#7c3aed"
-                                className={`w-[88px] shrink-0 px-2.5 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                                value={logoImageUrl}
+                                onChange={e => setLogoImageUrl(e.target.value)}
+                                placeholder="https://example.com/icon.png"
+                                className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
+                              />
+                            </div>
+                            <div className="space-y-1.5 sm:col-span-2">
+                              <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                描述 description
+                              </label>
+                              <input
+                                value={description}
+                                onChange={e => setDescription(e.target.value)}
+                                className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
                               />
                             </div>
                           </div>
                         </div>
-                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div className="space-y-1.5">
-                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                              排版分类大区
-                            </label>
-                            <StyledSelect
-                              value={marketCategory}
-                              onChange={e =>
-                                setMarketCategory(
-                                  e.target.value as Exclude<PluginMarketCategory, "all">,
-                                )
-                              }
-                              className={`${inputBg} ${inputBorder} ${inputText}`}
-                            >
-                              <option value="blog">个人博客</option>
-                              <option value="news">新闻资讯</option>
-                              <option value="manga">二次元漫画</option>
-                              <option value="video">流媒体/视频</option>
-                              <option value="audio">有声播客</option>
-                            </StyledSelect>
-                          </div>
-                          <div className="space-y-1.5">
-                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                              分类标签
-                            </label>
-                            <input
-                              value={categoryTag}
-                              onChange={e => setCategoryTag(e.target.value)}
-                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                            />
-                          </div>
-                          <div className="space-y-1.5 sm:col-span-2">
-                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                              图标图片 URL（可选）
-                            </label>
-                            <input
-                              value={logoImageUrl}
-                              onChange={e => setLogoImageUrl(e.target.value)}
-                              placeholder="https://example.com/icon.png"
-                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                            />
-                          </div>
-                          <div className="space-y-1.5 sm:col-span-2">
-                            <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                              描述 description
-                            </label>
-                            <input
-                              value={description}
-                              onChange={e => setDescription(e.target.value)}
-                              className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    </div>
+                      </>
+                    ) : null}
 
-                    {error && <p className="text-xs text-rose-500 mt-2">{error}</p>}
+                    {error ? <p className="text-xs text-rose-500">{error}</p> : null}
                   </div>
                 </div>
               </div>
