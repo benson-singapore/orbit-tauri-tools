@@ -8,7 +8,7 @@ WEB_URL           ?= http://127.0.0.1:5173
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev dev-go dev-tauri dev-web open-web dev-sidecar \
-        build-runtime build check-go
+        build-runtime build check-go swagger swagger-check
 
 help: ## 显示命令列表
 	@echo "Orbit Reader — make targets (ORBIT_PORT=$(ORBIT_PORT))"
@@ -49,3 +49,9 @@ build: build-runtime ## 打正式安装包 (sidecar + 前端 + tauri build)
 
 check-go: ## 检查 Go 能否通过编译（不启动服务）
 	cd runtime && go build -o /dev/null ./cmd/orbit-runtime
+
+swagger: ## 生成 runtime OpenAPI 文档 (openapi.json)
+	cd runtime && go run ./cmd/gen-openapi > openapi.json
+
+swagger-check: ## 检查 runtime 路由是否都在 OpenAPI 里
+	cd runtime && go run ./cmd/gen-openapi --check > /dev/null

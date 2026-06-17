@@ -1,0 +1,1677 @@
+{
+  "info": {
+    "description": "Runtime HTTP API (served by orbit-tauri-tools runtime).",
+    "title": "Orbit Runtime API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.0.3",
+  "paths": {
+    "/health": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "version": "0.1.0"
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Health check",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/v1/dicts": {
+      "get": {
+        "description": "Use ?type=xxx to filter; or call /v1/dicts/{type} and /v1/dicts/{type}/{label}.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "id": 1,
+                      "label": "RSS",
+                      "type": "plugin_type",
+                      "value": "rss"
+                    }
+                  ]
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List dict items",
+        "tags": [
+          "Dicts"
+        ]
+      }
+    },
+    "/v1/dicts/{type}": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [
+                    {
+                      "id": 1,
+                      "label": "RSS",
+                      "type": "plugin_type",
+                      "value": "rss"
+                    }
+                  ]
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List dict items by type",
+        "tags": [
+          "Dicts"
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "type",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/v1/dicts/{type}/{label}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Delete dict item",
+        "tags": [
+          "Dicts"
+        ]
+      },
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "item": {
+                    "id": 1,
+                    "label": "RSS",
+                    "remarks": "",
+                    "type": "plugin_type",
+                    "value": "rss"
+                  }
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Get dict item",
+        "tags": [
+          "Dicts"
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "type",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        },
+        {
+          "in": "path",
+          "name": "label",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "remarks": "Updated remarks"
+              },
+              "schema": {
+                "properties": {
+                  "remarks": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Upsert dict item (patch)",
+        "tags": [
+          "Dicts"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "remarks": "RSS plugin type",
+                "value": "rss"
+              },
+              "schema": {
+                "properties": {
+                  "remarks": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "value"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Upsert dict item (replace)",
+        "tags": [
+          "Dicts"
+        ]
+      }
+    },
+    "/v1/feed": {
+      "get": {
+        "description": "Does not fetch remote feeds. Background scheduler refreshes stale plugins per refreshInterval.",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "plugin_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "count": 0,
+                  "items": [],
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Get feed items from SQLite cache (read-only)",
+        "tags": [
+          "Feed"
+        ]
+      }
+    },
+    "/v1/feed/item": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "plugin_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "item": {
+                    "id": "1",
+                    "title": "Example"
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Get a single feed item",
+        "tags": [
+          "Feed"
+        ]
+      }
+    },
+    "/v1/feed/read": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "channelId": "main",
+                "id": "native:1",
+                "pluginId": "demo"
+              },
+              "schema": {
+                "properties": {
+                  "channelId": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "pluginId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "id": "native:1",
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Mark feed item as read",
+        "tags": [
+          "Feed"
+        ]
+      }
+    },
+    "/v1/feed/refresh": {
+      "post": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Clear cached feed items for the plugin before fetching",
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "count": 0,
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Refresh feed for a plugin",
+        "tags": [
+          "Feed"
+        ]
+      }
+    },
+    "/v1/feed/unread": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "plugin_id",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "plugin_ids",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true,
+                  "unreadTotal": 0
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Count unread feed items",
+        "tags": [
+          "Feed"
+        ]
+      }
+    },
+    "/v1/images/proxy": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "url",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Proxy image by URL (with SSRF protection)",
+        "tags": [
+          "Images"
+        ]
+      }
+    },
+    "/v1/images/upload": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "image": {
+                      "deleteUrl": "https://...",
+                      "displayUrl": "https://...",
+                      "url": "https://i.imgbb.com/..."
+                    }
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Upload image file",
+        "tags": [
+          "Images"
+        ]
+      }
+    },
+    "/v1/images/upload-url": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "url": "https://example.com/image.png"
+              },
+              "schema": {
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "url"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "data": {
+                    "image": {
+                      "deleteUrl": "https://...",
+                      "displayUrl": "https://...",
+                      "url": "https://i.imgbb.com/..."
+                    }
+                  },
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Upload image by URL",
+        "tags": [
+          "Images"
+        ]
+      }
+    },
+    "/v1/plugin-groups": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "assignments": {},
+                  "collapsed": {},
+                  "groups": []
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Get plugin groups snapshot",
+        "tags": [
+          "Plugin Groups"
+        ]
+      },
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "assignments": {
+                  "demo": "default"
+                },
+                "collapsed": {
+                  "default": false
+                },
+                "groups": [
+                  {
+                    "id": "default",
+                    "label": "默认"
+                  }
+                ]
+              },
+              "schema": {
+                "properties": {
+                  "assignments": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  },
+                  "collapsed": {
+                    "additionalProperties": {
+                      "type": "boolean"
+                    },
+                    "type": "object"
+                  },
+                  "groups": {
+                    "items": {
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "label": {
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "assignments": {},
+                  "collapsed": {},
+                  "groups": []
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Save plugin groups snapshot",
+        "tags": [
+          "Plugin Groups"
+        ]
+      }
+    },
+    "/v1/plugins": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "plugins": [
+                    {
+                      "active": true,
+                      "icon": "rss",
+                      "id": "demo",
+                      "name": "Demo"
+                    }
+                  ]
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List plugins",
+        "tags": [
+          "Plugins"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "feedUrl": "https://example.com/feed.xml",
+                "id": "example",
+                "mediaType": "application/rss+xml",
+                "name": "Example Feed",
+                "refreshInterval": 60,
+                "source": "rss"
+              },
+              "schema": {
+                "properties": {
+                  "categoryTag": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "feedUrl": {
+                    "type": "string"
+                  },
+                  "icon": {
+                    "type": "string"
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "logoImageUrl": {
+                    "type": "string"
+                  },
+                  "logoText": {
+                    "type": "string"
+                  },
+                  "marketCategory": {
+                    "type": "string"
+                  },
+                  "mediaType": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "refreshInterval": {
+                    "type": "integer"
+                  },
+                  "source": {
+                    "type": "string"
+                  },
+                  "userAgent": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "plugin": {
+                    "id": "example"
+                  }
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Install plugin (RSS only)",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/v1/plugins/install-orbit": {
+      "post": {
+        "description": "Accepts multipart/form-data with field `file`, or raw body bytes.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "plugin": {
+                    "id": "example"
+                  }
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Install Orbit package (zip bytes or multipart)",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/v1/plugins/market": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "plugins": []
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "List market plugins (cached / installed from market)",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/v1/plugins/market/{marketId}/install": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "marketId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "plugin": {
+                    "id": "example"
+                  }
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Install plugin from market",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/v1/plugins/market/{marketId}/update": {
+      "parameters": [
+        {
+          "in": "path",
+          "name": "marketId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "pluginId": "example"
+              },
+              "schema": {
+                "properties": {
+                  "pluginId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "pluginId"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "plugin": {
+                    "id": "example"
+                  }
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Update plugin from market",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/v1/plugins/order": {
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "orderedIds": [
+                  "plugin-a",
+                  "plugin-b"
+                ]
+              },
+              "schema": {
+                "properties": {
+                  "orderedIds": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "orderedIds"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Reorder plugins",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/v1/plugins/resync": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Resync plugins registry from disk",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/v1/plugins/{id}": {
+      "delete": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Uninstall plugin",
+        "tags": [
+          "Plugins"
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "id",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "patch": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "active": true
+              },
+              "schema": {
+                "properties": {
+                  "active": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "active"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "plugin": {
+                    "active": true,
+                    "id": "example"
+                  }
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Set plugin active state",
+        "tags": [
+          "Plugins"
+        ]
+      }
+    },
+    "/v1/status": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "db": "ready",
+                  "ok": true,
+                  "runtime": "0.1.0",
+                  "sqlite_path": "/path/to/db.sqlite"
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime status",
+        "tags": [
+          "Health"
+        ]
+      }
+    },
+    "/v2/plugins/{pluginId}/variables": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "values": {}
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Plugin variables v2: get values (masked)",
+        "tags": [
+          "Plugin Variables v2"
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "pluginId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ],
+      "put": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "values": {
+                  "API_KEY": "******"
+                }
+              },
+              "schema": {
+                "properties": {
+                  "values": {
+                    "additionalProperties": {
+                      "type": "string"
+                    },
+                    "type": "object"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Plugin variables v2: save values",
+        "tags": [
+          "Plugin Variables v2"
+        ]
+      }
+    },
+    "/v2/plugins/{pluginId}/variables/schema": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "variables": []
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Plugin variables v2: get schema",
+        "tags": [
+          "Plugin Variables v2"
+        ]
+      },
+      "parameters": [
+        {
+          "in": "path",
+          "name": "pluginId",
+          "required": true,
+          "schema": {
+            "type": "string"
+          }
+        }
+      ]
+    },
+    "/v2/runtime/capabilities": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: capabilities",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/chapters": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [],
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: list chapters",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/clear-refresh": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: clear refresh queue",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/clear-refresh-chapters": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: clear chapters refresh queue",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/items": {
+      "get": {
+        "parameters": [
+          {
+            "in": "query",
+            "name": "plugin_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [],
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: list items",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/load-more": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: load more",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/load-more-chapters": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: load more chapters",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/open-chapter-detail": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: open chapter detail",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/open-chapters": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: open chapters",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/open-detail": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: open detail",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/refresh": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: refresh",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/refresh-chapters": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: refresh chapters",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    },
+    "/v2/runtime/search": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "items": [],
+                  "ok": true
+                },
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "OK"
+          }
+        },
+        "summary": "Runtime v2: search",
+        "tags": [
+          "Runtime v2"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "description": "Health checks and runtime status",
+      "name": "Health"
+    },
+    {
+      "description": "Plugin sidebar groups and assignments",
+      "name": "Plugin Groups"
+    },
+    {
+      "description": "Dictionary CRUD (runtime-managed lookups)",
+      "name": "Dicts"
+    },
+    {
+      "description": "Plugin install/manage/manifest/readme",
+      "name": "Plugins"
+    },
+    {
+      "description": "Feed items and refresh/read state",
+      "name": "Feed"
+    },
+    {
+      "description": "Image upload/proxy utilities",
+      "name": "Images"
+    },
+    {
+      "description": "New runtime API for items/chapters/search/detail",
+      "name": "Runtime v2"
+    },
+    {
+      "description": "Plugin variables schema/values (v2)",
+      "name": "Plugin Variables v2"
+    }
+  ]
+}
