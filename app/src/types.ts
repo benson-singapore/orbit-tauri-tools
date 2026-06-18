@@ -219,6 +219,7 @@ export interface Plugin {
   lastError?: string;
   version?: string;
   marketId?: string;
+  contentRating?: MarketPluginContentRating;
   variablesSchema?: Record<string, VariableDefinition>;
 }
 

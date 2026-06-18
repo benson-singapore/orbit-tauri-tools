@@ -14,14 +14,20 @@ import (
 	"github.com/orbit-tauri-tools/runtime/internal/store"
 )
 
+// setTestHome isolates UserPluginsDir/store paths. On macOS UserConfigDir uses
+// $HOME/Library/Application Support, not XDG_CONFIG_HOME.
+func setTestHome(t *testing.T) {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+}
+
 func TestExtractOrbitPackage_Juejin(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "docs", "插件", "掘金", "掘金.orbit")
 	data, err := os.ReadFile(root)
 	if err != nil {
 		t.Skipf("sample orbit package missing: %v", err)
 	}
-	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
+	setTestHome(t)
 
 	m, dir, err := extractOrbitPackage(data)
 	if err != nil {
@@ -115,8 +121,7 @@ func TestExtractOrbitPackage_PreservesManifestBytesForChecksum(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
+	setTestHome(t)
 
 	m, dir, err := extractOrbitPackage(buf.Bytes())
 	if err != nil {
@@ -160,8 +165,7 @@ func TestUpdateOrbitPackage_ReplacesManifest(t *testing.T) {
 		return buf.Bytes()
 	}
 
-	tmpHome := t.TempDir()
-	t.Setenv("HOME", tmpHome)
+	setTestHome(t)
 
 	m, dir, err := extractOrbitPackage(buildPackage(manifestV1))
 	if err != nil {
@@ -223,8 +227,7 @@ func TestExtractOrbitPackage_MarketPackage(t *testing.T) {
 	if os.Getenv("RUN_MARKET_TEST") == "" {
 		t.Skip("set RUN_MARKET_TEST=1 to run")
 	}
-	tmp := t.TempDir()
-	t.Setenv("XDG_CONFIG_HOME", tmp)
+	setTestHome(t)
 
 	client := market.NewClient()
 	data, err := client.DownloadOrbitPackage(context.Background(), "f1570a74")

@@ -124,8 +124,15 @@ interface PluginManagerModalProps {
   pluginGroups: PluginSidebarGroup[];
   groupedPluginsForManage: { group: PluginSidebarGroup; plugins: Plugin[] }[];
   onClose: () => void;
-  onInstall: (marketId: string) => Promise<void>;
-  onUpdate: (marketId: string, pluginId: string) => Promise<void>;
+  onInstall: (
+    marketId: string,
+    contentRating?: MarketPluginContentRating,
+  ) => Promise<void>;
+  onUpdate: (
+    marketId: string,
+    pluginId: string,
+    contentRating?: MarketPluginContentRating,
+  ) => Promise<void>;
   onSaveManifest: (pluginId: string, manifestText: string) => Promise<void>;
   onUninstall: (id: string) => void | Promise<void>;
   onToggleActive: (id: string) => void;
@@ -341,8 +348,15 @@ function MarketPluginCard({
   installedPlugin?: Plugin;
   needsUpdate: boolean;
   installing: boolean;
-  onInstall: (marketId: string) => Promise<void>;
-  onUpdate: (marketId: string, pluginId: string) => Promise<void>;
+  onInstall: (
+    marketId: string,
+    contentRating?: MarketPluginContentRating,
+  ) => Promise<void>;
+  onUpdate: (
+    marketId: string,
+    pluginId: string,
+    contentRating?: MarketPluginContentRating,
+  ) => Promise<void>;
 }) {
   const color = plugin.colorClass?.trim() || plugin.accentColor || "#7c3aed";
   const useBgClass = color.startsWith("bg-");
@@ -446,7 +460,11 @@ function MarketPluginCard({
               type="button"
               disabled={installing}
               onClick={() => {
-                void onUpdate(plugin.id, installedPlugin.id).catch(console.error);
+                void onUpdate(
+                  plugin.id,
+                  installedPlugin.id,
+                  plugin.contentRating,
+                ).catch(console.error);
               }}
               className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-amber-800 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900/50 dark:hover:bg-amber-950/50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -468,7 +486,7 @@ function MarketPluginCard({
             type="button"
             disabled={installing}
             onClick={() => {
-              void onInstall(plugin.id).catch(console.error);
+              void onInstall(plugin.id, plugin.contentRating).catch(console.error);
             }}
             className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-white px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -631,6 +649,15 @@ function PluginSection(props: PluginSectionProps) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold">{plugin.name}</span>
+                    {plugin.contentRating ? (
+                      <span
+                        className={`shrink-0 inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border ${
+                          MARKET_CONTENT_RATING_TAG_CLASS[plugin.contentRating]
+                        }`}
+                      >
+                        {MARKET_CONTENT_RATING_LABELS[plugin.contentRating]}
+                      </span>
+                    ) : null}
                     <span
                       className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
                         isWasm
@@ -3965,11 +3992,11 @@ export function PluginManagerModal({
                             installedPlugin={installed}
                             needsUpdate={needsUpdate}
                             installing={installingMarketId === plugin.id}
-                            onInstall={async (marketId) => {
+                            onInstall={async (marketId, contentRating) => {
                               setInstallError(null);
                               setInstallingMarketId(marketId);
                               try {
-                                await onInstall(marketId);
+                                await onInstall(marketId, contentRating);
                               } catch (err) {
                                 setInstallError(err instanceof Error ? err.message : String(err));
                                 throw err;
@@ -3977,11 +4004,11 @@ export function PluginManagerModal({
                                 setInstallingMarketId(null);
                               }
                             }}
-                            onUpdate={async (marketId, pluginId) => {
+                            onUpdate={async (marketId, pluginId, contentRating) => {
                               setInstallError(null);
                               setInstallingMarketId(marketId);
                               try {
-                                await onUpdate(marketId, pluginId);
+                                await onUpdate(marketId, pluginId, contentRating);
                               } catch (err) {
                                 setInstallError(err instanceof Error ? err.message : String(err));
                                 throw err;

@@ -16,7 +16,10 @@ const (
 
 func isLbupupImageHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
-	return host == "pic.lbupup.cn" || strings.HasSuffix(host, ".lbupup.cn")
+	if host == "pic.lbupup.cn" || strings.HasSuffix(host, ".lbupup.cn") {
+		return true
+	}
+	return host == "pic.uforxk.cn" || strings.HasSuffix(host, ".uforxk.cn")
 }
 
 func needsLbupupDecrypt(target *url.URL) bool {

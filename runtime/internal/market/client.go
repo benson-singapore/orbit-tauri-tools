@@ -131,3 +131,67 @@ func (c *Client) DownloadOrbitPackage(ctx context.Context, marketID string) ([]b
 	}
 	return pkgData, nil
 }
+
+type pluginDetailResponse struct {
+	Code int `json:"code"`
+	Data struct {
+		Plugin struct {
+			ContentRating string `json:"contentRating"`
+		} `json:"plugin"`
+		Manifest string `json:"manifest"`
+	} `json:"data"`
+}
+
+// FetchPluginContentRating loads the market content rating for a plugin listing id.
+func (c *Client) FetchPluginContentRating(ctx context.Context, marketID string) (string, error) {
+	marketID = strings.TrimSpace(marketID)
+	if marketID == "" {
+		return "", fmt.Errorf("market plugin id is required")
+	}
+
+	req, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		c.BaseURL+"/v1/plugins/"+marketID,
+		nil,
+	)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request market plugin detail: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("read market plugin detail response: %w", err)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("market plugin detail failed: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var parsed pluginDetailResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return "", fmt.Errorf("parse market plugin detail response: %w", err)
+	}
+	if parsed.Code != 200 {
+		return "", fmt.Errorf("market plugin detail: unexpected code %d", parsed.Code)
+	}
+
+	if rating := strings.TrimSpace(parsed.Data.Plugin.ContentRating); rating != "" {
+		return rating, nil
+	}
+	if manifest := strings.TrimSpace(parsed.Data.Manifest); manifest != "" {
+		var meta struct {
+			ContentRating string `json:"contentRating"`
+		}
+		if err := json.Unmarshal([]byte(manifest), &meta); err == nil {
+			if rating := strings.TrimSpace(meta.ContentRating); rating != "" {
+				return rating, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("content rating not found for market plugin %s", marketID)
+}

@@ -67,6 +67,7 @@ type pluginView struct {
 	LastError       string               `json:"lastError,omitempty"`
 	Version         string               `json:"version,omitempty"`
 	MarketID        string               `json:"marketId,omitempty"`
+	ContentRating   string               `json:"contentRating,omitempty"`
 }
 
 func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
@@ -98,6 +99,7 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		LastError:       rec.LastError,
 		Version:         rec.Version,
 		MarketID:        rec.Meta.MarketID,
+		ContentRating:   rec.Meta.ContentRating,
 	}
 }
 
@@ -251,11 +253,17 @@ func (s *Server) handlePluginsMarket(w http.ResponseWriter, r *http.Request) {
 				writeJSON(w, http.StatusBadRequest, errorBody("market plugin id is required"))
 				return
 			}
+			var body struct {
+				ContentRating string `json:"contentRating"`
+			}
+			_ = json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&body)
 			client := market.NewClient()
 			rec, err := s.registry.InstallOrbitFromMarket(
 				r.Context(),
 				client.DownloadOrbitPackage,
 				marketID,
+				body.ContentRating,
+				client.FetchPluginContentRating,
 			)
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
@@ -272,7 +280,8 @@ func (s *Server) handlePluginsMarket(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			var body struct {
-				PluginID string `json:"pluginId"`
+				PluginID      string `json:"pluginId"`
+				ContentRating string `json:"contentRating"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				writeJSON(w, http.StatusBadRequest, errorBody("invalid JSON body"))
@@ -288,6 +297,8 @@ func (s *Server) handlePluginsMarket(w http.ResponseWriter, r *http.Request) {
 				client.DownloadOrbitPackage,
 				marketID,
 				body.PluginID,
+				body.ContentRating,
+				client.FetchPluginContentRating,
 			)
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))

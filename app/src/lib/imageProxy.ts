@@ -4,6 +4,7 @@ const PROXY_IMAGE_HOST_SUFFIXES = [
   "douban.com",
   "hellogithub.com",
   "lbupup.cn",
+  "uforxk.cn",
 ];
 
 export function isHttpImageUrl(url: string): boolean {

@@ -128,8 +128,15 @@ interface UseOrbitDataResult {
   loadMore: () => Promise<void>;
   markArticleRead: (target: string | Article) => Promise<void>;
   installCustomRSS: (payload: InstallRSSPluginRequest) => Promise<Plugin>;
-  installOfficialPlugin: (marketId: string) => Promise<Plugin>;
-  updateOfficialPlugin: (marketId: string, pluginId: string) => Promise<Plugin>;
+  installOfficialPlugin: (
+    marketId: string,
+    contentRating?: import("@/types").MarketPluginContentRating,
+  ) => Promise<Plugin>;
+  updateOfficialPlugin: (
+    marketId: string,
+    pluginId: string,
+    contentRating?: import("@/types").MarketPluginContentRating,
+  ) => Promise<Plugin>;
   savePluginManifest: (id: string, manifestText: string) => Promise<Plugin>;
   togglePluginActive: (id: string) => Promise<void>;
   removePlugin: (id: string) => Promise<void>;
@@ -558,8 +565,11 @@ export function useOrbitData(
   );
 
   const installOfficialPlugin = useCallback(
-    async (marketId: string) => {
-      const plugin = await installMarketPlugin(marketId);
+    async (
+      marketId: string,
+      contentRating?: import("@/types").MarketPluginContentRating,
+    ) => {
+      const plugin = await installMarketPlugin(marketId, contentRating);
       await loadPlugins();
       scheduleFeedReloadAfterBackgroundFetch(loadFeedPage);
       return plugin;
@@ -568,8 +578,12 @@ export function useOrbitData(
   );
 
   const updateOfficialPlugin = useCallback(
-    async (marketId: string, pluginId: string) => {
-      const plugin = await updateMarketPlugin(marketId, pluginId);
+    async (
+      marketId: string,
+      pluginId: string,
+      contentRating?: import("@/types").MarketPluginContentRating,
+    ) => {
+      const plugin = await updateMarketPlugin(marketId, pluginId, contentRating);
       await loadPlugins();
       scheduleFeedReloadAfterBackgroundFetch(loadFeedPage);
       return plugin;

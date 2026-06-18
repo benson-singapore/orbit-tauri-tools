@@ -4,6 +4,7 @@ import type {
   FeedItemResponse,
   FeedResponse,
   InstallRSSPluginRequest,
+  MarketPluginContentRating,
   Plugin,
   PluginsResponse,
 } from "@/types";
@@ -184,11 +185,20 @@ export async function installBundledPlugin(id: string): Promise<Plugin> {
   return data.plugin;
 }
 
-export async function installMarketPlugin(marketId: string): Promise<Plugin> {
+export async function installMarketPlugin(
+  marketId: string,
+  contentRating?: MarketPluginContentRating,
+): Promise<Plugin> {
   const base = await apiBase();
   const res = await fetch(
     `${base}/v1/plugins/market/${encodeURIComponent(marketId)}/install`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        contentRating ? { contentRating } : {},
+      ),
+    },
   );
   if (!res.ok) {
     throw new Error(await parseError(res));
@@ -200,6 +210,7 @@ export async function installMarketPlugin(marketId: string): Promise<Plugin> {
 export async function updateMarketPlugin(
   marketId: string,
   pluginId: string,
+  contentRating?: MarketPluginContentRating,
 ): Promise<Plugin> {
   const base = await apiBase();
   const res = await fetch(
@@ -207,7 +218,10 @@ export async function updateMarketPlugin(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ pluginId }),
+      body: JSON.stringify({
+        pluginId,
+        ...(contentRating ? { contentRating } : {}),
+      }),
     },
   );
   if (!res.ok) {

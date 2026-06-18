@@ -268,7 +268,12 @@ func (r *Registry) ListMarketPlugins() []*PluginRecord {
 
 // InstallOrbitFromMarket downloads a .orbit package from the remote market API and installs it.
 // If the plugin is already installed, the package is applied as a full replace (same as update).
-func (r *Registry) InstallOrbitFromMarket(ctx context.Context, marketDownloader func(context.Context, string) ([]byte, error), marketID string) (*PluginRecord, error) {
+func (r *Registry) InstallOrbitFromMarket(
+	ctx context.Context,
+	marketDownloader func(context.Context, string) ([]byte, error),
+	marketID, contentRating string,
+	ratingFetcher func(context.Context, string) (string, error),
+) (*PluginRecord, error) {
 	data, err := marketDownloader(ctx, marketID)
 	if err != nil {
 		return nil, err
@@ -286,19 +291,45 @@ func (r *Registry) InstallOrbitFromMarket(ctx context.Context, marketDownloader 
 	if err != nil {
 		return nil, err
 	}
+	return r.applyMarketPluginMetadata(ctx, rec, marketID, contentRating, ratingFetcher)
+}
+
+func (r *Registry) applyMarketPluginMetadata(
+	ctx context.Context,
+	rec *PluginRecord,
+	marketID, contentRating string,
+	ratingFetcher func(context.Context, string) (string, error),
+) (*PluginRecord, error) {
+	changed := false
 	marketID = strings.TrimSpace(marketID)
-	if marketID == "" {
+	if marketID != "" && rec.Meta.MarketID != marketID {
+		rec.Meta.MarketID = marketID
+		changed = true
+	}
+
+	rating := NormalizeContentRating(contentRating)
+	if rating == "" && marketID != "" && ratingFetcher != nil {
+		if fetched, err := ratingFetcher(ctx, marketID); err == nil {
+			rating = NormalizeContentRating(fetched)
+		}
+	}
+	if rating != "" && rec.Meta.ContentRating != rating {
+		rec.Meta.ContentRating = rating
+		changed = true
+	}
+	if !changed {
 		return rec, nil
 	}
-	if rec.Meta.MarketID == marketID {
-		return rec, nil
-	}
-	rec.Meta.MarketID = marketID
 	return r.UpdateManifest(ctx, rec.ID, &rec.Manifest)
 }
 
 // UpdateOrbitFromMarket downloads a newer .orbit package and fully replaces on-disk assets and manifest.
-func (r *Registry) UpdateOrbitFromMarket(ctx context.Context, marketDownloader func(context.Context, string) ([]byte, error), marketID, pluginID string) (*PluginRecord, error) {
+func (r *Registry) UpdateOrbitFromMarket(
+	ctx context.Context,
+	marketDownloader func(context.Context, string) ([]byte, error),
+	marketID, pluginID, contentRating string,
+	ratingFetcher func(context.Context, string) (string, error),
+) (*PluginRecord, error) {
 	pluginID = strings.TrimSpace(pluginID)
 	if pluginID == "" {
 		return nil, fmt.Errorf("pluginId is required")
@@ -322,12 +353,7 @@ func (r *Registry) UpdateOrbitFromMarket(ctx context.Context, marketDownloader f
 	if err != nil {
 		return nil, err
 	}
-	marketID = strings.TrimSpace(marketID)
-	if marketID != "" && updated.Meta.MarketID != marketID {
-		updated.Meta.MarketID = marketID
-		return r.UpdateManifest(ctx, updated.ID, &updated.Manifest)
-	}
-	return updated, nil
+	return r.applyMarketPluginMetadata(ctx, updated, marketID, contentRating, ratingFetcher)
 }
 
 // InstallBundled registers a bundled official plugin from disk into SQLite.
@@ -789,10 +815,14 @@ func (r *Registry) Feed(
 		recs = []*PluginRecord{rec}
 	}
 
+	globalAll := isGlobalAggregateFeed(pluginID, scopePluginIDs)
 	var all []FeedItem
 	prePaged := false
 	for _, rec := range recs {
 		if !rec.Active || rec.ID == "all" {
+			continue
+		}
+		if globalAll && IsMatureContentRating(rec.Meta.ContentRating) {
 			continue
 		}
 		if !HasCapability(&rec.Manifest, CapFeed) {
@@ -1001,6 +1031,22 @@ func (r *Registry) CountUnread(
 			channelID = ""
 		}
 		return r.store.CountUnreadFeedItemsForPlugins(ctx, scopePluginIDs, channelID, contentType)
+	}
+	if isGlobalAggregateFeed(pluginID, scopePluginIDs) {
+		if channelID == "all" {
+			channelID = ""
+		}
+		ids := make([]string, 0)
+		for _, rec := range r.List() {
+			if !rec.Active || rec.ID == "all" {
+				continue
+			}
+			if IsMatureContentRating(rec.Meta.ContentRating) {
+				continue
+			}
+			ids = append(ids, rec.ID)
+		}
+		return r.store.CountUnreadFeedItemsForPlugins(ctx, ids, channelID, contentType)
 	}
 	if pluginID == "all" {
 		pluginID = ""

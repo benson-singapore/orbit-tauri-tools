@@ -752,12 +752,19 @@ export default function App() {
     });
   };
 
-  const handleInstallPlugin = async (marketId: string) => {
-    await orbitInstallOfficialPlugin(marketId);
+  const handleInstallPlugin = async (
+    marketId: string,
+    contentRating?: import("@/types").MarketPluginContentRating,
+  ) => {
+    await orbitInstallOfficialPlugin(marketId, contentRating);
   };
 
-  const handleUpdatePlugin = async (marketId: string, pluginId: string) => {
-    await orbitUpdateOfficialPlugin(marketId, pluginId);
+  const handleUpdatePlugin = async (
+    marketId: string,
+    pluginId: string,
+    contentRating?: import("@/types").MarketPluginContentRating,
+  ) => {
+    await orbitUpdateOfficialPlugin(marketId, pluginId, contentRating);
   };
 
   const handleUninstallPlugin = async (id: string) => {
@@ -1001,8 +1008,7 @@ export default function App() {
           theme === 'dark' ? 'bg-[#1c1d1f] border-neutral-800' : 'bg-white border-neutral-100'
         } ${isSidebarCollapsed ? 'w-16' : 'w-64'}`}>
           
-          <div className="flex-1 py-3 overflow-y-auto no-scrollbar">
-            
+          <div className="shrink-0 pt-3">
             {/* Sidebar collapse toggle */}
             <div
               className={`mb-1 pb-1 border-b ${theme === "dark" ? "border-neutral-800" : "border-neutral-100"} ${isSidebarCollapsed ? "px-0" : "px-3"}`}
@@ -1134,9 +1140,11 @@ export default function App() {
                 )}
               </button>
             </div>
+          </div>
 
-            {/* Plugin Section */}
-            <div className={`mt-6 space-y-1 ${isSidebarCollapsed ? "px-0" : "px-3"}`}>
+          {/* Plugin Section — scrollable */}
+          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar pb-3">
+            <div className={`mt-3 space-y-1 ${isSidebarCollapsed ? "px-0" : "px-3"}`}>
               <div className={`flex items-center justify-between text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-2 px-3 ${
                 isSidebarCollapsed ? 'hidden' : 'block'
               }`}>
@@ -1233,7 +1241,6 @@ export default function App() {
                 });
               })()}
             </div>
-
           </div>
 
           {/* Bottom App Footer */}
