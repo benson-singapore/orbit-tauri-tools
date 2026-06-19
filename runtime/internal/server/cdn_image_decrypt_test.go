@@ -20,6 +20,19 @@ func TestIsLbupupImageHost(t *testing.T) {
 	}
 }
 
+func TestIsBgezuwImageHost(t *testing.T) {
+	t.Parallel()
+	if !isBgezuwImageHost("llksqimg.bgezuw.cn") {
+		t.Fatal("expected llksqimg.bgezuw.cn")
+	}
+	if !isBgezuwImageHost("cdn.bgezuw.cn") {
+		t.Fatal("expected cdn.bgezuw.cn")
+	}
+	if isBgezuwImageHost("img3.doubanio.com") {
+		t.Fatal("did not expect douban host")
+	}
+}
+
 func TestLbupupImageReferer(t *testing.T) {
 	t.Parallel()
 	target, err := url.Parse("https://pic.lbupup.cn/upload_01/xiao/a.jpeg")
@@ -99,6 +112,53 @@ func TestDecryptLbupupImageFixture(t *testing.T) {
 	if len(plain) < 2 || plain[0] != 0xFF || plain[1] != 0xD8 {
 		t.Fatalf("expected jpeg, got %02x %02x", plain[0], plain[1])
 	}
+}
+
+func testDecryptBgezuwImageURL(t *testing.T, encryptedURL string) {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, encryptedURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := url.Parse(encryptedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, contentType, err := maybeDecryptProxyImage(target, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "image/jpeg" {
+		t.Fatalf("content-type %q", contentType)
+	}
+	if len(plain) < 2 || plain[0] != 0xFF || plain[1] != 0xD8 {
+		t.Fatalf("expected jpeg, got %02x %02x", plain[0], plain[1])
+	}
+}
+
+func TestDecryptBgezuwImageFixture(t *testing.T) {
+	t.Parallel()
+
+	const encryptedURL = "https://llksqimg.bgezuw.cn/v3/image/2ph/14t/14k/1mf/6acddfb5796b423325e21e3badb03555.jpeg"
+	testDecryptBgezuwImageURL(t, encryptedURL)
+}
+
+func TestDecryptBgezuwImageFixtureShortHeader(t *testing.T) {
+	t.Parallel()
+
+	const encryptedURL = "https://llksqimg.bgezuw.cn/v3/image/7q/1tf/11v/30h/38603059fc9cce1bec54fef54e5f2b35.jpg"
+	testDecryptBgezuwImageURL(t, encryptedURL)
 }
 
 func TestIsImageContentTypeBinaryOctetStream(t *testing.T) {
