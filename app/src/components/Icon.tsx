@@ -35,7 +35,8 @@ export type IconName =
   | "thumbs-up"
   | "thumbs-down"
   | "star"
-  | "star-outline";
+  | "star-outline"
+  | "pip";
 
 interface IconProps {
   name: IconName | string;
@@ -581,6 +582,21 @@ export function Icon({
         className={className}
       >
         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+      </svg>
+    ),
+    pip: (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+      >
+        <rect width="18" height="13" x="3" y="4" rx="2" />
+        <rect width="10" height="7" x="7" y="12" rx="1" />
       </svg>
     ),
   };

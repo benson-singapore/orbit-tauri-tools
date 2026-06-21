@@ -1,6 +1,6 @@
 const STORAGE_KEY = "orbit.pluginPreviewMode";
 
-export type PluginPreviewMode = "reader" | "waterfall" | "grid";
+export type PluginPreviewMode = "reader" | "waterfall" | "grid" | "split" | "videoWall";
 
 type PluginPreviewModeMemory = Record<string, PluginPreviewMode>;
 
@@ -17,7 +17,7 @@ function readMemory(): PluginPreviewModeMemory {
       if (
         typeof pluginId === "string"
         && pluginId.length > 0
-        && (mode === "reader" || mode === "waterfall" || mode === "grid")
+        && (mode === "reader" || mode === "waterfall" || mode === "grid" || mode === "split" || mode === "videoWall")
       ) {
         result[pluginId] = mode;
       }

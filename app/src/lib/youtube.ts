@@ -45,9 +45,17 @@ export function resolveYouTubeVideoId(
   );
 }
 
-export function youtubeEmbedUrl(videoId: string): string {
+export function youtubeEmbedUrl(videoId: string, startSeconds?: number): string {
+  const origin =
+    typeof window !== "undefined" ? encodeURIComponent(window.location.origin) : "";
+  const originParam = origin ? `&origin=${origin}` : "";
+  const startParam =
+    startSeconds !== undefined && startSeconds > 0
+      ? `&start=${Math.floor(startSeconds)}`
+      : "";
   // fs=0 hides YouTube's native fullscreen control (broken in macOS WKWebView).
-  return `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&fs=0`;
+  // enablejsapi=1 allows postMessage play/pause/seek after DOM reparent (e.g. dock to wall).
+  return `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&fs=0&enablejsapi=1${originParam}${startParam}`;
 }
 
 export function isVideoPluginChannel(

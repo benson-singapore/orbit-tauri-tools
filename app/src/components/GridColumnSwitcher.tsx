@@ -1,3 +1,4 @@
+import type { ChangeEvent } from "react";
 import {
   GRID_COLUMN_OPTIONS,
   type GridColumnCount,
@@ -8,47 +9,52 @@ interface GridColumnSwitcherProps {
   theme: ThemeMode;
   value: GridColumnCount;
   onChange: (count: GridColumnCount) => void;
+  label?: string;
 }
 
 export function GridColumnSwitcher({
   theme,
   value,
   onChange,
+  label = "列数",
 }: GridColumnSwitcherProps) {
+  const handleChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    onChange(Number.parseInt(e.target.value, 10) as GridColumnCount);
+  };
+
   return (
     <div
       className={`flex items-center gap-1.5 rounded-lg px-1.5 py-1 ${
         theme === "dark" ? "bg-neutral-800/60" : "bg-neutral-100"
       }`}
-      title="列数"
+      title={label}
     >
       <span className="text-[10px] font-medium text-neutral-400 pl-0.5 hidden sm:inline">
-        列数
+        {label}
       </span>
-      <div className="flex items-center gap-0.5">
-        {GRID_COLUMN_OPTIONS.map(option => {
-          const isActive = value === option;
-          return (
-            <button
-              key={option}
-              type="button"
-              onClick={() => onChange(option)}
-              className={`min-w-[1.75rem] h-6 px-1.5 rounded-md text-[11px] font-semibold tabular-nums transition-all ${
-                isActive
-                  ? theme === "dark"
-                    ? "bg-white text-neutral-900 shadow-sm"
-                    : "bg-neutral-900 text-white shadow-sm"
-                  : theme === "dark"
-                    ? "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-700/80"
-                    : "text-neutral-500 hover:text-neutral-800 hover:bg-white/80"
-              }`}
-              aria-pressed={isActive}
-              aria-label={`${option} 列`}
-            >
+      <div className="relative">
+        <select
+          value={String(value)}
+          onChange={handleChange}
+          aria-label={label}
+          className={`h-6 pl-1.5 pr-5 rounded-md text-[11px] font-semibold tabular-nums appearance-none cursor-pointer transition-all ${
+            theme === "dark"
+              ? "bg-neutral-700 text-neutral-100 hover:bg-neutral-600"
+              : "bg-white text-neutral-800 hover:bg-neutral-50 shadow-sm"
+          }`}
+        >
+          {GRID_COLUMN_OPTIONS.map(option => (
+            <option key={option} value={option}>
               {option}
-            </button>
-          );
-        })}
+            </option>
+          ))}
+        </select>
+        <span
+          className="pointer-events-none absolute right-1 top-1/2 -translate-y-1/2 text-[8px] text-neutral-400"
+          aria-hidden
+        >
+          ▾
+        </span>
       </div>
     </div>
   );

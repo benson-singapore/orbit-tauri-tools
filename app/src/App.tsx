@@ -3,6 +3,11 @@ import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
 import { ImageGalleryFocusView } from "@/components/ImageGalleryFocusView";
 import { ArticleReaderModal } from "@/components/ArticleReaderModal";
+import { ReaderDock } from "@/components/ReaderDock";
+import { SplitGridVideoView } from "@/components/SplitGridVideoView";
+import { VideoWallFocusView } from "@/components/VideoWallFocusView";
+import { VideoSessionMountProvider } from "@/components/VideoWallMountContext";
+import { SessionVideoSurface } from "@/components/SessionVideoSurface";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginChannelBar } from "@/components/PluginChannelBar";
@@ -64,6 +69,28 @@ import {
   persistReaderFontScale,
   readStoredReaderFontScale,
 } from "@/lib/readerFontScale";
+import {
+  articleSessionKey,
+  createReaderSession,
+  type ReaderSession,
+} from "@/lib/readerSessions";
+import {
+  isWallVideoPreviewMode,
+  sessionUsesWallMount,
+  splitPanelVideoSessions,
+} from "@/lib/sessionVideoTarget";
+import {
+  persistVideoWallColumnCount,
+  readStoredVideoWallColumnCount,
+} from "@/lib/videoWallColumnCount";
+import {
+  persistSplitPaneRatio,
+  readStoredSplitPaneRatio,
+} from "@/lib/splitPaneRatio";
+import {
+  hasDockedVideoSessions,
+  isVideoReaderSession,
+} from "@/lib/readerSessionVideos";
 import { useTitlebarDrag } from "@/hooks/useTitlebarDrag";
 import { useTitlebarEnv } from "@/hooks/useTitlebarEnv";
 import { useUiZoom } from "@/hooks/useUiZoom";
@@ -89,8 +116,19 @@ const PREVIEW_MODE_OPTIONS = [
   ["grid", "栅格", "卡片评分布局"] as const,
 ];
 
+const SPLIT_PREVIEW_OPTION = ["split", "分屏预览", "栅格与视频同屏可拖拽"] as const;
+const VIDEO_WALL_PREVIEW_OPTION = ["videoWall", "视频预览", "Dock 视频平铺同播"] as const;
+
+const PREVIEW_MODE_LABELS: Record<PluginPreviewMode, string> = {
+  reader: "阅读模式",
+  waterfall: "瀑布流",
+  grid: "栅格",
+  split: "分屏预览",
+  videoWall: "视频预览",
+};
+
 function previewModeLabel(mode: PluginPreviewMode): string {
-  return PREVIEW_MODE_OPTIONS.find(([value]) => value === mode)?.[1] ?? "阅读模式";
+  return PREVIEW_MODE_LABELS[mode] ?? "阅读模式";
 }
 
 function resolvePreviewModeForPlugin(
@@ -101,12 +139,20 @@ function resolvePreviewModeForPlugin(
   if (mode === "waterfall" && !isImageGalleryPlugin(plugin)) {
     return "reader";
   }
+  if (mode === "videoWall") {
+    return "grid";
+  }
   return mode;
 }
 
-function previewModeOptionsForPlugin(plugin: Plugin | undefined) {
+function previewModeOptionsForPlugin(plugin: Plugin | undefined, showVideoWall: boolean) {
   const showWaterfall = isImageGalleryPlugin(plugin);
-  return PREVIEW_MODE_OPTIONS.filter(([mode]) => mode !== "waterfall" || showWaterfall);
+  const base = PREVIEW_MODE_OPTIONS.filter(([mode]) => mode !== "waterfall" || showWaterfall);
+  return [
+    ...base,
+    SPLIT_PREVIEW_OPTION,
+    ...(showVideoWall ? [VIDEO_WALL_PREVIEW_OPTION] : []),
+  ];
 }
 
 export default function App() {
@@ -265,8 +311,12 @@ export default function App() {
   const [pluginPreviewMode, setPluginPreviewMode] = useState<PluginPreviewMode>("reader");
   const [previewModeMenuOpen, setPreviewModeMenuOpen] = useState(false);
   const [gridColumnCount, setGridColumnCount] = useState<GridColumnCount>(() => readStoredGridColumnCount());
+  const [videoWallColumnCount, setVideoWallColumnCount] = useState<GridColumnCount>(
+    () => readStoredVideoWallColumnCount(),
+  );
+  const [splitPaneRatio, setSplitPaneRatio] = useState(() => readStoredSplitPaneRatio());
   const previewModeMenuRef = useRef<HTMLDivElement>(null);
-  const [readerModalArticle, setReaderModalArticle] = useState<Article | null>(null);
+  const [readerSessions, setReaderSessions] = useState<ReaderSession[]>([]);
   const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
 
@@ -428,6 +478,19 @@ export default function App() {
   const isReaderPreviewMode = pluginPreviewMode === "reader";
   const isWaterfallPreviewMode = pluginPreviewMode === "waterfall";
   const isGridPreviewMode = pluginPreviewMode === "grid";
+  const isSplitPreviewMode = pluginPreviewMode === "split";
+  const isSplitPaneLayout = isSplitPreviewMode && activePlugin !== "all";
+  const isVideoWallPreviewMode = pluginPreviewMode === "videoWall";
+  const isWallVideoActive = isWallVideoPreviewMode(pluginPreviewMode);
+  const showVideoWallPreviewOption = hasDockedVideoSessions(readerSessions);
+  const videoWallSessions = useMemo(
+    () => readerSessions.filter(isVideoReaderSession),
+    [readerSessions],
+  );
+  const splitWallSessions = useMemo(
+    () => splitPanelVideoSessions(readerSessions),
+    [readerSessions],
+  );
   const hideFeedPanel = !isReaderPreviewMode || !feedPanelVisible;
   const isPluginFocusMode = !isReaderPreviewMode && activePlugin !== "all";
   const showFocusModeSearch = isPluginFocusMode && !isBrowseDynamicPluginActive;
@@ -928,7 +991,6 @@ export default function App() {
 
   useEffect(() => {
     setPreviewModeMenuOpen(false);
-    setReaderModalArticle(null);
     if (activePlugin === "all") {
       setPluginPreviewMode("reader");
       return;
@@ -951,21 +1013,101 @@ export default function App() {
 
   const isActiveImageGalleryPlugin = isImageGalleryPlugin(activePluginMeta);
 
+  const closeReaderSession = useCallback((sessionId: string) => {
+    setReaderSessions(prev => prev.filter(session => session.id !== sessionId));
+  }, []);
+
+  const dockReaderSession = useCallback((sessionId: string) => {
+    setReaderSessions(prev =>
+      prev.map(session =>
+        session.id === sessionId
+          ? { ...session, mode: "docked", autoDockOnDismiss: true }
+          : session,
+      ),
+    );
+  }, []);
+
+  const expandReaderSession = useCallback((sessionId: string) => {
+    setReaderSessions(prev =>
+      prev.map(session => ({
+        ...session,
+        mode: session.id === sessionId ? "expanded" : "docked",
+      })),
+    );
+  }, []);
+
   const openReaderDetailModal = useCallback((article: Article) => {
-    setReaderModalArticle(article);
+    setReaderSessions(prev => {
+      const key = articleSessionKey(article);
+      const existing = prev.find(session => articleSessionKey(session.article) === key);
+      if (existing) {
+        return prev.map(session => ({
+          ...session,
+          mode: session.id === existing.id ? "expanded" : "docked",
+        }));
+      }
+      const newSession = createReaderSession(
+        article,
+        activeChannel,
+        channelCapabilities.hasDetail,
+      );
+      return [
+        ...prev.map(session => ({ ...session, mode: "docked" as const })),
+        newSession,
+      ];
+    });
     void markArticleRead(article);
-  }, [markArticleRead]);
+  }, [markArticleRead, activeChannel, channelCapabilities.hasDetail]);
 
   const handleSelectPreviewMode = useCallback((mode: PluginPreviewMode) => {
     if (activePlugin === "all") return;
+    if (mode === "videoWall" || mode === "split") {
+      setReaderSessions(prev =>
+        prev.map(session =>
+          isVideoReaderSession(session) && session.mode === "expanded"
+            ? { ...session, mode: "docked", autoDockOnDismiss: true }
+            : session,
+        ),
+      );
+    }
     setPluginPreviewMode(mode);
-    persistPluginPreviewMode(activePlugin, mode);
+    if (mode !== "videoWall") {
+      persistPluginPreviewMode(activePlugin, mode);
+    }
     setPreviewModeMenuOpen(false);
   }, [activePlugin]);
+
+  const handleVideoWallExpandSession = useCallback((sessionId: string) => {
+    if (pluginPreviewMode !== "split") {
+      setPluginPreviewMode("grid");
+      persistPluginPreviewMode(activePlugin, "grid");
+    }
+    expandReaderSession(sessionId);
+  }, [activePlugin, expandReaderSession, pluginPreviewMode]);
+
+  const handleVideoWallCloseSession = useCallback((sessionId: string) => {
+    closeReaderSession(sessionId);
+  }, [closeReaderSession]);
+
+  useEffect(() => {
+    if (pluginPreviewMode === "videoWall" && !showVideoWallPreviewOption && videoWallSessions.length === 0) {
+      setPluginPreviewMode("grid");
+    }
+  }, [pluginPreviewMode, showVideoWallPreviewOption, videoWallSessions.length]);
 
   const handleGridColumnCountChange = useCallback((count: GridColumnCount) => {
     setGridColumnCount(count);
     persistGridColumnCount(count);
+  }, []);
+
+  const handleVideoWallColumnCountChange = useCallback((count: GridColumnCount) => {
+    setVideoWallColumnCount(count);
+    persistVideoWallColumnCount(count);
+  }, []);
+
+  const handleSplitPaneRatioChange = useCallback((ratio: number) => {
+    setSplitPaneRatio(ratio);
+    persistSplitPaneRatio(ratio);
   }, []);
 
   useEffect(() => {
@@ -992,6 +1134,7 @@ export default function App() {
   };
 
   return (
+    <VideoSessionMountProvider active={isWallVideoActive}>
     <div className={`h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-[#121314] text-[#e3e3e3]' : 'bg-[#f8f9fa] text-[#1f1f1f]'}`}>
       
       {}
@@ -1654,16 +1797,20 @@ export default function App() {
           >
             <div
               ref={readerPanelRef}
-              className={`flex-1 h-full min-w-0 overflow-y-auto ${
-                theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"
-              }`}
+              className={`flex-1 h-full min-w-0 ${
+                isSplitPaneLayout ? "overflow-hidden" : "overflow-y-auto"
+              } ${theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"}`}
             >
             
             {isPluginFocusMode || selectedItem ? (
-              <div className={`${isPluginFocusMode ? "w-[80%]" : "max-w-3xl"} mx-auto px-6 pb-8 md:pb-10`}>
+              <div className={
+                isSplitPaneLayout
+                  ? "flex h-full min-h-0 w-full flex-col px-6"
+                  : `${isPluginFocusMode ? "w-[80%]" : "max-w-3xl"} mx-auto px-6 pb-8 md:pb-10`
+              }>
                 {/* Reader toolbar — sticky near top */}
                 <div
-                  className={`sticky top-0 z-10 -mx-6 px-6 pt-2 pb-2 ${theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"}`}
+                  className={`${isSplitPaneLayout ? "shrink-0" : "sticky top-0"} z-10 -mx-6 px-6 pt-2 pb-2 ${theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"}`}
                 >
                   <div
                     className={`rounded-xl border transition-all duration-200 ${
@@ -1703,6 +1850,11 @@ export default function App() {
                             栅格预览 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条
                           </span>
                         ) : null}
+                        {isSplitPreviewMode && activePlugin !== "all" ? (
+                          <span className="text-xs text-neutral-400 truncate">
+                            分屏预览 · 栅格 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条 · 视频 {splitWallSessions.length} 路
+                          </span>
+                        ) : null}
                       </div>
 
                       <div className="flex items-center justify-end gap-1 shrink-0 ml-auto">
@@ -1731,11 +1883,37 @@ export default function App() {
                           </div>
                         ) : null}
 
+                        {isSplitPreviewMode && activePlugin !== "all" ? (
+                          <>
+                            <GridColumnSwitcher
+                              theme={theme}
+                              label="栅格列"
+                              value={gridColumnCount}
+                              onChange={handleGridColumnCountChange}
+                            />
+                            <GridColumnSwitcher
+                              theme={theme}
+                              label="视频列"
+                              value={videoWallColumnCount}
+                              onChange={handleVideoWallColumnCountChange}
+                            />
+                          </>
+                        ) : null}
+
                         {(isWaterfallPreviewMode || isGridPreviewMode) && activePlugin !== "all" ? (
                           <GridColumnSwitcher
                             theme={theme}
                             value={gridColumnCount}
                             onChange={handleGridColumnCountChange}
+                          />
+                        ) : null}
+
+                        {isVideoWallPreviewMode && activePlugin !== "all" ? (
+                          <GridColumnSwitcher
+                            theme={theme}
+                            label="视频列"
+                            value={videoWallColumnCount}
+                            onChange={handleVideoWallColumnCountChange}
                           />
                         ) : null}
 
@@ -1800,7 +1978,7 @@ export default function App() {
                               }`}>
                                 预览模式
                               </div>
-                              {previewModeOptionsForPlugin(activePluginMeta).map(([mode, label, desc]) => {
+                              {previewModeOptionsForPlugin(activePluginMeta, showVideoWallPreviewOption).map(([mode, label, desc]) => {
                                 const isActive = pluginPreviewMode === mode;
                                 return (
                                   <button
@@ -1967,7 +2145,39 @@ export default function App() {
                   ) : null}
                 </div>
 
-                {isWaterfallPreviewMode && activePlugin !== "all" ? (
+                {isSplitPaneLayout ? (
+                  <div className="min-h-0 flex-1">
+                    <SplitGridVideoView
+                      theme={theme}
+                      runtimeBase={runtimeBase}
+                      articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                      gridColumnCount={gridColumnCount}
+                      videoColumnCount={videoWallColumnCount}
+                      splitRatio={splitPaneRatio}
+                      onSplitRatioChange={handleSplitPaneRatioChange}
+                      videoSessions={splitWallSessions}
+                      loading={feedLoading}
+                      loadingMore={feedLoadingMore}
+                      searching={feedSearching}
+                      hasMore={feedHasMore}
+                      onLoadMore={() => {
+                        void loadMore().catch(console.error);
+                      }}
+                      onItemSelect={openReaderDetailModal}
+                      onExpandSession={handleVideoWallExpandSession}
+                      onCloseSession={handleVideoWallCloseSession}
+                    />
+                  </div>
+                ) : isVideoWallPreviewMode && activePlugin !== "all" ? (
+                  <VideoWallFocusView
+                    theme={theme}
+                    runtimeBase={runtimeBase}
+                    sessions={videoWallSessions}
+                    columnCount={videoWallColumnCount}
+                    onExpandSession={handleVideoWallExpandSession}
+                    onCloseSession={handleVideoWallCloseSession}
+                  />
+                ) : isWaterfallPreviewMode && activePlugin !== "all" ? (
                   <ImageGalleryFocusView
                     key={`${activePlugin}-${activeChannel}-${gridColumnCount}`}
                     theme={theme}
@@ -2379,19 +2589,48 @@ export default function App() {
 
       </div>
 
-      {readerModalArticle ? (
+      {readerSessions.filter(isVideoReaderSession).map(session => (
+        <SessionVideoSurface
+          key={session.id}
+          sessionId={session.id}
+          article={session.article}
+          runtimeBase={runtimeBase}
+          useWallMount={sessionUsesWallMount(session, pluginPreviewMode)}
+        />
+      ))}
+
+      {readerSessions.map(session => (
         <ArticleReaderModal
+          key={session.id}
+          sessionId={session.id}
           theme={theme}
           runtimeBase={runtimeBase}
-          article={readerModalArticle}
+          article={session.article}
           readerFontScale={readerFontScale}
-          hasDetail={channelCapabilities.hasDetail}
-          activeChannel={activeChannel}
-          pluginMeta={pluginById.get(readerModalArticle.pluginId)}
-          onClose={() => setReaderModalArticle(null)}
+          hasDetail={session.hasDetail}
+          activeChannel={session.activeChannel}
+          pluginMeta={pluginById.get(session.article.pluginId)}
+          mode={session.mode}
+          autoDockOnDismiss={session.autoDockOnDismiss}
+          inVideoWall={sessionUsesWallMount(session, pluginPreviewMode)}
+          onClose={() => closeReaderSession(session.id)}
+          onDock={() => dockReaderSession(session.id)}
         />
-      ) : null}
+      ))}
+
+      <ReaderDock
+        theme={theme}
+        runtimeBase={runtimeBase}
+        sessions={
+          isWallVideoActive
+            ? readerSessions.filter(session => !isVideoReaderSession(session))
+            : readerSessions
+        }
+        onExpand={expandReaderSession}
+        onClose={closeReaderSession}
+      />
 
     </div>
+    </VideoSessionMountProvider>
   );
 }

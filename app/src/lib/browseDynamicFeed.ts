@@ -97,11 +97,14 @@ export function isRatingPluginArticle(
 
 /** 列表记录即可作为详情展示，跳过 /v1/feed/item */
 export function shouldSkipFeedItemDetailFetch(
-  article: Pick<Article, "pluginId" | "channelId">,
+  article: Pick<Article, "pluginId" | "channelId" | "type" | "sourceUrl" | "videoUrl" | "id">,
   plugin?: Plugin | null,
   hasDetail = true,
 ): boolean {
   if (!hasDetail) {
+    return true;
+  }
+  if (article.type === "video" || article.pluginId === "youtube") {
     return true;
   }
   return (

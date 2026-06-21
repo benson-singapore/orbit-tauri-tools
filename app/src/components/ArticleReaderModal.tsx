@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
-import { YouTubeEmbed } from "@/components/YouTubeEmbed";
+import { useVideoSessionMountRegistry } from "@/components/VideoWallMountContext";
 import {
   dedupeCoverImageFromContent,
   prepareArticleHtmlContent,
@@ -12,10 +12,12 @@ import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
 import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
-import { resolveYouTubeVideoId } from "@/lib/youtube";
+import { isVideoArticle } from "@/lib/readerSessionVideos";
+import type { ReaderSessionMode } from "@/lib/readerSessions";
 import type { Article, Plugin, ThemeMode } from "@/types";
 
 interface ArticleReaderModalProps {
+  sessionId: string;
   theme: ThemeMode;
   runtimeBase: string | null;
   article: Article;
@@ -23,10 +25,15 @@ interface ArticleReaderModalProps {
   hasDetail: boolean;
   activeChannel: string;
   pluginMeta?: Plugin;
+  mode: ReaderSessionMode;
+  autoDockOnDismiss: boolean;
+  inVideoWall: boolean;
   onClose: () => void;
+  onDock: () => void;
 }
 
 export function ArticleReaderModal({
+  sessionId,
   theme,
   runtimeBase,
   article: initialArticle,
@@ -34,8 +41,13 @@ export function ArticleReaderModal({
   hasDetail,
   activeChannel,
   pluginMeta,
+  mode,
+  autoDockOnDismiss,
+  inVideoWall,
   onClose,
+  onDock,
 }: ArticleReaderModalProps) {
+  const isExpanded = mode === "expanded";
   const isDark = theme === "dark";
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
   const [article, setArticle] = useState(initialArticle);
@@ -49,6 +61,11 @@ export function ArticleReaderModal({
   }, [initialArticle]);
 
   useEffect(() => {
+    if (!isExpanded) {
+      setLoading(false);
+      return;
+    }
+
     const itemId = article.id;
     if (shouldSkipFeedItemDetailFetch(article, pluginMeta, hasDetail)) {
       setLoading(false);
@@ -100,11 +117,14 @@ export function ArticleReaderModal({
     return () => {
       cancelled = true;
     };
-  }, [article.id, article.pluginId, article.channelId, pluginMeta, hasDetail, activeChannel]);
+  }, [isExpanded, article.id, article.pluginId, article.channelId, pluginMeta, hasDetail, activeChannel]);
 
   const isRatingCoverLayout = isRatingPluginArticle(article, pluginMeta);
 
   const showArticleMedia = useMemo(() => {
+    if (isVideoArticle(article)) {
+      return true;
+    }
     if (article.type === "text") {
       return Boolean(article.image?.trim()) && !coverImageFailed;
     }
@@ -120,7 +140,19 @@ export function ArticleReaderModal({
     return false;
   }, [article, coverImageFailed]);
 
-  const youTubeVideoId = useMemo(() => resolveYouTubeVideoId(article), [article]);
+  const hasVideoMedia = isVideoArticle(article);
+  const { registerMount } = useVideoSessionMountRegistry();
+
+  const modalMountRef = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (hasVideoMedia) {
+        registerMount(sessionId, "modal", element);
+        return;
+      }
+      registerMount(sessionId, "modal", null);
+    },
+    [registerMount, sessionId, hasVideoMedia],
+  );
 
   const displayContent = useMemo(() => {
     if (!article.content?.trim()) return "";
@@ -139,61 +171,90 @@ export function ArticleReaderModal({
   }, [displayContent, runtimeBase, theme]);
 
   useEffect(() => {
+    if (!isExpanded) return;
+
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onClose();
+        onDock();
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [onClose]);
+  }, [isExpanded, onDock]);
 
   useEffect(() => {
+    if (!isExpanded) return;
+
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = "";
     };
-  }, []);
+  }, [isExpanded]);
 
   const handleBackdropClick = (event: MouseEvent) => {
     event.stopPropagation();
+    if (autoDockOnDismiss) {
+      onDock();
+      return;
+    }
     onClose();
   };
 
+  const headerButtonClass = isDark
+    ? "bg-black/40 hover:bg-black/60 text-white/80"
+    : "bg-black/20 hover:bg-black/30 text-neutral-600";
+
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm"
-      onClick={handleBackdropClick}
+      className={
+        isExpanded
+          ? "fixed inset-0 z-[100] flex items-center justify-center p-4 sm:p-6 bg-black/60 backdrop-blur-sm"
+          : "fixed -left-[9999px] top-0 w-full max-w-4xl h-[90vh] opacity-0 pointer-events-none overflow-hidden"
+      }
+      onClick={isExpanded ? handleBackdropClick : undefined}
+      aria-hidden={!isExpanded}
     >
       <div
         className={`relative w-full max-w-4xl h-[90vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden ${panelBg}`}
         onClick={event => event.stopPropagation()}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="article-reader-modal-title"
+        role={isExpanded ? "dialog" : undefined}
+        aria-modal={isExpanded ? true : undefined}
+        aria-labelledby={isExpanded ? "article-reader-modal-title" : undefined}
       >
-        <button
-          type="button"
-          onClick={event => {
-            event.stopPropagation();
-            onClose();
-          }}
-          className={`absolute top-3 right-3 z-10 p-2 rounded-full transition-colors ${
-            isDark
-              ? "bg-black/40 hover:bg-black/60 text-white/80"
-              : "bg-black/20 hover:bg-black/30 text-neutral-600"
-          }`}
-          aria-label="关闭"
-        >
-          <Icon name="close" className="w-4 h-4" />
-        </button>
+        {isExpanded ? (
+          <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={event => {
+                event.stopPropagation();
+                onDock();
+              }}
+              className={`p-2 rounded-full transition-colors ${headerButtonClass}`}
+              aria-label="挂起到侧栏"
+              title="挂起到侧栏 (Esc)"
+            >
+              <Icon name="expand" className="w-4 h-4" />
+            </button>
+            <button
+              type="button"
+              onClick={event => {
+                event.stopPropagation();
+                onClose();
+              }}
+              className={`p-2 rounded-full transition-colors ${headerButtonClass}`}
+              aria-label="关闭"
+            >
+              <Icon name="close" className="w-4 h-4" />
+            </button>
+          </div>
+        ) : null}
 
         <div
           className="flex-1 min-h-0 overflow-y-auto article-reader px-5 sm:px-8 py-6 sm:py-8"
           style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
         >
           <div className="space-y-4">
-            <div className="space-y-2 pr-8">
+            <div className={`space-y-2 ${isExpanded ? "pr-20" : "pr-8"}`}>
               <span
                 className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md ${
                   isDark ? "bg-neutral-800 text-neutral-400" : "bg-neutral-100 text-neutral-500"
@@ -245,26 +306,16 @@ export function ArticleReaderModal({
                   />
                 ) : null}
 
-                {article.type === "video" ? (
-                  <div className="relative aspect-video bg-neutral-950 flex flex-col items-center justify-center text-white">
-                    {youTubeVideoId ? (
-                      <YouTubeEmbed videoId={youTubeVideoId} title={article.title} />
-                    ) : article.videoUrl ? (
-                      <video
-                        src={article.videoUrl}
-                        className="w-full h-full object-cover"
-                        controls
-                        poster={article.image}
-                      />
-                    ) : article.image ? (
-                      <ProxiedImage
-                        runtimeBase={runtimeBase}
-                        src={article.image}
-                        alt={article.title}
-                        className="w-full h-full object-cover opacity-80"
-                      />
-                    ) : null}
-                  </div>
+                {hasVideoMedia ? (
+                  <div
+                    ref={modalMountRef}
+                    className={
+                      inVideoWall
+                        ? "fixed -left-[9999px] top-0 w-[640px] aspect-video opacity-0 pointer-events-none overflow-hidden"
+                        : "relative aspect-video bg-neutral-950 w-full"
+                    }
+                    aria-hidden={inVideoWall}
+                  />
                 ) : null}
 
                 {article.type === "audio" && article.image ? (
