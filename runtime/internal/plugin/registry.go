@@ -22,6 +22,7 @@ type Registry struct {
 	fetcher   *RSSFetcher
 	wasmExec  *WASMExecutor
 	dispatch  *FeatureDispatcher
+	refreshQueue *RefreshQueue
 	mu        sync.RWMutex
 	records   map[string]*PluginRecord
 	pluginDir        map[string]string // plugin id -> absolute package dir
@@ -39,6 +40,7 @@ func NewRegistry(st *store.Store) *Registry {
 		bundledOnDisk: make(map[string]manifestOnDisk),
 	}
 	reg.dispatch = NewFeatureDispatcher(reg)
+	reg.refreshQueue = newRefreshQueue(reg)
 	return reg
 }
 
@@ -99,9 +101,12 @@ func (r *Registry) Sync(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		// Refresh manifest fields from disk; keep runtime state.
+		// Refresh manifest fields from disk; keep runtime state and market metadata.
+		contentRating := rec.ContentRating
 		rec.Manifest = *m
 		rec.Manifest.Bundled = onDisk.bundled
+		rec.ContentRating = contentRating
+		rec.Manifest.Meta.ContentRating = ""
 		if err := r.upsertPlugin(ctx, rec); err != nil {
 			return err
 		}
@@ -313,14 +318,21 @@ func (r *Registry) applyMarketPluginMetadata(
 			rating = NormalizeContentRating(fetched)
 		}
 	}
-	if rating != "" && rec.Meta.ContentRating != rating {
-		rec.Meta.ContentRating = rating
-		changed = true
+	ratingChanged := rating != "" && rec.ContentRating != rating
+	if ratingChanged {
+		rec.ContentRating = rating
 	}
-	if !changed {
+	if !changed && !ratingChanged {
 		return rec, nil
 	}
-	return r.UpdateManifest(ctx, rec.ID, &rec.Manifest)
+	if changed {
+		return r.UpdateManifest(ctx, rec.ID, &rec.Manifest)
+	}
+	if err := r.upsertPlugin(ctx, rec); err != nil {
+		return nil, err
+	}
+	r.setRecord(rec)
+	return cloneRecord(rec), nil
 }
 
 // UpdateOrbitFromMarket downloads a newer .orbit package and fully replaces on-disk assets and manifest.
@@ -411,13 +423,19 @@ func rowToRecord(row store.PluginRow) (*PluginRecord, error) {
 		return nil, err
 	}
 	MigrateManifestConfig(&m.Config)
+	contentRating := NormalizeContentRating(row.ContentRating)
+	if contentRating == "" {
+		contentRating = NormalizeContentRating(m.Meta.ContentRating)
+	}
+	m.Meta.ContentRating = ""
 	return &PluginRecord{
-		Manifest:  m,
-		Active:    row.Active,
-		SortOrder: row.SortOrder,
-		Installed: row.InstalledAt,
-		LastFetch: row.LastFetchAt,
-		LastError: row.LastError,
+		Manifest:      m,
+		ContentRating: contentRating,
+		Active:        row.Active,
+		SortOrder:     row.SortOrder,
+		Installed:     row.InstalledAt,
+		LastFetch:     row.LastFetchAt,
+		LastError:     row.LastError,
 	}, nil
 }
 
@@ -595,6 +613,9 @@ func (r *Registry) SetActive(ctx context.Context, id string, active bool) (*Plug
 		return nil, err
 	}
 	r.setRecord(rec)
+	if active {
+		r.refreshQueue.SchedulePluginRefresh(id, false)
+	}
 	return cloneRecord(rec), nil
 }
 
@@ -624,7 +645,8 @@ func (r *Registry) Uninstall(ctx context.Context, id string) error {
 }
 
 func (r *Registry) ForceRefreshPlugin(ctx context.Context, pluginID, channelID string) ([]FeedItem, error) {
-	if _, ok := r.Get(pluginID); !ok {
+	rec, ok := r.Get(pluginID)
+	if !ok {
 		return nil, fmt.Errorf("plugin not found: %s", pluginID)
 	}
 	if channelID != "" {
@@ -634,6 +656,10 @@ func (r *Registry) ForceRefreshPlugin(ctx context.Context, pluginID, channelID s
 		r.dispatch.ClearChannelSession(pluginID, channelID)
 	} else if err := r.store.DeleteFeedItemsByPlugin(ctx, pluginID); err != nil {
 		return nil, err
+	}
+	if channelID == "" && rec.Source == SourceWASM {
+		r.refreshQueue.SchedulePluginRefresh(pluginID, true)
+		return []FeedItem{}, nil
 	}
 	return r.RefreshPlugin(ctx, pluginID, channelID)
 }
@@ -682,6 +708,17 @@ func (r *Registry) RefreshPlugin(ctx context.Context, pluginID, channelID string
 		}
 		all = items
 	} else {
+		if rec.Source == SourceWASM {
+			r.refreshQueue.SchedulePluginRefresh(pluginID, false)
+			items, _, err := r.loadFeedItemsForPlugin(ctx, rec, "", "")
+			if err != nil {
+				return nil, err
+			}
+			sort.Slice(items, func(i, j int) bool {
+				return items[i].PublishedAt > items[j].PublishedAt
+			})
+			return dedupeFeedItems(items), nil
+		}
 		for _, ch := range channels {
 			if !ChannelEnabled(&ch) {
 				continue
@@ -822,7 +859,7 @@ func (r *Registry) Feed(
 		if !rec.Active || rec.ID == "all" {
 			continue
 		}
-		if globalAll && IsMatureContentRating(rec.Meta.ContentRating) {
+		if globalAll && IsMatureContentRating(rec.ContentRating) {
 			continue
 		}
 		if !HasCapability(&rec.Manifest, CapFeed) {
@@ -1041,7 +1078,7 @@ func (r *Registry) CountUnread(
 			if !rec.Active || rec.ID == "all" {
 				continue
 			}
-			if IsMatureContentRating(rec.Meta.ContentRating) {
+			if IsMatureContentRating(rec.ContentRating) {
 				continue
 			}
 			ids = append(ids, rec.ID)

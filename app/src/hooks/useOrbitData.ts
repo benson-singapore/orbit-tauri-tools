@@ -614,7 +614,10 @@ export function useOrbitData(
       )));
       try {
         await setPluginActive(id, nextActive);
-        await loadFeedPage({ offset: 0, append: false });
+        void loadFeedPage({ offset: 0, append: false }).catch(console.error);
+        if (nextActive) {
+          scheduleFeedReloadAfterBackgroundFetch(loadFeedPage);
+        }
       } catch (err) {
         setPlugins(prev => prev.map(plugin => (
           plugin.id === id ? { ...plugin, active: currentlyActive } : plugin

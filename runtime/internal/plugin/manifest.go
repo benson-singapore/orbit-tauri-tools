@@ -167,7 +167,8 @@ func SaveManifest(dir string, m *Manifest) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("mkdir plugin dir: %w", err)
 	}
-	data, err := json.MarshalIndent(m, "", "  ")
+	persisted := manifestForPersistence(*m)
+	data, err := json.MarshalIndent(persisted, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}

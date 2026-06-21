@@ -91,7 +91,7 @@ type ManifestMeta struct {
 	CategoryTag    string `json:"categoryTag"`
 	Official       bool   `json:"official"`
 	MarketID       string `json:"marketId,omitempty"`
-	ContentRating  string `json:"contentRating,omitempty"`
+	ContentRating  string `json:"contentRating,omitempty"` // legacy; persisted in plugins.content_rating
 }
 
 type InstallRSSOptions struct {
@@ -144,11 +144,12 @@ type FeedItem struct {
 // PluginRecord merges manifest with runtime state from SQLite.
 type PluginRecord struct {
 	Manifest
-	Active    bool   `json:"active"`
-	SortOrder int    `json:"sortOrder"`
-	Installed int64  `json:"installedAt"`
-	LastFetch int64  `json:"lastFetchAt,omitempty"`
-	LastError string `json:"lastError,omitempty"`
+	ContentRating string `json:"contentRating,omitempty"`
+	Active        bool   `json:"active"`
+	SortOrder     int    `json:"sortOrder"`
+	Installed     int64  `json:"installedAt"`
+	LastFetch     int64  `json:"lastFetchAt,omitempty"`
+	LastError     string `json:"lastError,omitempty"`
 }
 
 func DefaultRefreshInterval(sec int) time.Duration {

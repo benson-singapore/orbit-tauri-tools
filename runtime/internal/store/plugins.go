@@ -10,14 +10,15 @@ import (
 )
 
 type PluginRow struct {
-	ID           string
-	ManifestJSON string
-	Active       bool
-	SortOrder    int
-	InstalledAt  int64
-	LastFetchAt  int64
-	LastError    string
-	Source       string
+	ID            string
+	ManifestJSON  string
+	ContentRating string
+	Active        bool
+	SortOrder     int
+	InstalledAt   int64
+	LastFetchAt   int64
+	LastError     string
+	Source        string
 }
 
 type FeedItemRow struct {
@@ -37,7 +38,7 @@ type FeedItemRow struct {
 
 func (s *Store) ListPlugins(ctx context.Context) ([]PluginRow, error) {
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT id, manifest_json, active, sort_order, installed_at,
+		SELECT id, manifest_json, COALESCE(content_rating, ''), active, sort_order, installed_at,
 		       COALESCE(last_fetch_at, 0), COALESCE(last_error, ''), source
 		FROM plugins
 		ORDER BY sort_order ASC, name ASC
@@ -51,7 +52,7 @@ func (s *Store) ListPlugins(ctx context.Context) ([]PluginRow, error) {
 	for rows.Next() {
 		var row PluginRow
 		if err := rows.Scan(
-			&row.ID, &row.ManifestJSON, &row.Active, &row.SortOrder,
+			&row.ID, &row.ManifestJSON, &row.ContentRating, &row.Active, &row.SortOrder,
 			&row.InstalledAt, &row.LastFetchAt, &row.LastError, &row.Source,
 		); err != nil {
 			return nil, err
@@ -68,18 +69,19 @@ func (s *Store) UpsertPluginRow(ctx context.Context, row PluginRow) error {
 	}
 	_, err := s.DB.ExecContext(ctx, `
 		INSERT INTO plugins (
-			id, name, manifest_json, active, sort_order, installed_at,
+			id, name, manifest_json, content_rating, active, sort_order, installed_at,
 			last_fetch_at, last_error, source
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			manifest_json = excluded.manifest_json,
+			content_rating = excluded.content_rating,
 			active = excluded.active,
 			sort_order = excluded.sort_order,
 			last_fetch_at = excluded.last_fetch_at,
 			last_error = excluded.last_error,
 			source = excluded.source
-	`, row.ID, pluginNameFromManifest(row.ManifestJSON), row.ManifestJSON, active,
+	`, row.ID, pluginNameFromManifest(row.ManifestJSON), row.ManifestJSON, row.ContentRating, active,
 		row.SortOrder, row.InstalledAt, row.LastFetchAt, row.LastError, row.Source)
 	return err
 }
@@ -161,6 +163,21 @@ func (s *Store) CountFeedItemsForChannel(ctx context.Context, pluginID, channelI
 		pluginID, channelID,
 	).Scan(&count)
 	return count, err
+}
+
+func (s *Store) MaxFeedFetchedAtForChannel(ctx context.Context, pluginID, channelID string) (int64, error) {
+	var fetchedAt sql.NullInt64
+	err := s.DB.QueryRowContext(ctx, `
+		SELECT MAX(fetched_at) FROM feed_items
+		WHERE plugin_id = ? AND channel_id = ?
+	`, pluginID, channelID).Scan(&fetchedAt)
+	if err != nil {
+		return 0, err
+	}
+	if !fetchedAt.Valid {
+		return 0, nil
+	}
+	return fetchedAt.Int64, nil
 }
 
 func (s *Store) TrimFeedItemsForChannel(

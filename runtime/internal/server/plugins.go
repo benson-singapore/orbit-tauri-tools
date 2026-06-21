@@ -99,7 +99,7 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		LastError:       rec.LastError,
 		Version:         rec.Version,
 		MarketID:        rec.Meta.MarketID,
-		ContentRating:   rec.Meta.ContentRating,
+		ContentRating:   rec.ContentRating,
 	}
 }
 

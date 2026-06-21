@@ -58,7 +58,8 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 		}
 		if itemCount == 0 {
 			if listItemsShouldRefresh(features, offset, itemCount) {
-				return d.Refresh(ctx, pluginID, channelID)
+				d.registry.refreshQueue.EnqueueInteractive(pluginID, channelID)
+				return DispatchResult{Items: []FeedItem{}, HasMore: false}, nil
 			}
 			return DispatchResult{Items: []FeedItem{}, HasMore: false}, nil
 		}
@@ -74,7 +75,8 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 		return DispatchResult{}, err
 	}
 	if len(rows) == 0 && listItemsShouldRefresh(features, offset, 0) {
-		return d.Refresh(ctx, pluginID, channelID)
+		d.registry.refreshQueue.EnqueueInteractive(pluginID, channelID)
+		return DispatchResult{Items: []FeedItem{}, HasMore: false}, nil
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, row := range rows {
@@ -106,7 +108,7 @@ func (d *FeatureDispatcher) ListChapters(ctx context.Context, pluginID, channelI
 	if features.Chapters == nil || !features.Chapters.Persist {
 		return DispatchResult{Items: []FeedItem{}}, nil
 	}
-	item, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
+	item, _, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -194,15 +196,15 @@ func (d *FeatureDispatcher) Search(ctx context.Context, pluginID, channelID, que
 }
 
 func (d *FeatureDispatcher) OpenDetail(ctx context.Context, pluginID, channelID, itemID string) (DispatchResult, error) {
-	item, err := d.loadFeedItem(ctx, pluginID, channelID, itemID)
+	item, inStore, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, itemID)
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	return d.dispatch(ctx, pluginID, channelID, TriggerOpenDetail, dispatchExtra{Item: item})
+	return d.dispatch(ctx, pluginID, channelID, TriggerOpenDetail, dispatchExtra{Item: item, ItemInStore: inStore})
 }
 
 func (d *FeatureDispatcher) OpenChapters(ctx context.Context, pluginID, channelID, itemID string) (DispatchResult, error) {
-	item, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, itemID)
+	item, _, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, itemID)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -210,7 +212,7 @@ func (d *FeatureDispatcher) OpenChapters(ctx context.Context, pluginID, channelI
 }
 
 func (d *FeatureDispatcher) LoadMoreChapters(ctx context.Context, pluginID, channelID, parentItemID string) (DispatchResult, error) {
-	parentItem, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
+	parentItem, _, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -218,7 +220,7 @@ func (d *FeatureDispatcher) LoadMoreChapters(ctx context.Context, pluginID, chan
 }
 
 func (d *FeatureDispatcher) RefreshChapters(ctx context.Context, pluginID, channelID, parentItemID string) (DispatchResult, error) {
-	parentItem, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
+	parentItem, _, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -226,7 +228,7 @@ func (d *FeatureDispatcher) RefreshChapters(ctx context.Context, pluginID, chann
 }
 
 func (d *FeatureDispatcher) ClearAndRefreshChapters(ctx context.Context, pluginID, channelID, parentItemID string) (DispatchResult, error) {
-	parentItem, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
+	parentItem, _, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -234,7 +236,7 @@ func (d *FeatureDispatcher) ClearAndRefreshChapters(ctx context.Context, pluginI
 }
 
 func (d *FeatureDispatcher) OpenChapterDetail(ctx context.Context, pluginID, channelID, parentItemID, chapterItemID string) (DispatchResult, error) {
-	parentItem, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
+	parentItem, _, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, parentItemID)
 	if err != nil {
 		return DispatchResult{}, err
 	}
@@ -257,6 +259,7 @@ type dispatchExtra struct {
 	Query       string
 	Params      map[string]string
 	Item        FeedItem
+	ItemInStore bool
 	ParentItem  FeedItem
 	ChapterItem FeedItem
 }
@@ -288,7 +291,7 @@ func (d *FeatureDispatcher) dispatch(
 
 	switch trigger {
 	case TriggerOpenDetail:
-		return d.handleOpenDetail(ctx, rec, ch, features, dir, vars, extra.Item)
+		return d.handleOpenDetail(ctx, rec, ch, features, dir, vars, extra.Item, extra.ItemInStore)
 	case TriggerOpenChapters:
 		return d.handleOpenChapters(ctx, rec, ch, features, dir, vars, extra.Item)
 	case TriggerLoadMoreChapters:
@@ -398,6 +401,7 @@ func (d *FeatureDispatcher) handleOpenDetail(
 	dir string,
 	vars map[string]string,
 	item FeedItem,
+	itemInStore bool,
 ) (DispatchResult, error) {
 	if features.Detail == nil {
 		return DispatchResult{}, fmt.Errorf("channel has no detail feature")
@@ -420,7 +424,7 @@ func (d *FeatureDispatcher) handleOpenDetail(
 	}
 	fetched := result.Items[0]
 	merged := mergeFeedItemDetail(item, fetched)
-	if features.Detail.Persist {
+	if itemInStore && features.Detail.Persist {
 		if err := d.registry.upsertFeedItem(ctx, merged, ch.ID); err != nil {
 			return DispatchResult{}, err
 		}
@@ -1198,20 +1202,20 @@ func (d *FeatureDispatcher) loadFeedItem(ctx context.Context, pluginID, channelI
 	return rowToFeedItem(*row, true), nil
 }
 
-func (d *FeatureDispatcher) loadFeedItemOrStub(ctx context.Context, pluginID, channelID, itemID string) (FeedItem, error) {
+func (d *FeatureDispatcher) loadFeedItemOrStub(ctx context.Context, pluginID, channelID, itemID string) (FeedItem, bool, error) {
 	item, err := d.loadFeedItem(ctx, pluginID, channelID, itemID)
 	if err == nil {
-		return item, nil
+		return item, true, nil
 	}
 	itemID = strings.TrimSpace(itemID)
 	if itemID == "" {
-		return FeedItem{}, err
+		return FeedItem{}, false, err
 	}
 	return FeedItem{
 		ID:        itemID,
 		PluginID:  pluginID,
 		ChannelID: channelID,
-	}, nil
+	}, false, nil
 }
 
 func (d *FeatureDispatcher) loadChapterItem(ctx context.Context, pluginID, channelID, parentID, itemID string) (FeedItem, error) {

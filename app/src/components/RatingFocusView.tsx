@@ -3,14 +3,16 @@ import { ProxiedImage } from "@/components/ProxiedImage";
 import { parseRatingScore } from "@/lib/ratingPlugin";
 import type { Article, ThemeMode } from "@/types";
 
-const COLUMN_COUNT = 4;
+const DEFAULT_COLUMN_COUNT = 4;
 
 interface RatingFocusViewProps {
   theme: ThemeMode;
   runtimeBase: string | null;
   articles: Article[];
+  columnCount?: number;
   loading: boolean;
   loadingMore: boolean;
+  searching?: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   onItemSelect?: (article: Article) => void;
@@ -21,8 +23,10 @@ export function RatingFocusView({
   theme,
   runtimeBase,
   articles,
+  columnCount = DEFAULT_COLUMN_COUNT,
   loading,
   loadingMore,
+  searching = false,
   hasMore,
   onLoadMore,
   onItemSelect,
@@ -32,7 +36,7 @@ export function RatingFocusView({
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (!hasMore || loadingMore || loading) return;
+    if (!hasMore || loadingMore || loading || searching) return;
 
     const sentinel = sentinelRef.current;
     if (!sentinel) return;
@@ -47,14 +51,14 @@ export function RatingFocusView({
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, loadingMore, loading, onLoadMore, articles.length, scrollRootRef]);
+  }, [hasMore, loadingMore, loading, searching, onLoadMore, articles.length, scrollRootRef]);
 
-  if (loading && articles.length === 0) {
+  if ((loading || searching) && articles.length === 0) {
     return (
       <div className="flex items-center justify-center py-24">
         <div className="flex items-center gap-2 text-sm text-neutral-400">
           <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
-          正在加载榜单…
+          {searching ? "正在搜索…" : "正在加载榜单…"}
         </div>
       </div>
     );
@@ -72,7 +76,7 @@ export function RatingFocusView({
     <div className="w-full">
       <div
         className="grid gap-3"
-        style={{ gridTemplateColumns: `repeat(${COLUMN_COUNT}, minmax(0, 1fr))` }}
+        style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
       >
         {articles.map(item => {
           const score = parseRatingScore(item.tags ?? []);
@@ -90,7 +94,7 @@ export function RatingFocusView({
               }`}
             >
               <div
-                className={`relative aspect-[2/3] w-full overflow-hidden ${
+                className={`relative aspect-video w-full overflow-hidden ${
                   theme === "dark" ? "bg-neutral-800" : "bg-neutral-100"
                 }`}
               >
@@ -118,19 +122,17 @@ export function RatingFocusView({
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/15 transition-colors pointer-events-none" />
               </div>
 
-              <div className="p-2.5 space-y-1">
+              <div className="flex-shrink-0 p-2.5 space-y-1">
                 <h4
-                  className={`text-xs font-semibold leading-snug line-clamp-2 ${
+                  className={`text-xs font-semibold leading-5 line-clamp-2 h-10 ${
                     theme === "dark" ? "text-neutral-100" : "text-neutral-800"
                   }`}
                 >
                   {item.title}
                 </h4>
-                {item.summary?.trim() ? (
-                  <p className="text-[10px] leading-snug text-neutral-400 line-clamp-2">
-                    {item.summary}
-                  </p>
-                ) : null}
+                <p className="text-[10px] leading-4 text-neutral-400 line-clamp-2 h-8">
+                  {item.summary?.trim() || "\u00A0"}
+                </p>
               </div>
             </button>
           );

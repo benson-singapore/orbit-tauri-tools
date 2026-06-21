@@ -7,11 +7,14 @@ interface ImageGalleryFocusViewProps {
   theme: ThemeMode;
   runtimeBase: string | null;
   articles: Article[];
+  columnCount?: number;
   loading: boolean;
   loadingMore: boolean;
+  searching?: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   onImageOpen?: (articleId: string) => void;
+  onItemDetailRequest?: (article: Article) => void;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }
 
@@ -67,20 +70,25 @@ export function ImageGalleryFocusView({
   theme,
   runtimeBase,
   articles,
+  columnCount,
   loading,
   loadingMore,
+  searching = false,
   hasMore,
   onLoadMore,
   onImageOpen,
+  onItemDetailRequest,
   scrollRootRef,
 }: ImageGalleryFocusViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const columnSentinelRefs = useRef<(HTMLDivElement | null)[]>([]);
-  const [columns, setColumns] = useState(4);
+  const [autoColumns, setAutoColumns] = useState(4);
   const [containerWidth, setContainerWidth] = useState(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
   const [aspectRatios, setAspectRatios] = useState<Record<string, number>>({});
+
+  const columns = columnCount ?? autoColumns;
 
   const galleryItems = useMemo(
     () =>
@@ -142,16 +150,18 @@ export function ImageGalleryFocusView({
     if (!el) return;
     const update = () => {
       setContainerWidth(el.clientWidth);
-      setColumns(resolveColumnCount(el.clientWidth));
+      if (columnCount == null) {
+        setAutoColumns(resolveColumnCount(el.clientWidth));
+      }
     };
     update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [columnCount]);
 
   useEffect(() => {
-    if (!hasMore || loadingMore || loading) return;
+    if (!hasMore || loadingMore || loading || searching) return;
 
     const sentinels = columnSentinelRefs.current.filter(
       (node): node is HTMLDivElement => node !== null,
@@ -168,7 +178,7 @@ export function ImageGalleryFocusView({
     );
     sentinels.forEach(sentinel => observer.observe(sentinel));
     return () => observer.disconnect();
-  }, [hasMore, loadingMore, loading, onLoadMore, galleryColumns, scrollRootRef]);
+  }, [hasMore, loadingMore, loading, searching, onLoadMore, galleryColumns, scrollRootRef]);
 
   const openLightbox = useCallback(
     (index: number) => {
@@ -181,18 +191,29 @@ export function ImageGalleryFocusView({
     [galleryItems, onImageOpen],
   );
 
+  const handleItemClick = useCallback(
+    (article: Article, lightboxIndex: number) => {
+      if (onItemDetailRequest) {
+        onItemDetailRequest(article);
+        return;
+      }
+      openLightbox(lightboxIndex);
+    },
+    [onItemDetailRequest, openLightbox],
+  );
+
   const handleNearEnd = useCallback(() => {
     if (hasMore && !loadingMore) {
       onLoadMore();
     }
   }, [hasMore, loadingMore, onLoadMore]);
 
-  if (loading && galleryItems.length === 0) {
+  if ((loading || searching) && galleryItems.length === 0) {
     return (
       <div className="flex items-center justify-center py-24">
         <div className="flex items-center gap-2 text-sm text-neutral-400">
           <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
-          正在加载图片…
+          {searching ? "正在搜索…" : "正在加载图片…"}
         </div>
       </div>
     );
@@ -212,11 +233,19 @@ export function ImageGalleryFocusView({
         <div className="flex w-full gap-2 items-start">
           {galleryColumns.map((column, columnIndex) => (
             <div key={columnIndex} className="flex-1 min-w-0 flex flex-col gap-2">
-              {column.map(({ item, lightboxIndex }) => (
+              {column.map(({ item, lightboxIndex }) => {
+                const article = articles.find(entry => entry.id === item.id);
+                return (
                 <button
                   key={item.id}
                   type="button"
-                  onClick={() => openLightbox(lightboxIndex)}
+                  onClick={() => {
+                    if (article) {
+                      handleItemClick(article, lightboxIndex);
+                    } else {
+                      openLightbox(lightboxIndex);
+                    }
+                  }}
                   className={`group relative w-full rounded-lg overflow-hidden cursor-pointer block ${
                     theme === "dark" ? "bg-neutral-800" : "bg-neutral-100"
                   }`}
@@ -239,7 +268,8 @@ export function ImageGalleryFocusView({
                     </div>
                   ) : null}
                 </button>
-              ))}
+              );
+              })}
               <div
                 ref={node => {
                   columnSentinelRefs.current[columnIndex] = node;

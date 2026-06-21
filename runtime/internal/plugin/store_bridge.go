@@ -11,23 +11,30 @@ import (
 )
 
 func (r *Registry) upsertPlugin(ctx context.Context, rec *PluginRecord) error {
-	manifestJSON, err := json.Marshal(rec.Manifest)
+	manifestJSON, err := json.Marshal(manifestForPersistence(rec.Manifest))
 	if err != nil {
 		return fmt.Errorf("marshal manifest: %w", err)
 	}
 	return r.store.UpsertPluginRow(ctx, storePluginRow(rec, string(manifestJSON)))
 }
 
+func manifestForPersistence(m Manifest) Manifest {
+	cp := m
+	cp.Meta.ContentRating = ""
+	return cp
+}
+
 func storePluginRow(rec *PluginRecord, manifestJSON string) store.PluginRow {
 	return store.PluginRow{
-		ID:           rec.ID,
-		ManifestJSON: manifestJSON,
-		Active:       rec.Active,
-		SortOrder:    rec.SortOrder,
-		InstalledAt:  rec.Installed,
-		LastFetchAt:  rec.LastFetch,
-		LastError:    rec.LastError,
-		Source:       rec.Source,
+		ID:            rec.ID,
+		ManifestJSON:  manifestJSON,
+		ContentRating: rec.ContentRating,
+		Active:        rec.Active,
+		SortOrder:     rec.SortOrder,
+		InstalledAt:   rec.Installed,
+		LastFetchAt:   rec.LastFetch,
+		LastError:     rec.LastError,
+		Source:        rec.Source,
 	}
 }
 

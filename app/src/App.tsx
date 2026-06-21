@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import orbitLogo from "@/assets/logo.png";
 import { Icon } from "@/components/Icon";
 import { ImageGalleryFocusView } from "@/components/ImageGalleryFocusView";
+import { ArticleReaderModal } from "@/components/ArticleReaderModal";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginChannelBar } from "@/components/PluginChannelBar";
@@ -75,6 +76,38 @@ import type {
   ThemeMode,
 } from "@/types";
 import type { PluginPreviewMode } from "@/lib/pluginPreviewMode";
+import {
+  persistGridColumnCount,
+  readStoredGridColumnCount,
+  type GridColumnCount,
+} from "@/lib/gridColumnCount";
+import { GridColumnSwitcher } from "@/components/GridColumnSwitcher";
+
+const PREVIEW_MODE_OPTIONS = [
+  ["reader", "阅读模式", "文章阅读布局"] as const,
+  ["waterfall", "瀑布流", "图片优先布局"] as const,
+  ["grid", "栅格", "卡片评分布局"] as const,
+];
+
+function previewModeLabel(mode: PluginPreviewMode): string {
+  return PREVIEW_MODE_OPTIONS.find(([value]) => value === mode)?.[1] ?? "阅读模式";
+}
+
+function resolvePreviewModeForPlugin(
+  plugin: Plugin | undefined,
+  stored: PluginPreviewMode | null | undefined,
+): PluginPreviewMode {
+  const mode = stored ?? "reader";
+  if (mode === "waterfall" && !isImageGalleryPlugin(plugin)) {
+    return "reader";
+  }
+  return mode;
+}
+
+function previewModeOptionsForPlugin(plugin: Plugin | undefined) {
+  const showWaterfall = isImageGalleryPlugin(plugin);
+  return PREVIEW_MODE_OPTIONS.filter(([mode]) => mode !== "waterfall" || showWaterfall);
+}
 
 export default function App() {
   useUiZoom();
@@ -82,8 +115,7 @@ export default function App() {
   const onTitlebarMouseDown = useTitlebarDrag();
 
   const [theme, _setTheme] = useState<ThemeMode>("light");
-  // Default to collapsed so the (plugin) sidebar starts minimized.
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [feedPanelVisible, setFeedPanelVisible] = useState(true);
   const [chaptersPanelVisible, setChaptersPanelVisible] = useState(true);
   const [activePlugin, setActivePlugin] = useState("all");
@@ -92,6 +124,7 @@ export default function App() {
   const [activeCategory, setActiveCategory] = useState<CategoryFilter>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [submittedSearch, setSubmittedSearch] = useState("");
+  const [focusSearchOpen, setFocusSearchOpen] = useState(false);
 
   const commitSearch = () => {
     setSubmittedSearch(searchQuery.trim());
@@ -147,7 +180,6 @@ export default function App() {
     savePluginManifest: orbitSavePluginManifest,
     forceRefreshPlugin: orbitForceRefreshPlugin,
     refreshChannelFeed,
-    clearRefreshChannelFeed,
   } = useOrbitData(
     activePlugin,
     activeChannel,
@@ -231,9 +263,10 @@ export default function App() {
   }, [activePlugin, activeChannel]);
 
   const [pluginPreviewMode, setPluginPreviewMode] = useState<PluginPreviewMode>("reader");
-  const [previewModeModalOpen, setPreviewModeModalOpen] = useState(false);
-  const [pendingPreviewMode, setPendingPreviewMode] = useState<PluginPreviewMode>("reader");
-  const [savePreviewModeAsDefault, setSavePreviewModeAsDefault] = useState(true);
+  const [previewModeMenuOpen, setPreviewModeMenuOpen] = useState(false);
+  const [gridColumnCount, setGridColumnCount] = useState<GridColumnCount>(() => readStoredGridColumnCount());
+  const previewModeMenuRef = useRef<HTMLDivElement>(null);
+  const [readerModalArticle, setReaderModalArticle] = useState<Article | null>(null);
   const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
 
@@ -397,11 +430,17 @@ export default function App() {
   const isGridPreviewMode = pluginPreviewMode === "grid";
   const hideFeedPanel = !isReaderPreviewMode || !feedPanelVisible;
   const isPluginFocusMode = !isReaderPreviewMode && activePlugin !== "all";
+  const showFocusModeSearch = isPluginFocusMode && !isBrowseDynamicPluginActive;
+  const showFocusSearchInput = showFocusModeSearch
+    && (isActiveDynamicChannel || focusSearchOpen || Boolean(submittedSearch));
+  const showFocusSearchButton = showFocusModeSearch && !showFocusSearchInput;
 
   const showFeedChannelActions = activePlugin !== "all"
     && channelCapabilities.canRefresh
     && activeTab !== "bookmarks"
     && activeTab !== "trending";
+
+  const showFocusModeRefreshButton = isPluginFocusMode && showFeedChannelActions;
 
   const feedListBusy = feedLoading || feedRefreshing;
 
@@ -410,14 +449,6 @@ export default function App() {
     setFeedRefreshing(true);
     void refreshChannelFeed()
       .catch(err => console.error("refresh channel feed failed", err))
-      .finally(() => setFeedRefreshing(false));
-  };
-
-  const handleFeedClearAndRefresh = () => {
-    if (feedListBusy) return;
-    setFeedRefreshing(true);
-    void clearRefreshChannelFeed()
-      .catch(err => console.error("clear refresh channel feed failed", err))
       .finally(() => setFeedRefreshing(false));
   };
 
@@ -891,34 +922,70 @@ export default function App() {
     setShowPluginStore(false);
     if (isSwitchingPlugin) {
       const saved = getStoredPluginPreviewMode(pluginId);
-      setPluginPreviewMode(saved ?? "reader");
+      setPluginPreviewMode(resolvePreviewModeForPlugin(pluginById.get(pluginId), saved));
     }
   };
 
   useEffect(() => {
+    setPreviewModeMenuOpen(false);
+    setReaderModalArticle(null);
     if (activePlugin === "all") {
       setPluginPreviewMode("reader");
       return;
     }
     const saved = getStoredPluginPreviewMode(activePlugin);
-    setPluginPreviewMode(saved ?? "reader");
+    setPluginPreviewMode(resolvePreviewModeForPlugin(activePluginMeta, saved));
+  }, [activePlugin, activePluginMeta]);
+
+  useEffect(() => {
+    if (!isPluginFocusMode) {
+      setFocusSearchOpen(false);
+      return;
+    }
+    if (isActiveDynamicChannel) {
+      setFocusSearchOpen(true);
+    } else if (!submittedSearch) {
+      setFocusSearchOpen(false);
+    }
+  }, [isPluginFocusMode, isActiveDynamicChannel, activeChannel, submittedSearch]);
+
+  const isActiveImageGalleryPlugin = isImageGalleryPlugin(activePluginMeta);
+
+  const openReaderDetailModal = useCallback((article: Article) => {
+    setReaderModalArticle(article);
+    void markArticleRead(article);
+  }, [markArticleRead]);
+
+  const handleSelectPreviewMode = useCallback((mode: PluginPreviewMode) => {
+    if (activePlugin === "all") return;
+    setPluginPreviewMode(mode);
+    persistPluginPreviewMode(activePlugin, mode);
+    setPreviewModeMenuOpen(false);
   }, [activePlugin]);
 
-  const handleOpenPreviewModeModal = useCallback(() => {
-    if (activePlugin === "all") return;
-    setPendingPreviewMode(pluginPreviewMode);
-    setSavePreviewModeAsDefault(true);
-    setPreviewModeModalOpen(true);
-  }, [activePlugin, pluginPreviewMode]);
+  const handleGridColumnCountChange = useCallback((count: GridColumnCount) => {
+    setGridColumnCount(count);
+    persistGridColumnCount(count);
+  }, []);
 
-  const handleApplyPreviewMode = useCallback(() => {
+  useEffect(() => {
+    if (!previewModeMenuOpen) return;
+    const handleClickOutside = (event: MouseEvent) => {
+      if (
+        previewModeMenuRef.current
+        && !previewModeMenuRef.current.contains(event.target as Node)
+      ) {
+        setPreviewModeMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [previewModeMenuOpen]);
+
+  const handlePreviewModePrimaryClick = useCallback(() => {
     if (activePlugin === "all") return;
-    setPluginPreviewMode(pendingPreviewMode);
-    if (savePreviewModeAsDefault) {
-      persistPluginPreviewMode(activePlugin, pendingPreviewMode);
-    }
-    setPreviewModeModalOpen(false);
-  }, [activePlugin, pendingPreviewMode, savePreviewModeAsDefault]);
+    setPreviewModeMenuOpen(open => !open);
+  }, [activePlugin]);
 
   const clearGroupFeedScope = () => {
     setActivePluginGroupId(null);
@@ -1404,15 +1471,6 @@ export default function App() {
                       >
                         <Icon name="refresh" className={`w-3.5 h-3.5 ${feedRefreshing ? "animate-spin" : ""}`} />
                       </button>
-                      <button
-                        type="button"
-                        onClick={handleFeedClearAndRefresh}
-                        disabled={feedListBusy}
-                        title="清空并刷新"
-                        className="px-2 py-0.5 rounded-lg text-[11px] font-medium text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 dark:hover:text-neutral-200 dark:hover:bg-neutral-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
-                      >
-                        清空
-                      </button>
                     </div>
                   ) : null}
                   <span>
@@ -1635,7 +1693,9 @@ export default function App() {
                         ) : null}
                         {isWaterfallPreviewMode && activePlugin !== "all" ? (
                           <span className="text-xs text-neutral-400 truncate">
-                            图片观赏 · 共 {filteredArticles.length} 张
+                            {isActiveImageGalleryPlugin
+                              ? `图片观赏 · 共 ${filteredArticles.length} 张`
+                              : `瀑布流 · 共 ${filteredArticles.filter(item => item.pluginId === activePlugin).length} 条`}
                           </span>
                         ) : null}
                         {isGridPreviewMode && activePlugin !== "all" ? (
@@ -1671,42 +1731,136 @@ export default function App() {
                           </div>
                         ) : null}
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (hideFeedPanel) {
-                              setPluginPreviewMode("reader");
-                              setFeedPanelVisible(true);
-                              return;
-                            }
-                            setFeedPanelVisible(false);
-                          }}
-                          disabled={activePlugin === "all"}
-                          className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all disabled:opacity-30 disabled:pointer-events-none ${
-                            !hideFeedPanel
-                              ? "bg-neutral-900 text-white dark:bg-white dark:text-neutral-900"
-                              : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
-                          }`}
-                          title={!hideFeedPanel ? "专注模式" : "退出专注模式"}
-                        >
-                          <Icon name="focus" className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">
-                            {!hideFeedPanel ? "专注模式" : "退出专注"}
-                          </span>
-                        </button>
+                        {(isWaterfallPreviewMode || isGridPreviewMode) && activePlugin !== "all" ? (
+                          <GridColumnSwitcher
+                            theme={theme}
+                            value={gridColumnCount}
+                            onChange={handleGridColumnCountChange}
+                          />
+                        ) : null}
 
-                        <button
-                          type="button"
-                          onClick={handleOpenPreviewModeModal}
-                          disabled={activePlugin === "all"}
-                          className="p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 disabled:opacity-30 disabled:pointer-events-none"
-                          title="预览模式"
-                        >
-                          <Icon name="layers" className="w-3.5 h-3.5" />
-                          <span className="hidden sm:inline">
-                            预览模式
-                          </span>
-                        </button>
+                        <div className="relative flex items-center" ref={previewModeMenuRef}>
+                          <button
+                            type="button"
+                            onClick={handlePreviewModePrimaryClick}
+                            disabled={activePlugin === "all"}
+                            className={`p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all disabled:opacity-30 disabled:pointer-events-none ${
+                              previewModeMenuOpen
+                                ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200"
+                                : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
+                            }`}
+                            title="预览模式"
+                            aria-expanded={previewModeMenuOpen}
+                            aria-haspopup="menu"
+                          >
+                            <Icon name="layers" className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">
+                              {previewModeLabel(pluginPreviewMode)}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewModeMenuOpen(open => !open)}
+                            disabled={activePlugin === "all"}
+                            className={`p-1 rounded-lg transition-all disabled:opacity-30 disabled:pointer-events-none ${
+                              previewModeMenuOpen
+                                ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200"
+                                : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
+                            }`}
+                            title="切换预览模式"
+                            aria-label="切换预览模式"
+                          >
+                            <svg
+                              viewBox="0 0 12 12"
+                              className={`w-3 h-3 opacity-60 transition-transform ${previewModeMenuOpen ? "rotate-180" : ""}`}
+                              aria-hidden="true"
+                            >
+                              <path
+                                d="M3 4.5L6 7.5L9 4.5"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                              />
+                            </svg>
+                          </button>
+
+                          {previewModeMenuOpen ? (
+                            <div
+                              role="menu"
+                              className={`absolute right-0 top-full z-50 mt-1.5 w-52 overflow-hidden rounded-xl border shadow-lg ${
+                                theme === "dark"
+                                  ? "border-neutral-700 bg-[#1c1d1f]"
+                                  : "border-neutral-200 bg-white"
+                              }`}
+                            >
+                              <div className={`px-3 py-2 text-[11px] font-medium ${
+                                theme === "dark" ? "text-neutral-400" : "text-neutral-500"
+                              }`}>
+                                预览模式
+                              </div>
+                              {previewModeOptionsForPlugin(activePluginMeta).map(([mode, label, desc]) => {
+                                const isActive = pluginPreviewMode === mode;
+                                return (
+                                  <button
+                                    key={mode}
+                                    type="button"
+                                    role="menuitemradio"
+                                    aria-checked={isActive}
+                                    onClick={() => handleSelectPreviewMode(mode)}
+                                    className={`flex w-full items-start gap-2 px-3 py-2 text-left transition-colors ${
+                                      isActive
+                                        ? theme === "dark"
+                                          ? "bg-indigo-950/40 text-indigo-300"
+                                          : "bg-indigo-50 text-indigo-700"
+                                        : theme === "dark"
+                                          ? "hover:bg-neutral-800/80 text-neutral-200"
+                                          : "hover:bg-neutral-50 text-neutral-800"
+                                    }`}
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="text-xs font-medium">{label}</div>
+                                      <div className={`text-[11px] ${
+                                        theme === "dark" ? "text-neutral-500" : "text-neutral-400"
+                                      }`}>
+                                        {desc}
+                                      </div>
+                                    </div>
+                                    {isActive ? (
+                                      <Icon name="check" className="mt-0.5 w-3.5 h-3.5 shrink-0 opacity-80" />
+                                    ) : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                        </div>
+
+                        {showFocusSearchButton ? (
+                          <button
+                            type="button"
+                            onClick={() => setFocusSearchOpen(true)}
+                            className="p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
+                            title="搜索"
+                          >
+                            <Icon name="search" className="w-3.5 h-3.5" />
+                            <span className="hidden sm:inline">搜索</span>
+                          </button>
+                        ) : null}
+
+                        {showFocusModeRefreshButton ? (
+                          <button
+                            type="button"
+                            onClick={handleFeedRefresh}
+                            disabled={feedListBusy}
+                            className="p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            title="刷新"
+                          >
+                            <Icon name="refresh" className={`w-3.5 h-3.5 ${feedRefreshing ? "animate-spin" : ""}`} />
+                            <span className="hidden sm:inline">刷新</span>
+                          </button>
+                        ) : null}
 
                         {!isPluginFocusMode && selectedItem?.sourceUrl ? (
                           <a
@@ -1752,6 +1906,57 @@ export default function App() {
                     </div>
                   </div>
 
+                  {showFocusSearchInput ? (
+                    <div className="mt-2">
+                      <div className={`relative flex items-center rounded-xl p-1 transition-all ${
+                        theme === "dark" ? "bg-[#1c1d1f]" : "bg-[#f0f4f9]"
+                      }`}>
+                        <div className="pl-3 pr-2 text-neutral-400">
+                          {feedSearching ? (
+                            <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
+                          ) : (
+                            <Icon name="search" className="w-4 h-4" />
+                          )}
+                        </div>
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              commitSearch();
+                            }
+                          }}
+                          placeholder={
+                            isActiveDynamicChannel
+                              ? "输入关键词后按回车搜索"
+                              : "搜索文章标题、摘要、标签…（回车搜索）"
+                          }
+                          className="w-full py-1.5 bg-transparent text-sm outline-none placeholder-neutral-400 dark:placeholder-neutral-500"
+                        />
+                        {searchQuery ? (
+                          <button
+                            type="button"
+                            onClick={clearSearch}
+                            className="p-1 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-full"
+                          >
+                            <Icon name="close" className="w-3.5 h-3.5 text-neutral-500" />
+                          </button>
+                        ) : !isActiveDynamicChannel ? (
+                          <button
+                            type="button"
+                            onClick={() => setFocusSearchOpen(false)}
+                            className="p-1 hover:bg-neutral-200 dark:hover:bg-neutral-700 rounded-full"
+                            title="收起搜索"
+                          >
+                            <Icon name="close" className="w-3.5 h-3.5 text-neutral-500" />
+                          </button>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : null}
+
                   {isPluginFocusMode && showPluginChannelBar ? (
                     <PluginChannelBar
                       activeChannel={activeChannel}
@@ -1762,76 +1967,16 @@ export default function App() {
                   ) : null}
                 </div>
 
-                {previewModeModalOpen ? (
-                  <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 px-4">
-                    <div
-                      className={`w-full max-w-md rounded-2xl border p-4 shadow-xl ${
-                        theme === "dark" ? "bg-[#1c1d1f] border-neutral-800" : "bg-white border-neutral-200"
-                      }`}
-                    >
-                      <div className="mb-3">
-                        <h3 className="text-sm font-semibold">选择预览模式</h3>
-                        <p className="mt-1 text-xs text-neutral-500">
-                          切换当前插件展示方式，可选是否保存为默认。
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        {([
-                          ["reader", "阅读模式", "文章阅读布局"] as const,
-                          ["waterfall", "瀑布流", "图片优先布局"] as const,
-                          ["grid", "栅格", "卡片评分布局"] as const,
-                        ]).map(([mode, label, desc]) => (
-                          <button
-                            key={mode}
-                            type="button"
-                            onClick={() => setPendingPreviewMode(mode)}
-                            className={`w-full rounded-xl border px-3 py-2 text-left transition-colors ${
-                              pendingPreviewMode === mode
-                                ? "border-indigo-500 bg-indigo-50 dark:bg-indigo-950/30"
-                                : "border-neutral-200 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800/50"
-                            }`}
-                          >
-                            <div className="text-sm font-medium">{label}</div>
-                            <div className="text-xs text-neutral-500">{desc}</div>
-                          </button>
-                        ))}
-                      </div>
-                      <label className="mt-3 flex items-center gap-2 text-xs text-neutral-600 dark:text-neutral-300">
-                        <input
-                          type="checkbox"
-                          checked={savePreviewModeAsDefault}
-                          onChange={(e) => setSavePreviewModeAsDefault(e.target.checked)}
-                        />
-                        保存预览模式（下次切换回该插件时默认使用）
-                      </label>
-                      <div className="mt-4 flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setPreviewModeModalOpen(false)}
-                          className="rounded-lg px-3 py-1.5 text-xs text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
-                        >
-                          取消
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleApplyPreviewMode}
-                          className="rounded-lg bg-neutral-900 px-3 py-1.5 text-xs text-white dark:bg-white dark:text-neutral-900"
-                        >
-                          应用
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
-
                 {isWaterfallPreviewMode && activePlugin !== "all" ? (
                   <ImageGalleryFocusView
-                    key={`${activePlugin}-${activeChannel}`}
+                    key={`${activePlugin}-${activeChannel}-${gridColumnCount}`}
                     theme={theme}
                     runtimeBase={runtimeBase}
                     articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                    columnCount={gridColumnCount}
                     loading={feedLoading}
                     loadingMore={feedLoadingMore}
+                    searching={feedSearching}
                     hasMore={feedHasMore}
                     onLoadMore={() => {
                       void loadMore().catch(console.error);
@@ -1842,25 +1987,28 @@ export default function App() {
                         void markArticleRead(article);
                       }
                     }}
+                    onItemDetailRequest={
+                      !isActiveImageGalleryPlugin
+                        ? openReaderDetailModal
+                        : undefined
+                    }
                     scrollRootRef={readerPanelRef}
                   />
                 ) : isGridPreviewMode && activePlugin !== "all" ? (
                   <RatingFocusView
-                    key={`${activePlugin}-${activeChannel}`}
+                    key={`${activePlugin}-${activeChannel}-${gridColumnCount}`}
                     theme={theme}
                     runtimeBase={runtimeBase}
                     articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                    columnCount={gridColumnCount}
                     loading={feedLoading}
                     loadingMore={feedLoadingMore}
+                    searching={feedSearching}
                     hasMore={feedHasMore}
                     onLoadMore={() => {
                       void loadMore().catch(console.error);
                     }}
-                    onItemSelect={(item) => {
-                      void markArticleRead(item);
-                      setSelectedItem(item);
-                      setPluginPreviewMode("reader");
-                    }}
+                    onItemSelect={openReaderDetailModal}
                     scrollRootRef={readerPanelRef}
                   />
                 ) : selectedItem ? (
@@ -2230,6 +2378,19 @@ export default function App() {
         </main>
 
       </div>
+
+      {readerModalArticle ? (
+        <ArticleReaderModal
+          theme={theme}
+          runtimeBase={runtimeBase}
+          article={readerModalArticle}
+          readerFontScale={readerFontScale}
+          hasDetail={channelCapabilities.hasDetail}
+          activeChannel={activeChannel}
+          pluginMeta={pluginById.get(readerModalArticle.pluginId)}
+          onClose={() => setReaderModalArticle(null)}
+        />
+      ) : null}
 
     </div>
   );

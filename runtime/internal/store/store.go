@@ -123,6 +123,9 @@ func (s *Store) migrate() error {
 	if err := s.migrateDicts(); err != nil {
 		return err
 	}
+	if err := s.migratePluginContentRating(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -266,6 +269,32 @@ func (s *Store) migrateDicts() error {
 		}
 	}
 	return s.seedDefaultDicts()
+}
+
+func (s *Store) migratePluginContentRating() error {
+	var count int
+	err := s.DB.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('plugins') WHERE name = 'content_rating'`,
+	).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check plugins.content_rating: %w", err)
+	}
+	if count == 0 {
+		if _, err := s.DB.Exec(`ALTER TABLE plugins ADD COLUMN content_rating TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add plugins.content_rating: %w", err)
+		}
+	}
+	_, err = s.DB.Exec(`
+		UPDATE plugins
+		SET content_rating = json_extract(manifest_json, '$.meta.contentRating')
+		WHERE COALESCE(content_rating, '') = ''
+		  AND json_extract(manifest_json, '$.meta.contentRating') IS NOT NULL
+		  AND TRIM(json_extract(manifest_json, '$.meta.contentRating')) != ''
+	`)
+	if err != nil {
+		return fmt.Errorf("backfill plugins.content_rating: %w", err)
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
