@@ -223,6 +223,91 @@ func TestUpdateOrbitPackage_ReplacesManifest(t *testing.T) {
 	}
 }
 
+func TestApplyMarketPluginMetadata_PersistsContentRating(t *testing.T) {
+	manifest := []byte(`{"id":"rating-test","name":"Rating Test","version":"1.0.0","mediaType":"article","source":"wasm","capabilities":["feed"],"config":{"channels":[{"id":"all","label":"All","route":"list"}],"refreshInterval":3600,"wasm":{"entry":"plugin.wasm"}},"meta":{"description":"test","icon":"text","color":"bg-blue-500","logoText":"R","logoImageUrl":"","marketCategory":"blog","categoryTag":"Test"}}`)
+	wasmRaw := []byte("\x00asm\x01\x00\x00\x00")
+
+	buildPackage := func() []byte {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		for name, data := range map[string][]byte{
+			"manifest.json": manifest,
+			"plugin.wasm":   wasmRaw,
+		} {
+			w, err := zw.Create(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.Write(data); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+
+	setTestHome(t)
+	st, err := store.Open()
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	reg := NewRegistry(st)
+	rec, err := reg.InstallOrbit(context.Background(), buildPackage())
+	if err != nil {
+		t.Fatalf("InstallOrbit: %v", err)
+	}
+	if rec.ContentRating != "" {
+		t.Fatalf("expected empty content rating before market metadata, got %q", rec.ContentRating)
+	}
+
+	updated, err := reg.applyMarketPluginMetadata(
+		context.Background(),
+		rec,
+		"market-listing-123",
+		ContentRatingMature,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("applyMarketPluginMetadata: %v", err)
+	}
+	if updated.ContentRating != ContentRatingMature {
+		t.Fatalf("expected content rating %q, got %q", ContentRatingMature, updated.ContentRating)
+	}
+	if updated.Meta.MarketID != "market-listing-123" {
+		t.Fatalf("expected market id market-listing-123, got %q", updated.Meta.MarketID)
+	}
+
+	rows, err := st.ListPlugins(context.Background())
+	if err != nil {
+		t.Fatalf("ListPlugins: %v", err)
+	}
+	var found store.PluginRow
+	for _, row := range rows {
+		if row.ID == "rating-test" {
+			found = row
+			break
+		}
+	}
+	if found.ID == "" {
+		t.Fatal("plugin row not found in store")
+	}
+	if found.ContentRating != ContentRatingMature {
+		t.Fatalf("expected persisted content rating %q, got %q", ContentRatingMature, found.ContentRating)
+	}
+
+	reloaded, ok := reg.Get("rating-test")
+	if !ok {
+		t.Fatal("plugin not in registry")
+	}
+	if reloaded.ContentRating != ContentRatingMature {
+		t.Fatalf("expected reloaded content rating %q, got %q", ContentRatingMature, reloaded.ContentRating)
+	}
+}
+
 func TestExtractOrbitPackage_MarketPackage(t *testing.T) {
 	if os.Getenv("RUN_MARKET_TEST") == "" {
 		t.Skip("set RUN_MARKET_TEST=1 to run")

@@ -319,19 +319,23 @@ func (r *Registry) applyMarketPluginMetadata(
 		}
 	}
 	ratingChanged := rating != "" && rec.ContentRating != rating
-	if ratingChanged {
-		rec.ContentRating = rating
-	}
 	if !changed && !ratingChanged {
 		return rec, nil
 	}
+	var err error
 	if changed {
-		return r.UpdateManifest(ctx, rec.ID, &rec.Manifest)
+		rec, err = r.UpdateManifest(ctx, rec.ID, &rec.Manifest)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if err := r.upsertPlugin(ctx, rec); err != nil {
-		return nil, err
+	if ratingChanged {
+		rec.ContentRating = rating
+		if err := r.upsertPlugin(ctx, rec); err != nil {
+			return nil, err
+		}
+		r.setRecord(rec)
 	}
-	r.setRecord(rec)
 	return cloneRecord(rec), nil
 }
 
