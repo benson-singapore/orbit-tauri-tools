@@ -11,6 +11,7 @@ interface ReaderDockProps {
   sessions: ReaderSession[];
   onExpand: (sessionId: string) => void;
   onClose: (sessionId: string) => void;
+  onCloseAll: (sessionIds: string[]) => void;
 }
 
 function sessionTypeIcon(type: ReaderSession["article"]["type"]): string {
@@ -171,7 +172,9 @@ export function ReaderDock({
   sessions,
   onExpand,
   onClose,
+  onCloseAll,
 }: ReaderDockProps) {
+  const [dockHovered, setDockHovered] = useState(false);
   const dockedSessions = sessions.filter(session => session.mode === "docked");
   if (dockedSessions.length === 0) return null;
 
@@ -181,8 +184,24 @@ export function ReaderDock({
     <div
       className="fixed right-3 top-1/2 z-[110] flex flex-col gap-2 -translate-y-1/2 max-h-[min(70vh,520px)] overflow-y-auto overflow-x-visible py-1 pr-0.5"
       aria-label="挂起的阅读窗口"
+      onMouseEnter={() => setDockHovered(true)}
+      onMouseLeave={() => setDockHovered(false)}
     >
-      {dockedSessions.length > 1 ? (
+      {dockHovered ? (
+        <button
+          type="button"
+          onClick={() => onCloseAll(dockedSessions.map(session => session.id))}
+          title="关闭全部挂起窗口"
+          className={`self-end flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium border shadow-lg whitespace-nowrap transition-colors ${
+            isDark
+              ? "bg-[#1c1c1e] border-neutral-700/80 text-neutral-300 hover:text-white hover:border-neutral-600 hover:bg-neutral-800"
+              : "bg-white border-neutral-200 text-neutral-600 hover:text-neutral-900 hover:border-neutral-300"
+          }`}
+        >
+          <Icon name="close" className="w-3 h-3 shrink-0" />
+          全部关闭
+        </button>
+      ) : dockedSessions.length > 1 ? (
         <div
           className={`self-end px-2 py-0.5 rounded-full text-[10px] font-semibold tabular-nums ${
             isDark ? "bg-neutral-800 text-neutral-400" : "bg-neutral-100 text-neutral-500"

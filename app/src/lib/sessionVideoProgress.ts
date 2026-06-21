@@ -33,3 +33,19 @@ export function snapshotNativeVideoProgress(
     playing: !video.paused,
   });
 }
+
+/** Capture progress from an inline `<video>` inside article HTML before docking. */
+export function snapshotContentVideoProgress(
+  sessionId: string,
+  contentRoot: HTMLElement | null,
+): void {
+  if (!contentRoot) return;
+
+  const video = contentRoot.querySelector("video");
+  if (!video) return;
+
+  updateSessionPlaybackSnapshot(sessionId, {
+    currentTime: video.currentTime,
+    playing: !video.paused,
+  });
+}

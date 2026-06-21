@@ -1017,6 +1017,11 @@ export default function App() {
     setReaderSessions(prev => prev.filter(session => session.id !== sessionId));
   }, []);
 
+  const closeDockedReaderSessions = useCallback((sessionIds: string[]) => {
+    const ids = new Set(sessionIds);
+    setReaderSessions(prev => prev.filter(session => !ids.has(session.id)));
+  }, []);
+
   const dockReaderSession = useCallback((sessionId: string) => {
     setReaderSessions(prev =>
       prev.map(session =>
@@ -1024,6 +1029,23 @@ export default function App() {
           ? { ...session, mode: "docked", autoDockOnDismiss: true }
           : session,
       ),
+    );
+  }, []);
+
+  const updateReaderSessionArticle = useCallback((sessionId: string, article: Article) => {
+    setReaderSessions(prev =>
+      prev.map(session => {
+        if (session.id !== sessionId) return session;
+        if (
+          session.article.content === article.content
+          && session.article.videoUrl === article.videoUrl
+          && session.article.audioUrl === article.audioUrl
+          && session.article.galleryImages === article.galleryImages
+        ) {
+          return session;
+        }
+        return { ...session, article };
+      }),
     );
   }, []);
 
@@ -1806,7 +1828,7 @@ export default function App() {
               <div className={
                 isSplitPaneLayout
                   ? "flex h-full min-h-0 w-full flex-col px-6"
-                  : `${isPluginFocusMode ? "w-[80%]" : "max-w-3xl"} mx-auto px-6 pb-8 md:pb-10`
+                  : "w-full px-6 pb-8 md:pb-10"
               }>
                 {/* Reader toolbar — sticky near top */}
                 <div
@@ -1927,7 +1949,7 @@ export default function App() {
                                 ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200"
                                 : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
                             }`}
-                            title="预览模式"
+                            title="布局模式"
                             aria-expanded={previewModeMenuOpen}
                             aria-haspopup="menu"
                           >
@@ -1945,8 +1967,8 @@ export default function App() {
                                 ? "bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200"
                                 : "hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
                             }`}
-                            title="切换预览模式"
-                            aria-label="切换预览模式"
+                            title="切换布局模式"
+                            aria-label="切换布局模式"
                           >
                             <svg
                               viewBox="0 0 12 12"
@@ -1976,7 +1998,7 @@ export default function App() {
                               <div className={`px-3 py-2 text-[11px] font-medium ${
                                 theme === "dark" ? "text-neutral-400" : "text-neutral-500"
                               }`}>
-                                预览模式
+                                布局模式
                               </div>
                               {previewModeOptionsForPlugin(activePluginMeta, showVideoWallPreviewOption).map(([mode, label, desc]) => {
                                 const isActive = pluginPreviewMode === mode;
@@ -2615,6 +2637,7 @@ export default function App() {
           inVideoWall={sessionUsesWallMount(session, pluginPreviewMode)}
           onClose={() => closeReaderSession(session.id)}
           onDock={() => dockReaderSession(session.id)}
+          onArticleChange={article => updateReaderSessionArticle(session.id, article)}
         />
       ))}
 
@@ -2628,6 +2651,7 @@ export default function App() {
         }
         onExpand={expandReaderSession}
         onClose={closeReaderSession}
+        onCloseAll={closeDockedReaderSessions}
       />
 
     </div>

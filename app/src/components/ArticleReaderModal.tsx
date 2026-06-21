@@ -7,12 +7,14 @@ import {
   dedupeCoverImageFromContent,
   prepareArticleHtmlContent,
 } from "@/lib/articleContent";
+import { stripEmbeddedVideosFromContent } from "@/lib/articleVideoUrl";
 import { shouldSkipFeedItemDetailFetch, isRatingPluginArticle } from "@/lib/browseDynamicFeed";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
 import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
 import { isVideoArticle } from "@/lib/readerSessionVideos";
+import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
 import type { ReaderSessionMode } from "@/lib/readerSessions";
 import type { Article, Plugin, ThemeMode } from "@/types";
 
@@ -30,6 +32,7 @@ interface ArticleReaderModalProps {
   inVideoWall: boolean;
   onClose: () => void;
   onDock: () => void;
+  onArticleChange?: (article: Article) => void;
 }
 
 export function ArticleReaderModal({
@@ -46,6 +49,7 @@ export function ArticleReaderModal({
   inVideoWall,
   onClose,
   onDock,
+  onArticleChange,
 }: ArticleReaderModalProps) {
   const isExpanded = mode === "expanded";
   const isDark = theme === "dark";
@@ -54,6 +58,12 @@ export function ArticleReaderModal({
   const [loading, setLoading] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const onArticleChangeRef = useRef(onArticleChange);
+  onArticleChangeRef.current = onArticleChange;
+
+  const syncArticleToSession = useCallback((next: Article) => {
+    onArticleChangeRef.current?.(next);
+  }, []);
 
   useEffect(() => {
     setArticle(initialArticle);
@@ -79,7 +89,12 @@ export function ArticleReaderModal({
       void runtimeOpenDetail(article.pluginId, channelId, itemId)
         .then(result => {
           if (cancelled || !result.item) return;
-          setArticle(prev => (prev.id === itemId ? { ...prev, ...result.item } : prev));
+          setArticle(prev => {
+            if (prev.id !== itemId) return prev;
+            const next = { ...prev, ...result.item };
+            syncArticleToSession(next);
+            return next;
+          });
         })
         .catch(err => {
           if (!cancelled) console.error("load article content failed", err);
@@ -105,7 +120,12 @@ export function ArticleReaderModal({
     })
       .then(detail => {
         if (cancelled) return;
-        setArticle(prev => (prev.id === itemId ? { ...prev, ...detail } : prev));
+        setArticle(prev => {
+          if (prev.id !== itemId) return prev;
+          const next = { ...prev, ...detail };
+          syncArticleToSession(next);
+          return next;
+        });
       })
       .catch(err => {
         if (!cancelled) console.error("load article content failed", err);
@@ -117,7 +137,7 @@ export function ArticleReaderModal({
     return () => {
       cancelled = true;
     };
-  }, [isExpanded, article.id, article.pluginId, article.channelId, pluginMeta, hasDetail, activeChannel]);
+  }, [isExpanded, article.id, article.pluginId, article.channelId, pluginMeta, hasDetail, activeChannel, syncArticleToSession]);
 
   const isRatingCoverLayout = isRatingPluginArticle(article, pluginMeta);
 
@@ -160,8 +180,11 @@ export function ArticleReaderModal({
     if (article.type === "text" && article.image) {
       content = dedupeCoverImageFromContent(article.image, content);
     }
+    if (hasVideoMedia) {
+      content = stripEmbeddedVideosFromContent(content);
+    }
     return prepareArticleHtmlContent(content, runtimeBase);
-  }, [article.content, article.image, article.type, runtimeBase]);
+  }, [article.content, article.image, article.type, runtimeBase, hasVideoMedia]);
 
   useEffect(() => {
     if (displayContent) {
@@ -170,17 +193,29 @@ export function ArticleReaderModal({
     }
   }, [displayContent, runtimeBase, theme]);
 
+  const handleDock = useCallback(() => {
+    snapshotContentVideoProgress(sessionId, contentRef.current);
+    onDock();
+  }, [sessionId, onDock]);
+
+  useEffect(() => {
+    if (!isExpanded) return;
+    syncArticleToSession(article);
+    // Sync list metadata when a session opens; detail fetch performs another sync.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isExpanded, article.id, syncArticleToSession]);
+
   useEffect(() => {
     if (!isExpanded) return;
 
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onDock();
+        handleDock();
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [isExpanded, onDock]);
+  }, [isExpanded, handleDock]);
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -194,7 +229,7 @@ export function ArticleReaderModal({
   const handleBackdropClick = (event: MouseEvent) => {
     event.stopPropagation();
     if (autoDockOnDismiss) {
-      onDock();
+      handleDock();
       return;
     }
     onClose();
@@ -227,7 +262,7 @@ export function ArticleReaderModal({
               type="button"
               onClick={event => {
                 event.stopPropagation();
-                onDock();
+                handleDock();
               }}
               className={`p-2 rounded-full transition-colors ${headerButtonClass}`}
               aria-label="挂起到侧栏"

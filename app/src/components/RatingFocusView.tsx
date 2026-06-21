@@ -58,7 +58,7 @@ export function RatingFocusView({
       <div className="flex items-center justify-center py-24">
         <div className="flex items-center gap-2 text-sm text-neutral-400">
           <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
-          {searching ? "正在搜索…" : "正在加载榜单…"}
+          {searching ? "正在搜索…" : "正在加载频道数据…"}
         </div>
       </div>
     );

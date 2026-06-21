@@ -3,7 +3,9 @@ import { ReaderVideoPlayer } from "@/components/ReaderVideoPlayer";
 import { useVideoSessionMount, useVideoParkingLot } from "@/components/VideoWallMountContext";
 import { reparentSessionVideoContainer } from "@/lib/sessionVideoPlayback";
 import { clearSessionPlaybackSnapshot } from "@/lib/sessionVideoProgress";
+import { clearSessionAspectRatio } from "@/lib/videoAspectRatio";
 import { renderSessionVideo, unmountSessionVideo } from "@/lib/sessionVideoRoot";
+import { resolveArticleVideoUrl } from "@/lib/articleVideoUrl";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import type { Article } from "@/types";
 
@@ -28,7 +30,7 @@ function resolveVideoTarget(
 }
 
 function buildVideoIdentity(article: Article): string {
-  return `${article.pluginId}:${article.id}:${article.videoUrl ?? ""}:${article.sourceUrl ?? ""}`;
+  return `${article.pluginId}:${article.id}:${resolveArticleVideoUrl(article) ?? ""}:${article.sourceUrl ?? ""}`;
 }
 
 export function SessionVideoSurface({
@@ -80,6 +82,7 @@ export function SessionVideoSurface({
     return () => {
       unmountSessionVideo(sessionId);
       clearSessionPlaybackSnapshot(sessionId);
+      clearSessionAspectRatio(sessionId);
     };
   }, [sessionId, videoIdentity, runtimeBase]);
 

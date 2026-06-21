@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { Icon } from "@/components/Icon";
 import {
   useVideoSessionMountRegistry,
@@ -6,6 +13,14 @@ import {
 import { displayImageUrl } from "@/lib/imageProxy";
 import type { ReaderSession } from "@/lib/readerSessions";
 import type { GridColumnCount } from "@/lib/gridColumnCount";
+import {
+  DEFAULT_VIDEO_HEIGHT_RATIO,
+  getReportedSessionAspectRatio,
+  probeImageAspectRatio,
+  probeVideoAspectRatio,
+  resolveArticleAspectRatioSources,
+  subscribeSessionVideoAspectRatios,
+} from "@/lib/videoAspectRatio";
 import type { ThemeMode } from "@/types";
 
 interface VideoWallFocusViewProps {
@@ -20,30 +35,77 @@ interface VideoWallFocusViewProps {
 
 const COLUMN_GAP_PX = 12;
 const VIDEO_TILE_META_HEIGHT_PX = 64;
-const DEFAULT_ASPECT_RATIO = 9 / 16;
 
 type SessionColumnEntry = { session: ReaderSession };
 
-function distributeShortestColumn(
+function estimateTileHeight(
+  sessionId: string,
+  columnWidth: number,
+  aspectRatios: Record<string, number>,
+  defaultAspectRatio: number,
+): number {
+  const ratio = aspectRatios[sessionId] ?? defaultAspectRatio;
+  return columnWidth * ratio + VIDEO_TILE_META_HEIGHT_PX + COLUMN_GAP_PX;
+}
+
+function assignSessionColumns(
   entries: SessionColumnEntry[],
   columnCount: number,
   columnWidth: number,
   aspectRatios: Record<string, number>,
   defaultAspectRatio: number,
+  assignments: Map<string, number>,
 ): SessionColumnEntry[][] {
   const cols: SessionColumnEntry[][] = Array.from({ length: columnCount }, () => []);
   const colHeights = Array(columnCount).fill(0);
 
+  const activeIds = new Set(entries.map(entry => entry.session.id));
+  for (const sessionId of assignments.keys()) {
+    if (!activeIds.has(sessionId)) {
+      assignments.delete(sessionId);
+    }
+  }
+
+  for (const [sessionId, columnIndex] of assignments) {
+    if (columnIndex >= columnCount) {
+      assignments.delete(sessionId);
+    }
+  }
+
+  const unassigned: SessionColumnEntry[] = [];
+
   for (const entry of entries) {
-    const ratio = aspectRatios[entry.session.id] ?? defaultAspectRatio;
+    const columnIndex = assignments.get(entry.session.id);
+    if (columnIndex === undefined) {
+      unassigned.push(entry);
+      continue;
+    }
+
+    cols[columnIndex].push(entry);
+    colHeights[columnIndex] += estimateTileHeight(
+      entry.session.id,
+      columnWidth,
+      aspectRatios,
+      defaultAspectRatio,
+    );
+  }
+
+  for (const entry of unassigned) {
     let shortest = 0;
-    for (let i = 1; i < columnCount; i++) {
-      if (colHeights[i] < colHeights[shortest]) {
-        shortest = i;
+    for (let index = 1; index < columnCount; index++) {
+      if (colHeights[index] < colHeights[shortest]) {
+        shortest = index;
       }
     }
+
+    assignments.set(entry.session.id, shortest);
     cols[shortest].push(entry);
-    colHeights[shortest] += columnWidth * ratio + VIDEO_TILE_META_HEIGHT_PX + COLUMN_GAP_PX;
+    colHeights[shortest] += estimateTileHeight(
+      entry.session.id,
+      columnWidth,
+      aspectRatios,
+      defaultAspectRatio,
+    );
   }
 
   return cols;
@@ -141,8 +203,16 @@ export function VideoWallFocusView({
 }: VideoWallFocusViewProps) {
   const isDark = theme === "dark";
   const containerRef = useRef<HTMLDivElement>(null);
+  const columnAssignmentsRef = useRef(new Map<string, number>());
+  const probedSessionIdsRef = useRef(new Set<string>());
   const [containerWidth, setContainerWidth] = useState(0);
-  const [aspectRatios, setAspectRatios] = useState<Record<string, number>>({});
+  const [probedAspectRatios, setProbedAspectRatios] = useState<Record<string, number>>({});
+
+  useSyncExternalStore(
+    subscribeSessionVideoAspectRatios,
+    () => reportedRatioSnapshot(sessions),
+    () => reportedRatioSnapshot(sessions),
+  );
 
   useEffect(() => {
     const element = containerRef.current;
@@ -157,23 +227,58 @@ export function VideoWallFocusView({
   }, []);
 
   useEffect(() => {
+    columnAssignmentsRef.current.clear();
+  }, [columnCount]);
+
+  useEffect(() => {
     let cancelled = false;
+    const activeIds = new Set(sessions.map(session => session.id));
+
+    for (const sessionId of probedSessionIdsRef.current) {
+      if (!activeIds.has(sessionId)) {
+        probedSessionIdsRef.current.delete(sessionId);
+      }
+    }
 
     for (const session of sessions) {
-      const imageUrl = session.article.image?.trim();
-      if (!imageUrl) continue;
+      const sessionId = session.id;
+      if (
+        probedSessionIdsRef.current.has(sessionId)
+        || getReportedSessionAspectRatio(sessionId) !== undefined
+      ) {
+        continue;
+      }
 
-      const img = new Image();
-      img.onload = () => {
-        if (cancelled) return;
-        const { naturalWidth, naturalHeight } = img;
-        if (naturalWidth <= 0 || naturalHeight <= 0) return;
-        const ratio = naturalHeight / naturalWidth;
-        setAspectRatios(prev => (
-          prev[session.id] === ratio ? prev : { ...prev, [session.id]: ratio }
+      probedSessionIdsRef.current.add(sessionId);
+
+      const { videoUrl, imageUrl, initial } = resolveArticleAspectRatioSources(
+        session.article,
+      );
+
+      if (initial !== null) {
+        setProbedAspectRatios(prev => (
+          prev[sessionId] === initial ? prev : { ...prev, [sessionId]: initial }
         ));
-      };
-      img.src = displayImageUrl(runtimeBase, imageUrl);
+      }
+
+      if (videoUrl) {
+        void probeVideoAspectRatio(videoUrl).then(ratio => {
+          if (cancelled || ratio === null) return;
+          setProbedAspectRatios(prev => (
+            prev[sessionId] === ratio ? prev : { ...prev, [sessionId]: ratio }
+          ));
+        });
+      }
+
+      if (imageUrl) {
+        void probeImageAspectRatio(displayImageUrl(runtimeBase, imageUrl)).then(ratio => {
+          if (cancelled || ratio === null) return;
+          setProbedAspectRatios(prev => {
+            if (prev[sessionId] !== undefined) return prev;
+            return { ...prev, [sessionId]: ratio };
+          });
+        });
+      }
     }
 
     return () => {
@@ -181,9 +286,22 @@ export function VideoWallFocusView({
     };
   }, [sessions, runtimeBase]);
 
+  const aspectRatios = useMemo(() => {
+    const merged: Record<string, number> = { ...probedAspectRatios };
+
+    for (const session of sessions) {
+      const reported = getReportedSessionAspectRatio(session.id);
+      if (reported !== undefined) {
+        merged[session.id] = reported;
+      }
+    }
+
+    return merged;
+  }, [sessions, probedAspectRatios]);
+
   const defaultAspectRatio = useMemo(() => {
     const ratios = Object.values(aspectRatios);
-    if (ratios.length === 0) return DEFAULT_ASPECT_RATIO;
+    if (ratios.length === 0) return DEFAULT_VIDEO_HEIGHT_RATIO;
     return ratios.reduce((sum, ratio) => sum + ratio, 0) / ratios.length;
   }, [aspectRatios]);
 
@@ -203,12 +321,13 @@ export function VideoWallFocusView({
       return cols;
     }
 
-    return distributeShortestColumn(
+    return assignSessionColumns(
       entries,
       columnCount,
       columnWidth,
       aspectRatios,
       defaultAspectRatio,
+      columnAssignmentsRef.current,
     );
   }, [sessions, columnCount, columnWidth, aspectRatios, defaultAspectRatio]);
 
@@ -246,4 +365,15 @@ export function VideoWallFocusView({
       </div>
     </div>
   );
+}
+
+function reportedRatioSnapshot(sessions: ReaderSession[]): number {
+  let checksum = 0;
+  for (const session of sessions) {
+    const ratio = getReportedSessionAspectRatio(session.id);
+    if (ratio !== undefined) {
+      checksum += ratio * 1000;
+    }
+  }
+  return checksum;
 }
