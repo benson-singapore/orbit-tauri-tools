@@ -4,6 +4,7 @@ import {
   detectBuildModeLabel,
   detectPlatformLabel,
   loadAppInfo,
+  resolveBrowserFrontendUrl,
   type AppInfo,
 } from "@/lib/appInfo";
 import { fetchHealth, fetchStatus, waitForRuntimeReady } from "@/lib/runtime";
@@ -230,6 +231,7 @@ export function SystemInfoPanel({
   const runtimeOk = runtimeStatus?.ok ?? false;
   const dbOk = runtimeStatus?.db === "ready";
   const swaggerUrl = runtimeBaseUrl ? `${runtimeBaseUrl.replace(/\/+$/, "")}/swagger/` : null;
+  const frontendWebUrl = resolveBrowserFrontendUrl();
 
   const renderOverview = () => (
     <div className="space-y-5">
@@ -335,6 +337,16 @@ export function SystemInfoPanel({
           />
         ) : (
           <InfoRow label="Swagger" value="—" isDark={isDark} />
+        )}
+        {frontendWebUrl ? (
+          <LinkRow
+            label="前端地址"
+            href={frontendWebUrl}
+            isDark={isDark}
+            onOpen={() => openExternalUrl(frontendWebUrl)}
+          />
+        ) : (
+          <InfoRow label="前端地址" value="—" isDark={isDark} />
         )}
       </SectionCard>
 

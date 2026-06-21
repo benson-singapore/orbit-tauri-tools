@@ -22,6 +22,14 @@ import {
   prepareArticleHtmlContent,
 } from "@/lib/articleContent";
 import {
+  EXPERIENCE_MODE_LABELS,
+  filterGroupedPluginsForExperienceMode,
+  isMaturePlugin,
+  persistExperienceMode,
+  readStoredExperienceMode,
+  type ExperienceMode,
+} from "@/lib/experienceMode";
+import {
   isBrowseDynamicChannel,
   isBrowseDynamicPlugin,
   isRatingPluginArticle,
@@ -161,6 +169,7 @@ export default function App() {
   const onTitlebarMouseDown = useTitlebarDrag();
 
   const [theme, _setTheme] = useState<ThemeMode>("light");
+  const [experienceMode, setExperienceMode] = useState<ExperienceMode>(readStoredExperienceMode);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [feedPanelVisible, setFeedPanelVisible] = useState(true);
   const [chaptersPanelVisible, setChaptersPanelVisible] = useState(true);
@@ -240,9 +249,20 @@ export default function App() {
     [myPlugins],
   );
 
+  useEffect(() => {
+    if (experienceMode !== "safe") return;
+    const plugin = pluginById.get(activePlugin);
+    if (plugin && isMaturePlugin(plugin)) {
+      setActivePlugin("all");
+    }
+  }, [experienceMode, activePlugin, pluginById]);
+
   const sidebarPluginGroups = useMemo(
-    () => groupedPluginsForSidebar(myPlugins),
-    [groupedPluginsForSidebar, myPlugins],
+    () => filterGroupedPluginsForExperienceMode(
+      groupedPluginsForSidebar(myPlugins),
+      experienceMode,
+    ),
+    [groupedPluginsForSidebar, myPlugins, experienceMode],
   );
 
   const managePluginGroups = useMemo(
@@ -1221,14 +1241,37 @@ export default function App() {
 
           {/* Theme Switcher — 暂时隐藏，暗色主题待完善后恢复 */}
 
-          {/* Plugin Install Quick Button */}
-          <button 
-            onClick={() => setShowPluginStore(true)}
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-indigo-600 hover:bg-indigo-700 text-white transition-colors"
-          >
-            <Icon name="puzzle" className="w-3.5 h-3.5 text-white" />
-            <span className="hidden sm:inline">安装/管理插件</span>
-          </button>
+          <div className="relative shrink-0" aria-label="体验模式">
+            <select
+              value={experienceMode}
+              onChange={e => {
+                const mode = e.target.value as ExperienceMode;
+                setExperienceMode(mode);
+                persistExperienceMode(mode);
+              }}
+              className="orbit-select appearance-none pl-2.5 pr-7 py-1 rounded-lg text-[11px] font-semibold border border-neutral-200 bg-white text-neutral-700 outline-none focus:border-indigo-300"
+            >
+              {(["safe", "full"] as const).map(mode => (
+                <option key={mode} value={mode}>
+                  {EXPERIENCE_MODE_LABELS[mode]}
+                </option>
+              ))}
+            </select>
+            <svg
+              className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-400"
+              viewBox="0 0 12 12"
+              fill="none"
+              aria-hidden
+            >
+              <path
+                d="M2.5 4.5L6 8l3.5-3.5"
+                stroke="currentColor"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </div>
         </div>
       </header>
 
@@ -1493,6 +1536,7 @@ export default function App() {
           {showPluginStore ? (
             <PluginManagerModal
               theme={theme}
+              experienceMode={experienceMode}
               myPlugins={myPlugins}
               pluginGroups={pluginGroups}
               groupedPluginsForManage={managePluginGroups}

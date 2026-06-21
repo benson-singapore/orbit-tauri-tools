@@ -37,6 +37,11 @@ import {
   persistMarketContentRating,
   readStoredMarketContentRating,
 } from "@/lib/marketContentRating";
+import {
+  filterGroupedPluginsForExperienceMode,
+  filterPluginsForExperienceMode,
+  type ExperienceMode,
+} from "@/lib/experienceMode";
 import { slugifyChannelId } from "@/lib/channelId";
 import { normalizeChannelStatus } from "@/lib/channelStatus";
 import { resolveColorToHex } from "@/lib/pluginColor";
@@ -120,6 +125,7 @@ function formatPrettyJson(input: string): string {
 
 interface PluginManagerModalProps {
   theme: ThemeMode;
+  experienceMode?: ExperienceMode;
   myPlugins: Plugin[];
   pluginGroups: PluginSidebarGroup[];
   groupedPluginsForManage: { group: PluginSidebarGroup; plugins: Plugin[] }[];
@@ -3518,6 +3524,7 @@ function PluginGroupManagerModal({
 
 export function PluginManagerModal({
   theme,
+  experienceMode = "full",
   myPlugins,
   pluginGroups,
   groupedPluginsForManage,
@@ -3584,30 +3591,37 @@ export function PluginManagerModal({
     };
   }, []);
 
+  const isSafeMode = experienceMode === "safe";
+
   const topTabs = useMemo(() => {
     const extra: { id: Extract<PluginManagerTopTab, "llm" | "tts">; label: string; icon: string }[] = [];
-    if (settingsConfigTabs.llm) {
+    if (!isSafeMode && settingsConfigTabs.llm) {
       extra.push({ id: "llm", label: "LLM设置", icon: "brain" });
     }
-    if (settingsConfigTabs.tts) {
+    if (!isSafeMode && settingsConfigTabs.tts) {
       extra.push({ id: "tts", label: "TTS设置", icon: "audio" });
     }
     return [...LEADING_TABS, ...extra, SYSTEM_TAB];
-  }, [settingsConfigTabs.llm, settingsConfigTabs.tts]);
+  }, [isSafeMode, settingsConfigTabs.llm, settingsConfigTabs.tts]);
 
   useEffect(() => {
     if (
-      (activeTab === "llm" && !settingsConfigTabs.llm)
-      || (activeTab === "tts" && !settingsConfigTabs.tts)
+      (activeTab === "llm" && (!settingsConfigTabs.llm || isSafeMode))
+      || (activeTab === "tts" && (!settingsConfigTabs.tts || isSafeMode))
     ) {
       setActiveTab("market");
     }
-  }, [activeTab, settingsConfigTabs.llm, settingsConfigTabs.tts]);
+  }, [activeTab, isSafeMode, settingsConfigTabs.llm, settingsConfigTabs.tts]);
+
+  const visibleGroupedPluginsForManage = useMemo(
+    () => filterGroupedPluginsForExperienceMode(groupedPluginsForManage, experienceMode),
+    [groupedPluginsForManage, experienceMode],
+  );
 
   const allPluginsByInstallTime = useMemo(() => {
     const seen = new Set<string>();
     const all: Plugin[] = [];
-    for (const { plugins } of groupedPluginsForManage) {
+    for (const { plugins } of visibleGroupedPluginsForManage) {
       for (const plugin of plugins) {
         if (seen.has(plugin.id)) continue;
         seen.add(plugin.id);
@@ -3618,7 +3632,7 @@ export function PluginManagerModal({
       (a, b) =>
         (b.installedAt ?? b.sort ?? 0) - (a.installedAt ?? a.sort ?? 0),
     );
-  }, [groupedPluginsForManage]);
+  }, [visibleGroupedPluginsForManage]);
 
   const activeManageGroup = useMemo(() => {
     if (activeManageGroupId === ALL_MANAGE_GROUP_ID) {
@@ -3628,20 +3642,20 @@ export function PluginManagerModal({
       };
     }
     return (
-      groupedPluginsForManage.find(entry => entry.group.id === activeManageGroupId)
-      ?? groupedPluginsForManage[0]
+      visibleGroupedPluginsForManage.find(entry => entry.group.id === activeManageGroupId)
+      ?? visibleGroupedPluginsForManage[0]
     );
-  }, [groupedPluginsForManage, activeManageGroupId, allPluginsByInstallTime]);
+  }, [visibleGroupedPluginsForManage, activeManageGroupId, allPluginsByInstallTime]);
 
   useEffect(() => {
     if (activeManageGroupId === ALL_MANAGE_GROUP_ID) return;
     if (
-      groupedPluginsForManage.length > 0
-      && !groupedPluginsForManage.some(entry => entry.group.id === activeManageGroupId)
+      visibleGroupedPluginsForManage.length > 0
+      && !visibleGroupedPluginsForManage.some(entry => entry.group.id === activeManageGroupId)
     ) {
       setActiveManageGroupId(ALL_MANAGE_GROUP_ID);
     }
-  }, [groupedPluginsForManage, activeManageGroupId]);
+  }, [visibleGroupedPluginsForManage, activeManageGroupId]);
 
   const openImportForGroup = (groupId: string) => {
     setEditingPlugin(null);
@@ -3649,7 +3663,13 @@ export function PluginManagerModal({
     setShowImportModal(true);
   };
 
-  const installedPlugins = myPlugins.filter(p => p.id !== "all");
+  const installedPlugins = useMemo(
+    () => filterPluginsForExperienceMode(
+      myPlugins.filter(p => p.id !== "all"),
+      experienceMode,
+    ),
+    [myPlugins, experienceMode],
+  );
   const runningCount = installedPlugins.filter(p => p.active !== false).length;
 
   const [marketPlugins, setMarketPlugins] = useState<MarketPluginItem[]>([]);
@@ -3707,13 +3727,15 @@ export function PluginManagerModal({
     }
   }, []);
 
+  const effectiveMarketContentRating = isSafeMode ? "under18" : marketContentRating;
+
   const loadMarketPlugins = useCallback(async () => {
     setMarketLoading(true);
     try {
       const { items, total } = await fetchMarketPlugins({
         category: marketCategory === MARKET_CATEGORY_UPDATES ? "all" : marketCategory,
         sort: marketSort,
-        contentRating: marketContentRating,
+        contentRating: effectiveMarketContentRating,
         search: debouncedMarketSearch,
         pageSize: 50,
       });
@@ -3726,7 +3748,7 @@ export function PluginManagerModal({
     } finally {
       setMarketLoading(false);
     }
-  }, [marketCategory, marketSort, marketContentRating, debouncedMarketSearch]);
+  }, [marketCategory, marketSort, effectiveMarketContentRating, debouncedMarketSearch]);
 
   const handleMarketSidebarRefresh = useCallback(async () => {
     if (marketSidebarRefreshing) return;
@@ -3944,23 +3966,25 @@ export function PluginManagerModal({
                         ))}
                       </StyledSelect>
                     </div>
-                    <div className="w-32 shrink-0">
-                      <StyledSelect
-                        value={marketContentRating}
-                        onChange={e => {
-                          const rating = e.target.value as MarketPluginContentRating;
-                          setMarketContentRating(rating);
-                          persistMarketContentRating(rating);
-                        }}
-                        className={`py-2 px-3 text-xs rounded-xl ${mutedBg} ${subtleBorder}`}
-                      >
-                        {MARKET_CONTENT_RATING_OPTIONS.map(option => (
-                          <option key={option.id} value={option.id}>
-                            {option.label}
-                          </option>
-                        ))}
-                      </StyledSelect>
-                    </div>
+                    {!isSafeMode ? (
+                      <div className="w-32 shrink-0">
+                        <StyledSelect
+                          value={marketContentRating}
+                          onChange={e => {
+                            const rating = e.target.value as MarketPluginContentRating;
+                            setMarketContentRating(rating);
+                            persistMarketContentRating(rating);
+                          }}
+                          className={`py-2 px-3 text-xs rounded-xl ${mutedBg} ${subtleBorder}`}
+                        >
+                          {MARKET_CONTENT_RATING_OPTIONS.map(option => (
+                            <option key={option.id} value={option.id}>
+                              {option.label}
+                            </option>
+                          ))}
+                        </StyledSelect>
+                      </div>
+                    ) : null}
                     <span className="text-[11px] text-neutral-400 whitespace-nowrap shrink-0">
                       {marketCategory === MARKET_CATEGORY_UPDATES
                         ? `待更新 ${displayedMarketTotal} 个插件`
@@ -4095,7 +4119,7 @@ export function PluginManagerModal({
                         {allPluginsByInstallTime.length}
                       </span>
                     </button>
-                    {groupedPluginsForManage.map(({ group, plugins }) => (
+                    {visibleGroupedPluginsForManage.map(({ group, plugins }) => (
                       <button
                         key={group.id}
                         type="button"

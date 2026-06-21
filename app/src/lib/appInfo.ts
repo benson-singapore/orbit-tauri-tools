@@ -58,3 +58,27 @@ export function detectPlatformLabel(): string {
 export function detectBuildModeLabel(): string {
   return import.meta.env.DEV ? "开发模式" : "生产模式";
 }
+
+/** Browser-accessible frontend URL (Vite dev server or configured web URL). */
+export function resolveBrowserFrontendUrl(): string | null {
+  const configured = import.meta.env.VITE_ORBIT_WEB_URL?.trim();
+  if (configured) {
+    return configured.replace(/\/+$/, "");
+  }
+
+  if (typeof window !== "undefined") {
+    const { origin, hostname, protocol } = window.location;
+    if (
+      (protocol === "http:" || protocol === "https:")
+      && (hostname === "localhost" || hostname === "127.0.0.1")
+    ) {
+      return origin;
+    }
+  }
+
+  if (import.meta.env.DEV) {
+    return "http://localhost:1420";
+  }
+
+  return null;
+}
