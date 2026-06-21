@@ -16,6 +16,7 @@ interface RatingFocusViewProps {
   hasMore: boolean;
   onLoadMore: () => void;
   onItemSelect?: (article: Article) => void;
+  selectedArticleId?: string;
   scrollRootRef?: RefObject<HTMLElement | null>;
 }
 
@@ -30,10 +31,12 @@ export function RatingFocusView({
   hasMore,
   onLoadMore,
   onItemSelect,
+  selectedArticleId,
   scrollRootRef,
 }: RatingFocusViewProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
+  const isDark = theme === "dark";
 
   useEffect(() => {
     if (!hasMore || loadingMore || loading || searching) return;
@@ -81,6 +84,7 @@ export function RatingFocusView({
         {articles.map(item => {
           const score = parseRatingScore(item.tags ?? []);
           const hasImage = Boolean(item.image?.trim()) && !failedIds.has(item.id);
+          const isSelected = selectedArticleId === item.id;
 
           return (
             <button
@@ -88,9 +92,13 @@ export function RatingFocusView({
               type="button"
               onClick={() => onItemSelect?.(item)}
               className={`group text-left rounded-xl overflow-hidden border transition-all duration-200 ${
-                theme === "dark"
-                  ? "bg-[#1c1d1f] border-neutral-800 hover:border-neutral-600"
-                  : "bg-white border-neutral-100 hover:border-neutral-200 hover:shadow-md"
+                isSelected
+                  ? isDark
+                    ? "bg-indigo-950/30 border-indigo-700 ring-1 ring-indigo-700/50"
+                    : "bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200"
+                  : theme === "dark"
+                    ? "bg-[#1c1d1f] border-neutral-800 hover:border-neutral-600"
+                    : "bg-white border-neutral-100 hover:border-neutral-200 hover:shadow-md"
               }`}
             >
               <div
