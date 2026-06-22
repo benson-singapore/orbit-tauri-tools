@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
 
@@ -27,7 +27,39 @@ export function ImageLightbox({
   onNearEnd,
 }: ImageLightboxProps) {
   const thumbStripRef = useRef<HTMLDivElement>(null);
+  const copyResetTimerRef = useRef<number | null>(null);
+  const [urlCopied, setUrlCopied] = useState(false);
   const current = images[currentIndex];
+
+  const copyImageUrl = useCallback(async () => {
+    const url = current?.url?.trim();
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setUrlCopied(true);
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+      copyResetTimerRef.current = window.setTimeout(() => {
+        setUrlCopied(false);
+        copyResetTimerRef.current = null;
+      }, 1500);
+    } catch {
+      // ignore clipboard errors
+    }
+  }, [current?.url]);
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimerRef.current !== null) {
+        window.clearTimeout(copyResetTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    setUrlCopied(false);
+  }, [currentIndex]);
 
   const goPrev = useCallback(() => {
     if (currentIndex > 0) {
@@ -83,7 +115,37 @@ export function ImageLightbox({
     >
       <div className="flex items-center justify-between px-4 py-3 shrink-0">
         <div className="min-w-0 flex-1 pr-4">
-          <p className="text-sm font-medium text-white truncate">{current.title}</p>
+          <div className="flex items-center gap-2 min-w-0">
+            <p className="text-sm font-medium text-white truncate min-w-0 flex-1">
+              {current.title}
+            </p>
+            <button
+              type="button"
+              onClick={() => void copyImageUrl()}
+              className="shrink-0 p-1.5 rounded-lg text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+              title={urlCopied ? "已复制" : "复制图片地址"}
+              aria-label={urlCopied ? "已复制图片地址" : "复制图片地址"}
+            >
+              {urlCopied ? (
+                <Icon name="check" className="w-4 h-4" />
+              ) : (
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="w-4 h-4"
+                  aria-hidden
+                >
+                  <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                </svg>
+              )}
+            </button>
+          </div>
           {current.author ? (
             <p className="text-xs text-white/50 truncate mt-0.5">{current.author}</p>
           ) : null}

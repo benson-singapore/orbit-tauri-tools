@@ -42,10 +42,11 @@ func (r *Registry) InstallOrbit(ctx context.Context, data []byte) (*PluginRecord
 	}
 
 	rec := &PluginRecord{
-		Manifest:  *m,
-		Active:    true,
-		SortOrder: 1000,
-		Installed: time.Now().Unix(),
+		Manifest:     *m,
+		Active:       true,
+		IncludeInAll: DefaultIncludeInAll(m.MediaType, ""),
+		SortOrder:    1000,
+		Installed:    time.Now().Unix(),
 	}
 	if err := r.upsertPlugin(ctx, rec); err != nil {
 		_ = os.RemoveAll(pluginDir)

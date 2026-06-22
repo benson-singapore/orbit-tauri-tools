@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { articleContentTheme, isDarkTheme } from "@/lib/themeMode";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { useVideoSessionMountRegistry } from "@/components/VideoWallMountContext";
@@ -7,7 +8,12 @@ import {
   prepareArticleHtmlContent,
 } from "@/lib/articleContent";
 import { stripEmbeddedVideosFromContent } from "@/lib/articleVideoUrl";
-import { shouldSkipFeedItemDetailFetch, isRatingPluginArticle } from "@/lib/browseDynamicFeed";
+import {
+  resolveArticleDetailChannel,
+  resolveArticleHasDetail,
+  shouldSkipFeedItemDetailFetch,
+  isRatingPluginArticle,
+} from "@/lib/browseDynamicFeed";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
@@ -66,7 +72,7 @@ export function ArticleDetailPanel({
   activeChannel,
   pluginMeta,
 }: ArticleDetailPanelProps) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const [article, setArticle] = useState(initialArticle);
   const [loading, setLoading] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
@@ -77,15 +83,22 @@ export function ArticleDetailPanel({
     setCoverImageFailed(false);
   }, [initialArticle]);
 
+  const channelId = resolveArticleDetailChannel(article, pluginMeta, activeChannel);
+  const effectiveHasDetail = resolveArticleHasDetail(
+    article,
+    pluginMeta,
+    activeChannel,
+    { hasDetail },
+  );
+
   useEffect(() => {
     const itemId = article.id;
-    if (shouldSkipFeedItemDetailFetch(article, pluginMeta, hasDetail)) {
+    if (shouldSkipFeedItemDetailFetch(article, pluginMeta, effectiveHasDetail)) {
       setLoading(false);
       return;
     }
 
-    const channelId = article.channelId ?? activeChannel;
-    if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && channelId !== "all" && hasDetail) {
+    if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && channelId !== "all" && effectiveHasDetail) {
       let cancelled = false;
       setLoading(true);
       void runtimeOpenDetail(article.pluginId, channelId, itemId)
@@ -129,7 +142,7 @@ export function ArticleDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [article.id, article.pluginId, article.channelId, pluginMeta, hasDetail, activeChannel]);
+  }, [article, pluginMeta, effectiveHasDetail, channelId]);
 
   const isRatingLayout = isRatingPluginArticle(article, pluginMeta);
   const hasVideoMedia = isVideoArticle(article);
@@ -155,8 +168,10 @@ export function ArticleDetailPanel({
     if (hasVideoMedia) {
       content = stripEmbeddedVideosFromContent(content);
     }
-    return prepareArticleHtmlContent(content, runtimeBase);
-  }, [article.content, article.image, article.type, runtimeBase, hasVideoMedia]);
+    return prepareArticleHtmlContent(content, runtimeBase, {
+      darkTheme: isDarkTheme(theme),
+    });
+  }, [article.content, article.image, article.type, runtimeBase, hasVideoMedia, theme]);
 
   useEffect(() => {
     if (displayContent) {
@@ -297,7 +312,7 @@ export function ArticleDetailPanel({
         ) : displayContent ? (
           <div
             ref={contentRef}
-            data-theme={theme}
+            data-theme={articleContentTheme(theme)}
             className={`article-content text-sm mt-4 pt-4 border-t ${
               isDark ? "border-neutral-800" : "border-neutral-100"
             }`}
@@ -396,7 +411,7 @@ export function ArticleDetailPanel({
           <>
             <div
               ref={contentRef}
-              data-theme={theme}
+              data-theme={articleContentTheme(theme)}
               className="article-content"
               dangerouslySetInnerHTML={{ __html: displayContent }}
             />

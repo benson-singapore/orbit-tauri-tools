@@ -1,0 +1,190 @@
+/* Orbit theme tokens — light default */
+:root,
+[data-theme="light"] {
+  --orbit-bg: #f8f9fa;
+  --orbit-bg-soft: #fafafa;
+  --orbit-bg-muted: #f0f4f9;
+  --orbit-text: #1f1f1f;
+  --orbit-surface: #ffffff;
+  --orbit-surface-elevated: #f0f4f9;
+  --orbit-border: #f5f5f5;
+  --orbit-border-strong: #e5e5e5;
+  --orbit-shell-gradient: none;
+  --orbit-card: #ffffff;
+  --orbit-card-hover: #f0f4f9;
+  --orbit-card-selected: #e9eef6;
+  --orbit-card-border: #e5e5e5;
+  --orbit-card-border-selected: #a5b4fc;
+  --orbit-accent: #4338ca;
+  --orbit-text-muted: #737373;
+  --orbit-text-subtle: #a3a3a3;
+  --orbit-filter-idle: #f5f5f5;
+  --orbit-filter-idle-hover: #ebebeb;
+  --orbit-filter-idle-text: #525252;
+  --orbit-filter-active-bg: #171717;
+  --orbit-filter-active-text: #ffffff;
+}
+
+/* 暗紫 — black-violet gradient */
+[data-theme="purple"] {
+  --orbit-bg: #110d1a;
+  --orbit-bg-soft: #15102a;
+  --orbit-bg-muted: #1a1428;
+  --orbit-text: #e8e4f0;
+  --orbit-surface: #1a1428;
+  --orbit-surface-elevated: #211830;
+  --orbit-border: rgba(139, 92, 246, 0.18);
+  --orbit-border-strong: rgba(139, 92, 246, 0.32);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #0a0612 0%,
+    #120d22 38%,
+    #18102e 72%,
+    #1a0f32 100%
+  );
+  --orbit-card: rgba(33, 24, 48, 0.72);
+  --orbit-card-hover: rgba(38, 28, 56, 0.88);
+  --orbit-card-selected: rgba(139, 92, 246, 0.16);
+  --orbit-card-border: rgba(139, 92, 246, 0.14);
+  --orbit-card-border-selected: rgba(167, 139, 250, 0.42);
+  --orbit-accent: #a78bfa;
+  --orbit-text-muted: rgba(232, 228, 240, 0.62);
+  --orbit-text-subtle: rgba(232, 228, 240, 0.42);
+  --orbit-filter-idle: rgba(33, 24, 48, 0.55);
+  --orbit-filter-idle-hover: rgba(38, 28, 56, 0.75);
+  --orbit-filter-idle-text: rgba(232, 228, 240, 0.72);
+  --orbit-filter-active-bg: rgba(167, 139, 250, 0.22);
+  --orbit-filter-active-text: #ede9fe;
+}
+
+/* 午夜蓝 — deep blue gradient */
+[data-theme="midnight"] {
+  --orbit-bg: #080c16;
+  --orbit-bg-soft: #0c1424;
+  --orbit-bg-muted: #121c30;
+  --orbit-text: #e4eaf5;
+  --orbit-surface: #121a2e;
+  --orbit-surface-elevated: #182038;
+  --orbit-border: rgba(59, 130, 246, 0.18);
+  --orbit-border-strong: rgba(96, 165, 250, 0.32);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #060a14 0%,
+    #0a1224 38%,
+    #0f1a32 72%,
+    #101e38 100%
+  );
+  --orbit-card: rgba(24, 32, 56, 0.72);
+  --orbit-card-hover: rgba(28, 38, 64, 0.88);
+  --orbit-card-selected: rgba(59, 130, 246, 0.16);
+  --orbit-card-border: rgba(59, 130, 246, 0.14);
+  --orbit-card-border-selected: rgba(96, 165, 250, 0.42);
+  --orbit-accent: #93c5fd;
+  --orbit-text-muted: rgba(228, 234, 245, 0.62);
+  --orbit-text-subtle: rgba(228, 234, 245, 0.42);
+  --orbit-filter-idle: rgba(24, 32, 56, 0.55);
+  --orbit-filter-idle-hover: rgba(28, 38, 64, 0.75);
+  --orbit-filter-idle-text: rgba(228, 234, 245, 0.72);
+  --orbit-filter-active-bg: rgba(96, 165, 250, 0.22);
+  --orbit-filter-active-text: #dbeafe;
+}
+
+/* 墨林 — deep emerald gradient */
+[data-theme="forest"] {
+  --orbit-bg: #081008;
+  --orbit-bg-soft: #0c1810;
+  --orbit-bg-muted: #122018;
+  --orbit-text: #e4f0ea;
+  --orbit-surface: #142018;
+  --orbit-surface-elevated: #1a2a22;
+  --orbit-border: rgba(16, 185, 129, 0.18);
+  --orbit-border-strong: rgba(52, 211, 153, 0.3);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #061008 0%,
+    #0a1810 38%,
+    #0f2218 72%,
+    #122a1e 100%
+  );
+  --orbit-card: rgba(26, 42, 34, 0.72);
+  --orbit-card-hover: rgba(32, 52, 42, 0.88);
+  --orbit-card-selected: rgba(16, 185, 129, 0.14);
+  --orbit-card-border: rgba(16, 185, 129, 0.14);
+  --orbit-card-border-selected: rgba(52, 211, 153, 0.38);
+  --orbit-accent: #6ee7b7;
+  --orbit-text-muted: rgba(228, 240, 234, 0.62);
+  --orbit-text-subtle: rgba(228, 240, 234, 0.42);
+  --orbit-filter-idle: rgba(26, 42, 34, 0.55);
+  --orbit-filter-idle-hover: rgba(32, 52, 42, 0.75);
+  --orbit-filter-idle-text: rgba(228, 240, 234, 0.72);
+  --orbit-filter-active-bg: rgba(52, 211, 153, 0.2);
+  --orbit-filter-active-text: #d1fae5;
+}
+
+/* 暗玫 — wine rose gradient */
+[data-theme="rose"] {
+  --orbit-bg: #12080c;
+  --orbit-bg-soft: #1a0a12;
+  --orbit-bg-muted: #221018;
+  --orbit-text: #f5e8ec;
+  --orbit-surface: #221018;
+  --orbit-surface-elevated: #2e1522;
+  --orbit-border: rgba(244, 63, 94, 0.18);
+  --orbit-border-strong: rgba(251, 113, 133, 0.32);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #12080c 0%,
+    #1a0a12 38%,
+    #241018 72%,
+    #2a1220 100%
+  );
+  --orbit-card: rgba(46, 21, 34, 0.72);
+  --orbit-card-hover: rgba(56, 26, 40, 0.88);
+  --orbit-card-selected: rgba(244, 63, 94, 0.14);
+  --orbit-card-border: rgba(244, 63, 94, 0.14);
+  --orbit-card-border-selected: rgba(251, 113, 133, 0.4);
+  --orbit-accent: #fda4af;
+  --orbit-text-muted: rgba(245, 232, 236, 0.62);
+  --orbit-text-subtle: rgba(245, 232, 236, 0.42);
+  --orbit-filter-idle: rgba(46, 21, 34, 0.55);
+  --orbit-filter-idle-hover: rgba(56, 26, 40, 0.75);
+  --orbit-filter-idle-text: rgba(245, 232, 236, 0.72);
+  --orbit-filter-active-bg: rgba(251, 113, 133, 0.22);
+  --orbit-filter-active-text: #ffe4e6;
+}
+
+/* 深海 — teal ocean gradient */
+[data-theme="ocean"] {
+  --orbit-bg: #061014;
+  --orbit-bg-soft: #0a1820;
+  --orbit-bg-muted: #122228;
+  --orbit-text: #e4f2f0;
+  --orbit-surface: #122228;
+  --orbit-surface-elevated: #182e36;
+  --orbit-border: rgba(20, 184, 166, 0.18);
+  --orbit-border-strong: rgba(45, 212, 191, 0.32);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #061014 0%,
+    #0a1820 38%,
+    #0f222c 72%,
+    #102830 100%
+  );
+  --orbit-card: rgba(24, 46, 54, 0.72);
+  --orbit-card-hover: rgba(28, 54, 64, 0.88);
+  --orbit-card-selected: rgba(20, 184, 166, 0.14);
+  --orbit-card-border: rgba(20, 184, 166, 0.14);
+  --orbit-card-border-selected: rgba(45, 212, 191, 0.4);
+  --orbit-accent: #5eead4;
+  --orbit-text-muted: rgba(228, 242, 240, 0.62);
+  --orbit-text-subtle: rgba(228, 242, 240, 0.42);
+  --orbit-filter-idle: rgba(24, 46, 54, 0.55);
+  --orbit-filter-idle-hover: rgba(28, 54, 64, 0.75);
+  --orbit-filter-idle-text: rgba(228, 242, 240, 0.72);
+  --orbit-filter-active-bg: rgba(45, 212, 191, 0.2);
+  --orbit-filter-active-text: #ccfbf1;
+}
+
+html.dark .orbit-shell {
+  background: var(--orbit-shell-gradient);
+}

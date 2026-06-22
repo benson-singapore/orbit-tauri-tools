@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import type { ThemeMode } from "@/types";
 import { slugifyChannelId } from "@/lib/channelId";
 import { normalizeChannelStatus, type ChannelStatus } from "@/lib/channelStatus";
@@ -53,6 +54,26 @@ export function isWasmChannelIdSyncedWithLabel(row: WasmChannelFormRow): boolean
   return row.id === "main" && row.label === "默认";
 }
 
+export function duplicateWasmChannelRow(
+  source: WasmChannelFormRow,
+  existingIds: Iterable<string>,
+): WasmChannelFormRow {
+  const used = new Set(existingIds);
+  let id: string;
+  do {
+    id = `ch-${Math.random().toString(36).slice(2, 10)}`;
+  } while (used.has(id));
+
+  return {
+    ...source,
+    _key: `wch-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+    id,
+    idAuto: false,
+    paramRows: source.paramRows.map(p => createParamRow(p.key, p.value)),
+    features: { ...source.features },
+  };
+}
+
 function StyledSelect({
   value,
   onChange,
@@ -101,7 +122,7 @@ export function WasmChannelEditorModal({
   onClose: () => void;
   onSave: (row: WasmChannelFormRow) => void;
 }) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
   const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";

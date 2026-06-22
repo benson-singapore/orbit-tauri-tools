@@ -14,6 +14,7 @@ type PluginRow struct {
 	ManifestJSON  string
 	ContentRating string
 	Active        bool
+	IncludeInAll  bool
 	SortOrder     int
 	InstalledAt   int64
 	LastFetchAt   int64
@@ -38,7 +39,7 @@ type FeedItemRow struct {
 
 func (s *Store) ListPlugins(ctx context.Context) ([]PluginRow, error) {
 	rows, err := s.DB.QueryContext(ctx, `
-		SELECT id, manifest_json, COALESCE(content_rating, ''), active, sort_order, installed_at,
+		SELECT id, manifest_json, COALESCE(content_rating, ''), active, COALESCE(include_in_all, 0), sort_order, installed_at,
 		       COALESCE(last_fetch_at, 0), COALESCE(last_error, ''), source
 		FROM plugins
 		ORDER BY sort_order ASC, name ASC
@@ -52,7 +53,7 @@ func (s *Store) ListPlugins(ctx context.Context) ([]PluginRow, error) {
 	for rows.Next() {
 		var row PluginRow
 		if err := rows.Scan(
-			&row.ID, &row.ManifestJSON, &row.ContentRating, &row.Active, &row.SortOrder,
+			&row.ID, &row.ManifestJSON, &row.ContentRating, &row.Active, &row.IncludeInAll, &row.SortOrder,
 			&row.InstalledAt, &row.LastFetchAt, &row.LastError, &row.Source,
 		); err != nil {
 			return nil, err
@@ -67,21 +68,26 @@ func (s *Store) UpsertPluginRow(ctx context.Context, row PluginRow) error {
 	if row.Active {
 		active = 1
 	}
+	includeInAll := 0
+	if row.IncludeInAll {
+		includeInAll = 1
+	}
 	_, err := s.DB.ExecContext(ctx, `
 		INSERT INTO plugins (
-			id, name, manifest_json, content_rating, active, sort_order, installed_at,
+			id, name, manifest_json, content_rating, active, include_in_all, sort_order, installed_at,
 			last_fetch_at, last_error, source
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			manifest_json = excluded.manifest_json,
 			content_rating = excluded.content_rating,
 			active = excluded.active,
+			include_in_all = excluded.include_in_all,
 			sort_order = excluded.sort_order,
 			last_fetch_at = excluded.last_fetch_at,
 			last_error = excluded.last_error,
 			source = excluded.source
-	`, row.ID, pluginNameFromManifest(row.ManifestJSON), row.ManifestJSON, row.ContentRating, active,
+	`, row.ID, pluginNameFromManifest(row.ManifestJSON), row.ManifestJSON, row.ContentRating, active, includeInAll,
 		row.SortOrder, row.InstalledAt, row.LastFetchAt, row.LastError, row.Source)
 	return err
 }

@@ -1,4 +1,5 @@
 import { useState, type ChangeEvent, type ReactNode } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import type { ChannelFeatures, ThemeMode } from "@/types";
 import {
   type ChannelFeaturesForm,
@@ -172,7 +173,7 @@ export function WasmChannelFeaturesEditor({
   value: ChannelFeaturesForm;
   onChange: (next: ChannelFeaturesForm) => void;
 }) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const [showJson, setShowJson] = useState(false);
   const [jsonDraft, setJsonDraft] = useState("");
   const [jsonError, setJsonError] = useState<string | null>(null);

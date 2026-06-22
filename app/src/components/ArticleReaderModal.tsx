@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { articleContentTheme, isDarkTheme } from "@/lib/themeMode";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
@@ -8,7 +9,12 @@ import {
   prepareArticleHtmlContent,
 } from "@/lib/articleContent";
 import { stripEmbeddedVideosFromContent } from "@/lib/articleVideoUrl";
-import { shouldSkipFeedItemDetailFetch, isRatingPluginArticle } from "@/lib/browseDynamicFeed";
+import {
+  resolveArticleDetailChannel,
+  resolveArticleHasDetail,
+  shouldSkipFeedItemDetailFetch,
+  isRatingPluginArticle,
+} from "@/lib/browseDynamicFeed";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
@@ -52,7 +58,7 @@ export function ArticleReaderModal({
   onArticleChange,
 }: ArticleReaderModalProps) {
   const isExpanded = mode === "expanded";
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
   const [article, setArticle] = useState(initialArticle);
   const [loading, setLoading] = useState(false);
@@ -64,6 +70,14 @@ export function ArticleReaderModal({
   const syncArticleToSession = useCallback((next: Article) => {
     onArticleChangeRef.current?.(next);
   }, []);
+
+  const channelId = resolveArticleDetailChannel(article, pluginMeta, activeChannel);
+  const effectiveHasDetail = resolveArticleHasDetail(
+    article,
+    pluginMeta,
+    activeChannel,
+    { hasDetail },
+  );
 
   useEffect(() => {
     setArticle(initialArticle);
@@ -77,13 +91,12 @@ export function ArticleReaderModal({
     }
 
     const itemId = article.id;
-    if (shouldSkipFeedItemDetailFetch(article, pluginMeta, hasDetail)) {
+    if (shouldSkipFeedItemDetailFetch(article, pluginMeta, effectiveHasDetail)) {
       setLoading(false);
       return;
     }
 
-    const channelId = article.channelId ?? activeChannel;
-    if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && channelId !== "all" && hasDetail) {
+    if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && channelId !== "all" && effectiveHasDetail) {
       let cancelled = false;
       setLoading(true);
       void runtimeOpenDetail(article.pluginId, channelId, itemId)
@@ -137,7 +150,7 @@ export function ArticleReaderModal({
     return () => {
       cancelled = true;
     };
-  }, [isExpanded, article.id, article.pluginId, article.channelId, pluginMeta, hasDetail, activeChannel, syncArticleToSession]);
+  }, [isExpanded, article, pluginMeta, effectiveHasDetail, channelId, syncArticleToSession]);
 
   const isRatingCoverLayout = isRatingPluginArticle(article, pluginMeta);
 
@@ -183,8 +196,10 @@ export function ArticleReaderModal({
     if (hasVideoMedia) {
       content = stripEmbeddedVideosFromContent(content);
     }
-    return prepareArticleHtmlContent(content, runtimeBase);
-  }, [article.content, article.image, article.type, runtimeBase, hasVideoMedia]);
+    return prepareArticleHtmlContent(content, runtimeBase, {
+      darkTheme: isDarkTheme(theme),
+    });
+  }, [article.content, article.image, article.type, runtimeBase, hasVideoMedia, theme]);
 
   useEffect(() => {
     if (displayContent) {
@@ -310,15 +325,8 @@ export function ArticleReaderModal({
               ) : null}
             </div>
 
-            {showArticleMedia && isRatingCoverLayout && article.type === "text" && article.image?.trim() ? (
-              <ProxiedImage
-                runtimeBase={runtimeBase}
-                src={article.image}
-                alt="Article Cover"
-                className="h-[380px] w-auto max-w-full object-contain mx-auto block rounded-xl"
-                onError={() => setCoverImageFailed(true)}
-              />
-            ) : showArticleMedia
+            {showArticleMedia
+              && !isRatingCoverLayout
               && article.type === "image"
               && article.image?.trim()
               && !article.galleryImages?.length ? (
@@ -329,7 +337,7 @@ export function ArticleReaderModal({
                 className="rounded-xl"
                 onError={() => setCoverImageFailed(true)}
               />
-            ) : showArticleMedia ? (
+            ) : showArticleMedia && !isRatingCoverLayout ? (
               <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                 {article.type === "text" && article.image?.trim() ? (
                   <ProxiedImage
@@ -390,7 +398,7 @@ export function ArticleReaderModal({
               <>
                 <div
                   ref={contentRef}
-                  data-theme={theme}
+                  data-theme={articleContentTheme(theme)}
                   className="article-content mt-2"
                   dangerouslySetInnerHTML={{ __html: displayContent }}
                 />

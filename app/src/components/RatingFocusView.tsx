@@ -1,6 +1,12 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import { ProxiedImage } from "@/components/ProxiedImage";
-import { parseRatingScore } from "@/lib/ratingPlugin";
+import { parseRatingScore, ratingDisplayTags } from "@/lib/ratingPlugin";
+import {
+  DEFAULT_GRID_COVER_ASPECT_RATIO,
+  gridCoverAspectCss,
+  type GridCoverAspectRatio,
+} from "@/lib/gridCoverAspectRatio";
 import type { Article, ThemeMode } from "@/types";
 
 const DEFAULT_COLUMN_COUNT = 4;
@@ -10,6 +16,7 @@ interface RatingFocusViewProps {
   runtimeBase: string | null;
   articles: Article[];
   columnCount?: number;
+  coverAspectRatio?: GridCoverAspectRatio;
   loading: boolean;
   loadingMore: boolean;
   searching?: boolean;
@@ -25,6 +32,7 @@ export function RatingFocusView({
   runtimeBase,
   articles,
   columnCount = DEFAULT_COLUMN_COUNT,
+  coverAspectRatio = DEFAULT_GRID_COVER_ASPECT_RATIO,
   loading,
   loadingMore,
   searching = false,
@@ -36,7 +44,7 @@ export function RatingFocusView({
 }: RatingFocusViewProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
 
   useEffect(() => {
     if (!hasMore || loadingMore || loading || searching) return;
@@ -82,7 +90,9 @@ export function RatingFocusView({
         style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
       >
         {articles.map(item => {
-          const score = parseRatingScore(item.tags ?? []);
+          const tags = item.tags ?? [];
+          const score = parseRatingScore(tags);
+          const displayTags = ratingDisplayTags(tags);
           const hasImage = Boolean(item.image?.trim()) && !failedIds.has(item.id);
           const isSelected = selectedArticleId === item.id;
 
@@ -96,15 +106,16 @@ export function RatingFocusView({
                   ? isDark
                     ? "bg-indigo-950/30 border-indigo-700 ring-1 ring-indigo-700/50"
                     : "bg-indigo-50 border-indigo-200 ring-1 ring-indigo-200"
-                  : theme === "dark"
-                    ? "bg-[#1c1d1f] border-neutral-800 hover:border-neutral-600"
+                  : isDarkTheme(theme)
+                    ? "orbit-surface-elevated border-[var(--orbit-border)] hover:border-violet-700/40"
                     : "bg-white border-neutral-100 hover:border-neutral-200 hover:shadow-md"
               }`}
             >
               <div
-                className={`relative aspect-video w-full overflow-hidden ${
-                  theme === "dark" ? "bg-neutral-800" : "bg-neutral-100"
+                className={`relative w-full overflow-hidden ${
+                  isDarkTheme(theme) ? "bg-neutral-800" : "bg-neutral-100"
                 }`}
+                style={{ aspectRatio: gridCoverAspectCss(coverAspectRatio) }}
               >
                 {hasImage ? (
                   <ProxiedImage
@@ -133,11 +144,27 @@ export function RatingFocusView({
               <div className="flex-shrink-0 p-2.5 space-y-1">
                 <h4
                   className={`text-xs font-semibold leading-5 line-clamp-2 h-10 ${
-                    theme === "dark" ? "text-neutral-100" : "text-neutral-800"
+                    isDarkTheme(theme) ? "text-neutral-100" : "text-neutral-800"
                   }`}
                 >
                   {item.title}
                 </h4>
+                {displayTags.length > 0 ? (
+                  <div className="flex flex-wrap gap-1 max-h-5 overflow-hidden">
+                    {displayTags.map((tag, idx) => (
+                      <span
+                        key={idx}
+                        className={`px-1.5 py-0.5 rounded text-[10px] leading-4 ${
+                          isDark
+                            ? "bg-neutral-800/80 text-neutral-400"
+                            : "bg-neutral-100 text-neutral-500"
+                        }`}
+                      >
+                        {tag}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 <p className="text-[10px] leading-4 text-neutral-400 line-clamp-2 h-8">
                   {item.summary?.trim() || "\u00A0"}
                 </p>

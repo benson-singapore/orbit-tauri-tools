@@ -214,6 +214,15 @@ func (q *RefreshQueue) runJob(ctx context.Context, job refreshJob) error {
 		}
 	}
 
+	if _, err := q.registry.MergePluginVars(ctx, rec); err != nil {
+		rec.LastError = err.Error()
+		now := time.Now().Unix()
+		rec.LastFetch = now
+		_ = q.registry.upsertPlugin(ctx, rec)
+		q.registry.setRecord(rec)
+		return nil
+	}
+
 	var err error
 	if job.force {
 		_, err = q.registry.dispatch.ClearAndRefresh(ctx, job.pluginID, job.channelID)

@@ -1,5 +1,6 @@
 import { Icon } from "@/components/Icon";
-import type { Article } from "@/types";
+import { isDarkTheme } from "@/lib/themeMode";
+import type { Article, ThemeMode } from "@/types";
 
 interface ChaptersSidebarProps {
   title: string;
@@ -13,7 +14,7 @@ interface ChaptersSidebarProps {
   parentItem: Article;
   activeItemId?: string | null;
   itemLabel?: string;
-  theme?: "light" | "dark";
+  theme?: ThemeMode;
   onSelect: (item: Article) => void;
   onLoadMore?: () => void;
   onRefresh?: () => void;
@@ -44,7 +45,7 @@ export function ChaptersSidebar({
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className={`p-4 border-b space-y-2 shrink-0 ${
-        theme === "dark" ? "border-neutral-800" : "border-neutral-100"
+        isDarkTheme(theme) ? "border-neutral-800" : "border-neutral-100"
       }`}>
         <div className="min-w-0">
           <p className="text-[11px] text-neutral-400 truncate">{parentItem.title}</p>
@@ -94,10 +95,8 @@ export function ChaptersSidebar({
                   key={item.id}
                   type="button"
                   onClick={() => onSelect(item)}
-                  className={`group relative w-full p-3.5 rounded-2xl text-left transition-all duration-300 border-[0.5px] ${
-                    isActive
-                      ? "bg-[#e9eef6] dark:bg-neutral-800 border-indigo-300 dark:border-neutral-600 shadow-sm"
-                      : "bg-white hover:bg-[#f0f4f9] dark:bg-neutral-900 dark:hover:bg-neutral-800/40 border-neutral-200 dark:border-neutral-700"
+                  className={`group relative w-full p-3.5 rounded-2xl text-left transition-all duration-300 border-[0.5px] orbit-feed-card ${
+                    isActive ? "orbit-feed-card--selected" : ""
                   }`}
                 >
                   <div className="flex gap-3 items-start">
@@ -109,20 +108,20 @@ export function ChaptersSidebar({
                       </div>
                       <h4 className={`text-sm font-semibold leading-snug line-clamp-2 transition-colors ${
                         isActive
-                          ? "text-indigo-700 dark:text-indigo-400"
-                          : "text-neutral-800 dark:text-neutral-200"
+                          ? "orbit-feed-card-title--selected"
+                          : "orbit-feed-card-title"
                       }`}>
                         {item.title}
                       </h4>
                       {item.summary?.trim() ? (
-                        <p className="text-xs text-neutral-400 dark:text-neutral-500 line-clamp-2 mt-0.5 leading-snug">
+                        <p className="text-xs orbit-feed-card-summary line-clamp-2 mt-0.5 leading-snug">
                           {item.summary}
                         </p>
                       ) : null}
                     </div>
                   </div>
                   {(item.author || item.time) ? (
-                    <div className="flex items-center gap-2 mt-3 pt-2 border-t border-dashed border-neutral-100 dark:border-neutral-800/80 text-[10px] text-neutral-400">
+                    <div className="flex items-center gap-2 mt-3 pt-2 border-t border-dashed orbit-feed-card-divider text-[10px] orbit-feed-card-meta">
                       {item.author ? <span>{item.author}</span> : null}
                       {item.author && item.time ? <span>•</span> : null}
                       {item.time ? <span>{item.time}</span> : null}

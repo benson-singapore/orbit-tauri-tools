@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, type MouseEvent, type ReactNode } from "react";
+import { articleContentTheme, isDarkTheme } from "@/lib/themeMode";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
@@ -50,7 +51,7 @@ export function RatingDetailModal({
   article,
   onClose,
 }: RatingDetailModalProps) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -64,8 +65,10 @@ export function RatingDetailModal({
   const displayContent = useMemo(() => {
     const raw = article.content?.trim();
     if (!raw) return "";
-    return prepareArticleHtmlContent(raw, runtimeBase);
-  }, [article.content, runtimeBase]);
+    return prepareArticleHtmlContent(raw, runtimeBase, {
+      darkTheme: isDarkTheme(theme),
+    });
+  }, [article.content, runtimeBase, theme]);
 
   useEffect(() => {
     if (displayContent) {
@@ -253,7 +256,7 @@ export function RatingDetailModal({
               {displayContent ? (
                 <div
                   ref={contentRef}
-                  data-theme={theme}
+                  data-theme={articleContentTheme(theme)}
                   className={`article-content text-sm pt-4 border-t ${
                     isDark ? "border-neutral-800" : "border-neutral-100"
                   }`}

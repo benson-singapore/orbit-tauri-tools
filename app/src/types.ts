@@ -1,6 +1,9 @@
 export type ContentType = "text" | "video" | "audio" | "image";
 
-export type ThemeMode = "light" | "dark";
+export type ThemeMode = "light" | "purple" | "midnight" | "forest" | "rose" | "ocean";
+
+/** Article reader uses a simplified light/dark split */
+export type ArticleContentTheme = "light" | "dark";
 
 export type ActiveTab = "today" | "bookmarks" | "trending" | "all";
 export type CategoryFilter = "all" | ContentType;
@@ -201,6 +204,8 @@ export interface Plugin {
   icon: PluginContentType | string;
   mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating";
   active?: boolean;
+  /** When true, plugin content appears in Today 全部 aggregate feed */
+  includeInAll?: boolean;
   desc: string;
   channels?: PluginChannel[];
   defaultChannel?: string;
@@ -221,6 +226,8 @@ export interface Plugin {
   marketId?: string;
   contentRating?: MarketPluginContentRating;
   variablesSchema?: Record<string, VariableDefinition>;
+  /** Whether all required user variables are configured (wasm plugins). */
+  variablesReady?: boolean;
 }
 
 export interface FeedResponse {

@@ -1,5 +1,6 @@
 import { isChannelEnabled } from "@/lib/channelStatus";
-import type { Article, Plugin, PluginChannel } from "@/types";
+import { resolveChannelHasDetail } from "@/lib/runtimeV2";
+import type { Article, ChannelCapabilities, Plugin, PluginChannel } from "@/types";
 
 function isImagePlugin(plugin?: Plugin | null): boolean {
   return plugin?.mediaType === "image";
@@ -95,21 +96,50 @@ export function isRatingPluginArticle(
   return plugin?.mediaType === "rating";
 }
 
-/** 列表记录即可作为详情展示，跳过 /v1/feed/item */
-export function shouldSkipFeedItemDetailFetch(
-  article: Pick<Article, "pluginId" | "channelId" | "type" | "sourceUrl" | "videoUrl" | "id">,
-  plugin?: Plugin | null,
-  hasDetail = true,
+/** Today 全部等聚合列表：用文章所属频道解析 detail 查询上下文 */
+export function resolveArticleDetailChannel(
+  article: Pick<Article, "channelId" | "pluginId">,
+  plugin: Plugin | null | undefined,
+  activeChannel: string,
+  storedChannelId?: string | null,
+): string {
+  const fromArticle = article.channelId?.trim();
+  if (fromArticle) return fromArticle;
+  if (activeChannel !== "all") return activeChannel;
+  const channels = (plugin?.channels ?? []).filter(ch => isChannelEnabled(ch.status));
+  return resolveDefaultPluginChannel(plugin, channels, storedChannelId);
+}
+
+export function resolveArticleHasDetail(
+  article: Pick<Article, "pluginId" | "channelId">,
+  plugin: Plugin | null | undefined,
+  activeChannel: string,
+  capabilities: Pick<ChannelCapabilities, "hasDetail">,
+  storedChannelId?: string | null,
 ): boolean {
+  const channelId = resolveArticleDetailChannel(
+    article,
+    plugin,
+    activeChannel,
+    storedChannelId,
+  );
+  return resolveChannelHasDetail(plugin, channelId, capabilities);
+}
+
+/** 列表记录即可作为详情展示，跳过 detail 请求 */
+export function shouldSkipFeedItemDetailFetch(
+  article: Pick<Article, "pluginId" | "channelId" | "content">,
+  plugin?: Plugin | null,
+  hasDetail = false,
+): boolean {
+  // 已有详情正文时直接展示；runtime open-detail 也会短路返回
+  if (article.content?.trim()) {
+    return true;
+  }
+  // 频道未配置 features.detail 时无需拉取详情
   if (!hasDetail) {
     return true;
   }
-  if (article.type === "video" || article.pluginId === "youtube") {
-    return true;
-  }
-  return (
-    isBrowseDynamicImageArticle(article, plugin)
-    || isRatingPluginArticle(article, plugin)
-  );
+  return false;
 }
 

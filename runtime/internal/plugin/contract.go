@@ -146,6 +146,7 @@ type PluginRecord struct {
 	Manifest
 	ContentRating string `json:"contentRating,omitempty"`
 	Active        bool   `json:"active"`
+	IncludeInAll  bool   `json:"includeInAll"`
 	SortOrder     int    `json:"sortOrder"`
 	Installed     int64  `json:"installedAt"`
 	LastFetch     int64  `json:"lastFetchAt,omitempty"`

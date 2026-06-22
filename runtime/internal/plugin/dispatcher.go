@@ -58,6 +58,9 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 		}
 		if itemCount == 0 {
 			if listItemsShouldRefresh(features, offset, itemCount) {
+				if _, err := d.registry.MergePluginVars(ctx, rec); err != nil {
+					return DispatchResult{}, err
+				}
 				d.registry.refreshQueue.EnqueueInteractive(pluginID, channelID)
 				return DispatchResult{Items: []FeedItem{}, HasMore: false}, nil
 			}
@@ -75,6 +78,9 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 		return DispatchResult{}, err
 	}
 	if len(rows) == 0 && listItemsShouldRefresh(features, offset, 0) {
+		if _, err := d.registry.MergePluginVars(ctx, rec); err != nil {
+			return DispatchResult{}, err
+		}
 		d.registry.refreshQueue.EnqueueInteractive(pluginID, channelID)
 		return DispatchResult{Items: []FeedItem{}, HasMore: false}, nil
 	}

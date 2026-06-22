@@ -1,26 +1,26 @@
 import type { ChangeEvent } from "react";
 import { isDarkTheme } from "@/lib/themeMode";
 import {
-  GRID_COLUMN_OPTIONS,
-  type GridColumnCount,
-} from "@/lib/gridColumnCount";
+  GRID_COVER_ASPECT_OPTIONS,
+  type GridCoverAspectRatio,
+} from "@/lib/gridCoverAspectRatio";
 import type { ThemeMode } from "@/types";
 
-interface GridColumnSwitcherProps {
+interface GridCoverAspectSwitcherProps {
   theme: ThemeMode;
-  value: GridColumnCount;
-  onChange: (count: GridColumnCount) => void;
+  value: GridCoverAspectRatio;
+  onChange: (ratio: GridCoverAspectRatio) => void;
   label?: string;
 }
 
-export function GridColumnSwitcher({
+export function GridCoverAspectSwitcher({
   theme,
   value,
   onChange,
-  label = "列数",
-}: GridColumnSwitcherProps) {
+  label = "比例",
+}: GridCoverAspectSwitcherProps) {
   const handleChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    onChange(Number.parseInt(e.target.value, 10) as GridColumnCount);
+    onChange(e.target.value as GridCoverAspectRatio);
   };
 
   return (
@@ -35,7 +35,7 @@ export function GridColumnSwitcher({
       </span>
       <div className="relative">
         <select
-          value={String(value)}
+          value={value}
           onChange={handleChange}
           aria-label={label}
           className={`h-6 pl-1.5 pr-5 rounded-md text-[11px] font-semibold tabular-nums appearance-none cursor-pointer transition-all ${
@@ -44,7 +44,7 @@ export function GridColumnSwitcher({
               : "bg-white text-neutral-800 hover:bg-neutral-50 shadow-sm"
           }`}
         >
-          {GRID_COLUMN_OPTIONS.map(option => (
+          {GRID_COVER_ASPECT_OPTIONS.map(option => (
             <option key={option} value={option}>
               {option}
             </option>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import { Icon } from "@/components/Icon";
 import type { ThemeMode } from "@/types";
 import {
@@ -44,7 +45,7 @@ function makePromptProfileId(): string {
 }
 
 export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-100";
   const panelBg = isDark ? "bg-neutral-950/30" : "bg-neutral-100/80";
   const cardBg = isDark ? "bg-neutral-900/40" : "bg-white";

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ClipboardEvent, type ReactNode } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import { Icon } from "@/components/Icon";
 import { LLMSettingsPanel } from "@/components/LLMSettingsPanel";
 import { PluginAvatar } from "@/components/PluginAvatar";
@@ -6,6 +7,7 @@ import { PluginReadmeModal } from "@/components/PluginReadmeModal";
 import {
   WasmChannelEditorModal,
   createWasmChannelRow,
+  duplicateWasmChannelRow,
   type WasmChannelEditorState,
   type WasmChannelFormRow,
 } from "@/components/WasmChannelEditorModal";
@@ -42,6 +44,8 @@ import {
   filterPluginsForExperienceMode,
   type ExperienceMode,
 } from "@/lib/experienceMode";
+import { resolvePluginIncludeInAll } from "@/lib/pluginIncludeInAll";
+import { pluginNeedsVariablesConfiguration } from "@/lib/pluginVariablesReady";
 import { slugifyChannelId } from "@/lib/channelId";
 import { normalizeChannelStatus } from "@/lib/channelStatus";
 import { resolveColorToHex } from "@/lib/pluginColor";
@@ -49,6 +53,7 @@ import { waitForRuntimeReady } from "@/lib/runtime";
 import { fetchSettingConfigDicts } from "@/lib/runtimeDicts";
 import {
   fetchPluginVariables,
+  filterVariablesForSave,
   savePluginVariables,
 } from "@/lib/runtimeV2";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
@@ -126,6 +131,7 @@ function formatPrettyJson(input: string): string {
 interface PluginManagerModalProps {
   theme: ThemeMode;
   experienceMode?: ExperienceMode;
+  onExperienceModeChange?: (mode: ExperienceMode) => void;
   myPlugins: Plugin[];
   pluginGroups: PluginSidebarGroup[];
   groupedPluginsForManage: { group: PluginSidebarGroup; plugins: Plugin[] }[];
@@ -142,6 +148,7 @@ interface PluginManagerModalProps {
   onSaveManifest: (pluginId: string, manifestText: string) => Promise<void>;
   onUninstall: (id: string) => void | Promise<void>;
   onToggleActive: (id: string) => void;
+  onToggleIncludeInAll: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onReorder: (orderedIds: string[]) => void;
   onImport: (payload: InstallRSSPluginRequest, targetGroupId?: string) => void;
@@ -516,6 +523,7 @@ interface PluginSectionProps {
   pluginGroups: PluginSidebarGroup[];
   onUninstall: (id: string) => void;
   onToggleActive: (id: string) => void;
+  onToggleIncludeInAll: (id: string) => void;
   onMove: (id: string, direction: "up" | "down") => void;
   onReorder: (orderedIds: string[]) => void;
   onAssignGroup: (pluginId: string, groupId: string) => void;
@@ -536,6 +544,7 @@ function PluginSection(props: PluginSectionProps) {
     pluginGroups,
     onUninstall,
     onToggleActive,
+    onToggleIncludeInAll,
     onMove,
     onReorder,
     onAssignGroup,
@@ -583,12 +592,16 @@ function PluginSection(props: PluginSectionProps) {
       {plugins.map((plugin) => {
         const index = installedPlugins.findIndex(p => p.id === plugin.id);
         const isEnabled = plugin.active !== false;
+        const needsVariables = pluginNeedsVariablesConfiguration(plugin);
+        const includeInAll = resolvePluginIncludeInAll(plugin);
         const canMoveUp = index > 0;
         const canMoveDown = index < installedPlugins.length - 1;
         const isCustom = !plugin.official;
         const isWasm = plugin.source === "wasm";
         const canEditManifest = isCustom || isWasm;
-        const cardClass = isCustom
+        const cardClass = needsVariables
+          ? "border border-amber-200/80 dark:border-amber-900/50 bg-amber-50/40 dark:bg-amber-950/15"
+          : isCustom
           ? "border border-indigo-200/70 dark:border-indigo-900/40 bg-indigo-50/30 dark:bg-indigo-950/10"
           : `border ${subtleBorder} ${mutedBg}`;
         const currentGroupId = resolveGroupId(plugin.id);
@@ -655,6 +668,11 @@ function PluginSection(props: PluginSectionProps) {
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold">{plugin.name}</span>
+                    {needsVariables ? (
+                      <span className="shrink-0 inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border border-amber-300/80 bg-amber-100 text-amber-800 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300">
+                        不可用
+                      </span>
+                    ) : null}
                     {plugin.contentRating ? (
                       <span
                         className={`shrink-0 inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border ${
@@ -715,11 +733,35 @@ function PluginSection(props: PluginSectionProps) {
                   <p className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5 leading-relaxed">
                     {plugin.desc}
                   </p>
+                  {needsVariables ? (
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-1 leading-relaxed">
+                      缺少必要用户变量，请点击「编辑配置」填写后才会出现在左侧菜单。
+                    </p>
+                  ) : null}
                 </div>
               </div>
 
               <div className="lg:pl-4 lg:border-l lg:border-neutral-200/70 dark:lg:border-neutral-800">
                 <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={includeInAll}
+                    onClick={() => onToggleIncludeInAll(plugin.id)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${
+                      includeInAll ? "bg-sky-500" : "bg-neutral-300 dark:bg-neutral-600"
+                    }`}
+                    title={includeInAll ? "在 Today 全部中显示，点击关闭" : "不在 Today 全部中显示，点击开启"}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                        includeInAll ? "translate-x-5" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                  <span className="text-[11px] font-medium text-neutral-500">
+                    阅读
+                  </span>
                   <button
                     type="button"
                     role="switch"
@@ -741,7 +783,7 @@ function PluginSection(props: PluginSectionProps) {
                   </span>
                   <button
                     type="button"
-                    disabled={!isEnabled || forceRefreshingId === plugin.id}
+                    disabled={!isEnabled || needsVariables || forceRefreshingId === plugin.id}
                     onClick={() => {
                       setForceRefreshError(null);
                       setForceRefreshingId(plugin.id);
@@ -754,7 +796,11 @@ function PluginSection(props: PluginSectionProps) {
                         .finally(() => setForceRefreshingId(null));
                     }}
                     className="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium rounded-lg border border-neutral-200 text-neutral-600 hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-                    title="清空本地缓存并重新抓取最新内容"
+                    title={
+                      needsVariables
+                        ? "请先配置用户变量"
+                        : "清空本地缓存并重新抓取最新内容"
+                    }
                   >
                     <Icon
                       name="refresh"
@@ -833,13 +879,15 @@ function WasmManifestEditorModal({
   plugin,
   onClose,
   onSave,
+  onRefresh,
 }: {
   theme: ThemeMode;
   plugin: Plugin;
   onClose: () => void;
   onSave: (manifestText: string) => Promise<void>;
+  onRefresh?: () => void;
 }) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
   const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
@@ -871,6 +919,7 @@ function WasmManifestEditorModal({
   const [hasSecretsApiKey, setHasSecretsApiKey] = useState(false);
   const [secretsApiKey, setSecretsApiKey] = useState("");
   const [pluginVariableValues, setPluginVariableValues] = useState<Record<string, string>>({});
+  const [pluginVariablesDirty, setPluginVariablesDirty] = useState(false);
   const [pluginVariableSchema, setPluginVariableSchema] = useState<Record<string, { label: string; description?: string; required?: boolean; secret?: boolean; default?: string }>>({});
   const [executionMode, setExecutionMode] = useState("wasm");
   const [wasmEntry, setWasmEntry] = useState("plugin.wasm");
@@ -1120,10 +1169,16 @@ function WasmManifestEditorModal({
       });
     void fetchPluginVariables(plugin.id)
       .then(values => {
-        if (!cancelled) setPluginVariableValues(values);
+        if (!cancelled) {
+          setPluginVariableValues(values);
+          setPluginVariablesDirty(false);
+        }
       })
       .catch(() => {
-        if (!cancelled) setPluginVariableValues({});
+        if (!cancelled) {
+          setPluginVariableValues({});
+          setPluginVariablesDirty(false);
+        }
       });
     return () => {
       cancelled = true;
@@ -1201,6 +1256,20 @@ function WasmManifestEditorModal({
     setDragOverChannelKey(null);
   };
 
+  const handleChannelCopy = (index: number) => {
+    setChannels(prev => {
+      const source = prev[index];
+      if (!source) return prev;
+      const copy = duplicateWasmChannelRow(
+        source,
+        prev.map(ch => ch.id.trim()).filter(Boolean),
+      );
+      const next = [...prev];
+      next.splice(index + 1, 0, copy);
+      return next;
+    });
+  };
+
   const validateBeforeSave = (): string | null => {
     if (viewMode === "json") {
       if (!applyJsonToForm(jsonText)) {
@@ -1265,8 +1334,12 @@ function WasmManifestEditorModal({
         viewMode === "json" ? formatPrettyJson(jsonText) : buildManifestJsonText();
       JSON.parse(text);
       await onSave(text);
-      if (Object.keys(pluginVariableValues).length > 0) {
-        await savePluginVariables(plugin.id, pluginVariableValues);
+      if (pluginVariablesDirty) {
+        const valuesToSave = filterVariablesForSave(pluginVariableValues, pluginVariableSchema);
+        if (Object.keys(valuesToSave).length > 0) {
+          await savePluginVariables(plugin.id, valuesToSave);
+          onRefresh?.();
+        }
       }
       onClose();
     } catch (err) {
@@ -1463,7 +1536,7 @@ function WasmManifestEditorModal({
                                   <th className={`px-4 py-2.5 text-left font-semibold w-20 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
                                     状态
                                   </th>
-                                  <th className={`px-4 py-2.5 text-right font-semibold w-28 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                                  <th className={`px-4 py-2.5 text-right font-semibold w-36 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
                                     操作
                                   </th>
                                 </tr>
@@ -1589,6 +1662,13 @@ function WasmManifestEditorModal({
                                       </td>
                                       <td className="px-4 py-3">
                                         <div className="flex items-center justify-end gap-3">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleChannelCopy(index)}
+                                            className="text-[11px] font-semibold text-[#5856D6] hover:underline"
+                                          >
+                                            复制
+                                          </button>
                                           <button
                                             type="button"
                                             onClick={() => setChannelEditor({ mode: "edit", key: ch._key })}
@@ -1801,9 +1881,10 @@ function WasmManifestEditorModal({
                               <input
                                 type={def.secret === false ? "text" : "password"}
                                 value={pluginVariableValues[key] ?? ""}
-                                onChange={e =>
-                                  setPluginVariableValues(prev => ({ ...prev, [key]: e.target.value }))
-                                }
+                                onChange={e => {
+                                  setPluginVariablesDirty(true);
+                                  setPluginVariableValues(prev => ({ ...prev, [key]: e.target.value }));
+                                }}
                                 placeholder={def.default ?? ""}
                                 autoComplete="off"
                                 className={`w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-[#5856D6]/50 ${inputBg} ${inputBorder} ${inputText}`}
@@ -2051,7 +2132,7 @@ function RssChannelEditorModal({
   onClose: () => void;
   onSave: (row: ChannelFormRow) => void;
 }) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
   const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
@@ -2207,7 +2288,7 @@ function ImportPluginModal({
   onOrbitImport?: (file: File) => Promise<void>;
   initialPlugin?: Plugin | null;
 }) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
   const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
@@ -3525,6 +3606,7 @@ function PluginGroupManagerModal({
 export function PluginManagerModal({
   theme,
   experienceMode = "full",
+  onExperienceModeChange,
   myPlugins,
   pluginGroups,
   groupedPluginsForManage,
@@ -3534,6 +3616,7 @@ export function PluginManagerModal({
   onSaveManifest,
   onUninstall,
   onToggleActive,
+  onToggleIncludeInAll,
   onMove,
   onReorder,
   onImport,
@@ -3827,8 +3910,8 @@ export function PluginManagerModal({
     return map;
   }, [marketGroups]);
 
-  const isDark = theme === "dark";
-  const panelBg = isDark ? "bg-[#1c1d1f] text-white" : "bg-white text-neutral-900";
+  const isDark = isDarkTheme(theme);
+  const panelBg = isDark ? "orbit-surface-elevated text-[#e8e4f0]" : "bg-white text-neutral-900";
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-100";
   const mutedBg = isDark ? "bg-neutral-900/40" : "bg-neutral-50";
   const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
@@ -4053,6 +4136,8 @@ export function PluginManagerModal({
           {activeTab === "system" && (
             <SystemInfoPanel
               theme={theme}
+              experienceMode={experienceMode}
+              onExperienceModeChange={onExperienceModeChange}
               installedPluginCount={installedPlugins.length}
               runningPluginCount={runningCount}
             />
@@ -4178,6 +4263,7 @@ export function PluginManagerModal({
                       onMove={onMove}
                       onReorder={onReorder}
                       onToggleActive={onToggleActive}
+                      onToggleIncludeInAll={onToggleIncludeInAll}
                       onUninstall={onUninstall}
                       onForceRefresh={onForceRefresh}
                       onAssignGroup={onAssignPluginGroup}
@@ -4283,6 +4369,7 @@ export function PluginManagerModal({
           theme={theme}
           plugin={editingWasmPlugin}
           onClose={() => setEditingWasmPlugin(null)}
+          onRefresh={onRefresh}
           onSave={async (manifestText) => {
             await onSaveManifest(editingWasmPlugin.id, manifestText);
             setEditingWasmPlugin(null);

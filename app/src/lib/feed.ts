@@ -337,6 +337,21 @@ export async function setPluginActive(
   }
 }
 
+export async function setPluginIncludeInAll(
+  id: string,
+  includeInAll: boolean,
+): Promise<void> {
+  const base = await apiBase();
+  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ includeInAll }),
+  });
+  if (!res.ok) {
+    throw new Error(await parseError(res));
+  }
+}
+
 export async function uninstallPlugin(id: string): Promise<void> {
   const base = await apiBase();
   const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {

@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
+import {
+  EXPERIENCE_MODE_LABELS,
+  type ExperienceMode,
+} from "@/lib/experienceMode";
 import { Icon } from "@/components/Icon";
 import {
   detectBuildModeLabel,
@@ -98,6 +103,65 @@ function LinkRow({
   );
 }
 
+function ExperienceModeRow({
+  value,
+  isDark,
+  onChange,
+}: {
+  value: ExperienceMode;
+  isDark: boolean;
+  onChange?: (mode: ExperienceMode) => void;
+}) {
+  const modes: ExperienceMode[] = ["safe", "full"];
+
+  return (
+    <div
+      className={`flex items-start justify-between gap-6 py-3 border-b last:border-b-0 ${
+        isDark ? "border-neutral-800" : "border-neutral-100"
+      }`}
+    >
+      <span className={`shrink-0 text-xs ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+        系统级别
+      </span>
+      {onChange ? (
+        <div
+          className={`inline-flex rounded-lg border p-0.5 ${
+            isDark ? "border-neutral-800 bg-neutral-900/50" : "border-neutral-200 bg-neutral-50"
+          }`}
+          role="radiogroup"
+          aria-label="系统级别"
+        >
+          {modes.map(mode => {
+            const selected = value === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => onChange(mode)}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  selected
+                    ? "bg-[#5856D6] text-white shadow-sm"
+                    : isDark
+                      ? "text-neutral-400 hover:text-neutral-200"
+                      : "text-neutral-500 hover:text-neutral-800"
+                }`}
+              >
+                {EXPERIENCE_MODE_LABELS[mode]}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <span className={`text-xs ${isDark ? "text-neutral-200" : "text-neutral-800"}`}>
+          {EXPERIENCE_MODE_LABELS[value]}
+        </span>
+      )}
+    </div>
+  );
+}
+
 function StatusBadge({
   ok,
   label,
@@ -152,12 +216,16 @@ function SectionCard({
 
 interface SystemInfoPanelProps {
   theme: ThemeMode;
+  experienceMode?: ExperienceMode;
+  onExperienceModeChange?: (mode: ExperienceMode) => void;
   installedPluginCount: number;
   runningPluginCount: number;
 }
 
 export function SystemInfoPanel({
   theme,
+  experienceMode = "safe",
+  onExperienceModeChange,
   installedPluginCount,
   runningPluginCount,
 }: SystemInfoPanelProps) {
@@ -170,7 +238,7 @@ export function SystemInfoPanel({
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeBaseUrl, setRuntimeBaseUrl] = useState<string | null>(null);
 
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-100";
   const mutedBg = isDark ? "bg-neutral-900/40" : "bg-neutral-50";
 
@@ -348,6 +416,11 @@ export function SystemInfoPanel({
         ) : (
           <InfoRow label="前端地址" value="—" isDark={isDark} />
         )}
+        <ExperienceModeRow
+          value={experienceMode}
+          isDark={isDark}
+          onChange={onExperienceModeChange}
+        />
       </SectionCard>
 
       <SectionCard

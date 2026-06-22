@@ -85,10 +85,11 @@ func (r *Registry) Sync(ctx context.Context) error {
 				}
 			}
 			rec := &PluginRecord{
-				Manifest:  *m,
-				Active:    true,
-				SortOrder: len(dbByID) + len(r.records),
-				Installed: now,
+				Manifest:     *m,
+				Active:       true,
+				IncludeInAll: DefaultIncludeInAll(m.MediaType, ""),
+				SortOrder:    len(dbByID) + len(r.records),
+				Installed:    now,
 			}
 			if err := r.upsertPlugin(ctx, rec); err != nil {
 				return err
@@ -288,15 +289,28 @@ func (r *Registry) InstallOrbitFromMarket(
 		return nil, err
 	}
 	var rec *PluginRecord
+	wasNew := false
 	if _, exists := r.Get(m.ID); exists {
 		rec, err = r.updateOrbitPackage(ctx, m.ID, data)
 	} else {
+		wasNew = true
 		rec, err = r.InstallOrbit(ctx, data)
 	}
 	if err != nil {
 		return nil, err
 	}
-	return r.applyMarketPluginMetadata(ctx, rec, marketID, contentRating, ratingFetcher)
+	rec, err = r.applyMarketPluginMetadata(ctx, rec, marketID, contentRating, ratingFetcher)
+	if err != nil {
+		return nil, err
+	}
+	if wasNew {
+		rec.IncludeInAll = DefaultIncludeInAll(rec.MediaType, rec.ContentRating)
+		if err := r.upsertPlugin(ctx, rec); err != nil {
+			return nil, err
+		}
+		r.setRecord(rec)
+	}
+	return cloneRecord(rec), nil
 }
 
 func (r *Registry) applyMarketPluginMetadata(
@@ -388,10 +402,11 @@ func (r *Registry) InstallBundled(ctx context.Context, id string) (*PluginRecord
 	m := *onDisk.manifest
 	m.Bundled = true
 	rec := &PluginRecord{
-		Manifest:  m,
-		Active:    true,
-		SortOrder: 1000,
-		Installed: now,
+		Manifest:     m,
+		Active:       true,
+		IncludeInAll: DefaultIncludeInAll(m.MediaType, ""),
+		SortOrder:    1000,
+		Installed:    now,
 	}
 	if err := r.upsertPlugin(ctx, rec); err != nil {
 		return nil, err
@@ -436,6 +451,7 @@ func rowToRecord(row store.PluginRow) (*PluginRecord, error) {
 		Manifest:      m,
 		ContentRating: contentRating,
 		Active:        row.Active,
+		IncludeInAll:  row.IncludeInAll,
 		SortOrder:     row.SortOrder,
 		Installed:     row.InstalledAt,
 		LastFetch:     row.LastFetchAt,
@@ -594,10 +610,11 @@ func (r *Registry) InstallRSS(ctx context.Context, opts InstallRSSOptions) (*Plu
 	}
 
 	rec := &PluginRecord{
-		Manifest:  *m,
-		Active:    true,
-		SortOrder: 1000,
-		Installed: time.Now().Unix(),
+		Manifest:     *m,
+		Active:       true,
+		IncludeInAll: DefaultIncludeInAll(m.MediaType, ""),
+		SortOrder:    1000,
+		Installed:    time.Now().Unix(),
 	}
 	if err := r.upsertPlugin(ctx, rec); err != nil {
 		return nil, err
@@ -620,6 +637,19 @@ func (r *Registry) SetActive(ctx context.Context, id string, active bool) (*Plug
 	if active {
 		r.refreshQueue.SchedulePluginRefresh(id, false)
 	}
+	return cloneRecord(rec), nil
+}
+
+func (r *Registry) SetIncludeInAll(ctx context.Context, id string, includeInAll bool) (*PluginRecord, error) {
+	rec, ok := r.Get(id)
+	if !ok {
+		return nil, fmt.Errorf("plugin not found: %s", id)
+	}
+	rec.IncludeInAll = includeInAll
+	if err := r.upsertPlugin(ctx, rec); err != nil {
+		return nil, err
+	}
+	r.setRecord(rec)
 	return cloneRecord(rec), nil
 }
 
@@ -866,6 +896,9 @@ func (r *Registry) Feed(
 		if globalAll && IsMatureContentRating(rec.ContentRating) {
 			continue
 		}
+		if globalAll && !pluginIncludesInAllFeed(rec) {
+			continue
+		}
 		if !HasCapability(&rec.Manifest, CapFeed) {
 			continue
 		}
@@ -1083,6 +1116,9 @@ func (r *Registry) CountUnread(
 				continue
 			}
 			if IsMatureContentRating(rec.ContentRating) {
+				continue
+			}
+			if !pluginIncludesInAllFeed(rec) {
 				continue
 			}
 			ids = append(ids, rec.ID)

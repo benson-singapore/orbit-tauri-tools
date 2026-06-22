@@ -18,13 +18,44 @@ func (r *Registry) MergePluginVars(ctx context.Context, rec *PluginRecord) (map[
 			val = stored
 		}
 		if def.Required && strings.TrimSpace(val) == "" {
-			return nil, fmt.Errorf("plugin variable %q is required", key)
+			return nil, missingVariableError(key, def)
 		}
 		if val != "" {
 			out[key] = val
 		}
 	}
 	return out, nil
+}
+
+func missingVariableError(key string, def VariableDefinition) error {
+	label := strings.TrimSpace(def.Label)
+	if label == "" {
+		label = key
+	}
+	return fmt.Errorf("缺少必要参数：%s", label)
+}
+
+func (r *Registry) PluginVariablesReady(ctx context.Context, rec *PluginRecord) bool {
+	if rec == nil || len(rec.Config.Variables) == 0 {
+		return true
+	}
+	for key, def := range rec.Config.Variables {
+		if !def.Required {
+			continue
+		}
+		val := strings.TrimSpace(def.Default)
+		stored, ok, err := r.store.GetPluginVariable(ctx, rec.ID, key)
+		if err != nil {
+			return false
+		}
+		if ok {
+			val = stored
+		}
+		if strings.TrimSpace(val) == "" {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Registry) GetPluginVariablesSchema(rec *PluginRecord) map[string]VariableDefinition {
@@ -69,8 +100,18 @@ func (r *Registry) SavePluginVariables(ctx context.Context, pluginID string, val
 		if val == "" {
 			val = strings.TrimSpace(def.Default)
 		}
+		if val != "" {
+			stored, hasStored, err := r.store.GetPluginVariable(ctx, pluginID, key)
+			if err != nil {
+				return err
+			}
+			if hasStored && stored != "" && val == store.MaskSecretValue(stored) {
+				merged[key] = stored
+				continue
+			}
+		}
 		if def.Required && val == "" {
-			return fmt.Errorf("variable %q is required", key)
+			return missingVariableError(key, def)
 		}
 		if val != "" {
 			merged[key] = val

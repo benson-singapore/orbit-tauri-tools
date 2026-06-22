@@ -133,7 +133,10 @@ export function usePluginGroups() {
 
   const groupedPluginsForSidebar = useCallback(
     (plugins: Plugin[]) =>
-      groupInstalledPlugins(plugins, state, { onlyActive: true }),
+      groupInstalledPlugins(plugins, state, {
+        onlyActive: true,
+        onlyVariablesReady: true,
+      }),
     [state],
   );
 

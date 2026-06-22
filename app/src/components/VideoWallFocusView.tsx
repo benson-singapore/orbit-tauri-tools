@@ -6,6 +6,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import { Icon } from "@/components/Icon";
 import {
   useVideoSessionMountRegistry,
@@ -125,7 +126,7 @@ function VideoWallTile({
   onClose: () => void;
 }) {
   const { registerMount } = useVideoSessionMountRegistry();
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
 
   const mountRef = useCallback(
     (element: HTMLDivElement | null) => {
@@ -201,7 +202,7 @@ export function VideoWallFocusView({
   onCloseSession,
   emptyMessage = "暂无挂起的视频。请先打开视频并挂起到侧栏。",
 }: VideoWallFocusViewProps) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const containerRef = useRef<HTMLDivElement>(null);
   const columnAssignmentsRef = useRef(new Map<string, number>());
   const probedSessionIdsRef = useRef(new Set<string>());

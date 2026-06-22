@@ -126,6 +126,9 @@ func (s *Store) migrate() error {
 	if err := s.migratePluginContentRating(); err != nil {
 		return err
 	}
+	if err := s.migratePluginIncludeInAll(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -293,6 +296,31 @@ func (s *Store) migratePluginContentRating() error {
 	`)
 	if err != nil {
 		return fmt.Errorf("backfill plugins.content_rating: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) migratePluginIncludeInAll() error {
+	var count int
+	err := s.DB.QueryRow(
+		`SELECT COUNT(*) FROM pragma_table_info('plugins') WHERE name = 'include_in_all'`,
+	).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check plugins.include_in_all: %w", err)
+	}
+	if count == 0 {
+		if _, err := s.DB.Exec(`ALTER TABLE plugins ADD COLUMN include_in_all INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add plugins.include_in_all: %w", err)
+		}
+		_, err = s.DB.Exec(`
+			UPDATE plugins
+			SET include_in_all = 1
+			WHERE json_extract(manifest_json, '$.mediaType') = 'article'
+			  AND COALESCE(content_rating, '') != 'mature'
+		`)
+		if err != nil {
+			return fmt.Errorf("backfill plugins.include_in_all: %w", err)
+		}
 	}
 	return nil
 }

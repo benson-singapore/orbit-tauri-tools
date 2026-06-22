@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
@@ -41,7 +42,7 @@ function DockItem({
   onClose: () => void;
 }) {
   const [hovered, setHovered] = useState(false);
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const { article } = session;
   const cover = article.image?.trim();
 
@@ -178,7 +179,7 @@ export function ReaderDock({
   const dockedSessions = sessions.filter(session => session.mode === "docked");
   if (dockedSessions.length === 0) return null;
 
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
 
   const dock = (
     <div

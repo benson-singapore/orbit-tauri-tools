@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import { ArticleDetailPanel } from "@/components/ArticleDetailPanel";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import {
   clampSplitPaneRatio,
-  persistSplitPaneRatio,
 } from "@/lib/splitPaneRatio";
 import {
   resolveEffectiveColumnCount,
   type GridColumnCount,
 } from "@/lib/gridColumnCount";
+import type { GridCoverAspectRatio } from "@/lib/gridCoverAspectRatio";
 import type { Article, Plugin, ThemeMode } from "@/types";
 
 interface SplitGridDetailViewProps {
@@ -17,6 +18,7 @@ interface SplitGridDetailViewProps {
   articles: Article[];
   selectedArticle: Article | null;
   gridColumnCount: GridColumnCount;
+  coverAspectRatio: GridCoverAspectRatio;
   splitRatio: number;
   onSplitRatioChange: (ratio: number) => void;
   readerFontScale: number;
@@ -61,6 +63,7 @@ export function SplitGridDetailView({
   articles,
   selectedArticle,
   gridColumnCount,
+  coverAspectRatio,
   splitRatio,
   onSplitRatioChange,
   readerFontScale,
@@ -77,7 +80,7 @@ export function SplitGridDetailView({
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const rightPaneRef = useRef<HTMLDivElement>(null);
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const leftPercent = clampSplitPaneRatio(splitRatio) * 100;
 
   const leftPaneWidth = usePaneWidth(leftPaneRef);
@@ -109,7 +112,6 @@ export function SplitGridDetailView({
       window.removeEventListener("pointerup", handleUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      persistSplitPaneRatio(latestRatioRef.current);
     };
 
     document.body.style.cursor = "col-resize";
@@ -130,6 +132,7 @@ export function SplitGridDetailView({
           runtimeBase={runtimeBase}
           articles={articles}
           columnCount={effectiveGridColumns}
+          coverAspectRatio={coverAspectRatio}
           selectedArticleId={selectedArticle?.id}
           loading={loading}
           loadingMore={loadingMore}

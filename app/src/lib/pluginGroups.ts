@@ -1,3 +1,4 @@
+import { isPluginVariablesReady } from "@/lib/pluginVariablesReady";
 import type { Plugin } from "@/types";
 
 export const DEFAULT_PLUGIN_GROUP_ID = "default";
@@ -91,11 +92,18 @@ export function resolvePluginGroupId(
 export function groupInstalledPlugins(
   plugins: Plugin[],
   state: PluginGroupsState,
-  options?: { includeEmptyGroups?: boolean; onlyActive?: boolean },
+  options?: {
+    includeEmptyGroups?: boolean;
+    onlyActive?: boolean;
+    onlyVariablesReady?: boolean;
+  },
 ): { group: PluginSidebarGroup; plugins: Plugin[] }[] {
   let installed = plugins.filter(p => p.id !== "all");
   if (options?.onlyActive) {
     installed = installed.filter(p => p.active !== false);
+  }
+  if (options?.onlyVariablesReady) {
+    installed = installed.filter(p => isPluginVariablesReady(p));
   }
 
   const byGroup = new Map<string, Plugin[]>();

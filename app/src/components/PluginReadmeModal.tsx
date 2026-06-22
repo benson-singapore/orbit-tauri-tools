@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { articleContentTheme, isDarkTheme } from "@/lib/themeMode";
 import { createPortal } from "react-dom";
 import { marked } from "marked";
 import { Icon } from "@/components/Icon";
@@ -17,7 +18,7 @@ interface PluginReadmeModalProps {
 }
 
 export function PluginReadmeModal({ theme, plugin, onClose, nested = false }: PluginReadmeModalProps) {
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
   const contentRef = useRef<HTMLDivElement>(null);
@@ -126,7 +127,7 @@ export function PluginReadmeModal({ theme, plugin, onClose, nested = false }: Pl
           ) : (
             <div
               ref={contentRef}
-              data-theme={theme}
+              data-theme={articleContentTheme(theme)}
               className="article-content [&>:first-child]:mt-0"
               dangerouslySetInnerHTML={{ __html: html }}
             />

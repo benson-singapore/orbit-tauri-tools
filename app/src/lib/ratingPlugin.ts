@@ -4,7 +4,7 @@ export function isRatingPlugin(plugin?: Plugin | null): boolean {
   return plugin?.mediaType === "rating";
 }
 
-const RATING_SCORE_TAG = /^评分\s*[:：]\s*([\d.]+)/;
+const RATING_SCORE_TAG = /^评分\s*[:：]?\s*([\d.]+)/;
 
 /** 从 tags 中解析评分，如「评分: 5.8」 */
 export function parseRatingScore(tags: string[]): string | null {

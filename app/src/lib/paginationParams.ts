@@ -137,6 +137,9 @@ export function resolveFeedHasMore(options: {
   paginationExhausted: boolean;
 }): boolean {
   const { append, items, apiHasMore, paginated, paginationExhausted } = options;
+  if (append && items.length === 0) {
+    return false;
+  }
   if (!paginated) {
     return Boolean(apiHasMore);
   }
@@ -144,7 +147,7 @@ export function resolveFeedHasMore(options: {
     return false;
   }
   if (append) {
-    return items.length > 0 && (apiHasMore ?? true);
+    return apiHasMore ?? true;
   }
   return true;
 }

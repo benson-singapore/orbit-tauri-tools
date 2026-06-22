@@ -79,8 +79,8 @@
 }
 
 .article-content[data-theme="dark"] :where(blockquote) {
-  border-left-color: #404040;
-  color: #a3a3a3;
+  border-left-color: rgba(139, 92, 246, 0.35);
+  color: #b8a8d0;
 }
 
 .article-content :where(img) {
@@ -190,43 +190,43 @@
 }
 
 .article-content[data-theme="dark"] :where(table) {
-  border-color: #30363d;
-  background: #161b22;
+  border-color: rgba(139, 92, 246, 0.22);
+  background: #1a1428;
   box-shadow: none;
 }
 
 .article-content[data-theme="dark"] :where(thead th) {
-  color: #a3a3a3;
-  background: #1c2128;
-  border-bottom-color: #30363d;
+  color: #c4b5fd;
+  background: #211830;
+  border-bottom-color: rgba(139, 92, 246, 0.22);
 }
 
 .article-content[data-theme="dark"] :where(tr + tr > th),
 .article-content[data-theme="dark"] :where(tr + tr > td) {
-  border-top-color: #262626;
+  border-top-color: rgba(139, 92, 246, 0.14);
 }
 
 .article-content[data-theme="dark"] :where(tbody tr:nth-child(even)) {
-  background: #0d1117;
+  background: #15102a;
 }
 
 .article-content[data-theme="dark"] :where(table:not(:has(thead)) > tr:nth-child(even):not(:first-child)) {
-  background: #0d1117;
+  background: #15102a;
 }
 
 .article-content[data-theme="dark"] :where(tbody tr:hover) {
-  background: #1c2128;
+  background: #211830;
 }
 
 .article-content[data-theme="dark"] :where(table:not(:has(thead)) > tr:not(:first-child):hover) {
-  background: #1c2128;
+  background: #211830;
 }
 
 .article-content[data-theme="dark"] :where(table:not(:has(thead)) > tr:first-child th),
 .article-content[data-theme="dark"] :where(table:not(:has(thead)) > tr:first-child td) {
-  color: #a3a3a3;
-  background: #1c2128;
-  border-bottom-color: #30363d;
+  color: #c4b5fd;
+  background: #211830;
+  border-bottom-color: rgba(139, 92, 246, 0.22);
 }
 
 /* Inline code */
@@ -241,8 +241,8 @@
 }
 
 .article-content[data-theme="dark"] :where(:not(pre) > code) {
-  background: #262626;
-  color: #fca5a5;
+  background: #2a1f42;
+  color: #f0abfc;
 }
 
 /* Code blocks */
@@ -263,9 +263,9 @@
 }
 
 .article-content[data-theme="dark"] :where(pre) {
-  background: #161b22;
-  border-color: #30363d;
-  color: #e6edf3;
+  background: #1a1428;
+  border-color: rgba(139, 92, 246, 0.22);
+  color: #e8e4f0;
 }
 
 .article-content :where(pre code) {

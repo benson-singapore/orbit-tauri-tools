@@ -30,6 +30,7 @@ func storePluginRow(rec *PluginRecord, manifestJSON string) store.PluginRow {
 		ManifestJSON:  manifestJSON,
 		ContentRating: rec.ContentRating,
 		Active:        rec.Active,
+		IncludeInAll:  rec.IncludeInAll,
 		SortOrder:     rec.SortOrder,
 		InstalledAt:   rec.Installed,
 		LastFetchAt:   rec.LastFetch,

@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import { VideoWallFocusView } from "@/components/VideoWallFocusView";
 import {
   clampSplitPaneRatio,
-  persistSplitPaneRatio,
 } from "@/lib/splitPaneRatio";
 import {
   resolveEffectiveColumnCount,
   type GridColumnCount,
 } from "@/lib/gridColumnCount";
+import type { GridCoverAspectRatio } from "@/lib/gridCoverAspectRatio";
 import type { ReaderSession } from "@/lib/readerSessions";
 import type { Article, ThemeMode } from "@/types";
 
@@ -17,6 +18,7 @@ interface SplitGridVideoViewProps {
   runtimeBase: string | null;
   articles: Article[];
   gridColumnCount: GridColumnCount;
+  coverAspectRatio: GridCoverAspectRatio;
   videoColumnCount: GridColumnCount;
   splitRatio: number;
   onSplitRatioChange: (ratio: number) => void;
@@ -56,6 +58,7 @@ export function SplitGridVideoView({
   runtimeBase,
   articles,
   gridColumnCount,
+  coverAspectRatio,
   videoColumnCount,
   splitRatio,
   onSplitRatioChange,
@@ -72,7 +75,7 @@ export function SplitGridVideoView({
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const rightPaneRef = useRef<HTMLDivElement>(null);
-  const isDark = theme === "dark";
+  const isDark = isDarkTheme(theme);
   const leftPercent = clampSplitPaneRatio(splitRatio) * 100;
 
   const leftPaneWidth = usePaneWidth(leftPaneRef);
@@ -110,7 +113,6 @@ export function SplitGridVideoView({
       window.removeEventListener("pointerup", handleUp);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
-      persistSplitPaneRatio(latestRatioRef.current);
     };
 
     document.body.style.cursor = "col-resize";
@@ -131,6 +133,7 @@ export function SplitGridVideoView({
           runtimeBase={runtimeBase}
           articles={articles}
           columnCount={effectiveGridColumns}
+          coverAspectRatio={coverAspectRatio}
           loading={loading}
           loadingMore={loadingMore}
           searching={searching}

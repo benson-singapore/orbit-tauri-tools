@@ -40,7 +40,14 @@ func (s *Server) handleListPlugins(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusMethodNotAllowed, errorBody("method not allowed"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"plugins": pluginRecordsToViews(s.registry.List())})
+	recs := s.registry.List()
+	views := make([]pluginView, 0, len(recs))
+	for _, rec := range recs {
+		view := pluginRecordToView(rec)
+		view.VariablesReady = s.registry.PluginVariablesReady(r.Context(), rec)
+		views = append(views, view)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"plugins": views})
 }
 
 type pluginView struct {
@@ -49,6 +56,7 @@ type pluginView struct {
 	Icon            string               `json:"icon"`
 	MediaType       string               `json:"mediaType,omitempty"`
 	Active          bool                 `json:"active"`
+	IncludeInAll    bool                 `json:"includeInAll"`
 	Desc            string               `json:"desc"`
 	Channels        []plugin.FeedChannel `json:"channels"`
 	DefaultChannel  string               `json:"defaultChannel,omitempty"`
@@ -65,7 +73,9 @@ type pluginView struct {
 	Sort            int                  `json:"sort"`
 	InstalledAt     int64                `json:"installedAt,omitempty"`
 	LastError       string               `json:"lastError,omitempty"`
-	Version         string               `json:"version,omitempty"`
+	VariablesSchema map[string]plugin.VariableDefinition `json:"variablesSchema,omitempty"`
+	VariablesReady  bool                                 `json:"variablesReady"`
+	Version         string                               `json:"version,omitempty"`
 	MarketID        string               `json:"marketId,omitempty"`
 	ContentRating   string               `json:"contentRating,omitempty"`
 }
@@ -81,6 +91,7 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		Icon:            icon,
 		MediaType:       rec.MediaType,
 		Active:          rec.Active,
+		IncludeInAll:    rec.IncludeInAll,
 		Desc:            rec.Meta.Description,
 		Channels:        plugin.ChannelsForAPI(rec.Config.Channels, rec.MediaType),
 		DefaultChannel:  rec.Config.DefaultChannel,
@@ -97,6 +108,7 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		Sort:            rec.SortOrder,
 		InstalledAt:     rec.Installed,
 		LastError:       rec.LastError,
+		VariablesSchema: rec.Config.Variables,
 		Version:         rec.Version,
 		MarketID:        rec.Meta.MarketID,
 		ContentRating:   rec.ContentRating,
@@ -439,22 +451,34 @@ func (s *Server) handlePluginByID(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPatch:
 		var body struct {
-			Active *bool `json:"active"`
+			Active       *bool `json:"active"`
+			IncludeInAll *bool `json:"includeInAll"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, errorBody("invalid JSON body"))
 			return
 		}
-		if body.Active == nil {
-			writeJSON(w, http.StatusBadRequest, errorBody("active is required"))
+		if body.Active == nil && body.IncludeInAll == nil {
+			writeJSON(w, http.StatusBadRequest, errorBody("active or includeInAll is required"))
 			return
 		}
-		rec, err := s.registry.SetActive(r.Context(), id, *body.Active)
-		if err != nil {
-			writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
-			return
+		var rec *plugin.PluginRecord
+		var err error
+		if body.Active != nil {
+			rec, err = s.registry.SetActive(r.Context(), id, *body.Active)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+				return
+			}
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"plugin": rec})
+		if body.IncludeInAll != nil {
+			rec, err = s.registry.SetIncludeInAll(r.Context(), id, *body.IncludeInAll)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"plugin": pluginRecordToView(rec)})
 
 	case http.MethodDelete:
 		if err := s.registry.Uninstall(r.Context(), id); err != nil {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { isDarkTheme } from "@/lib/themeMode";
 import { ImageLightbox, type GalleryImageItem } from "@/components/ImageLightbox";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import type { Article, ThemeMode } from "@/types";
@@ -168,11 +169,15 @@ export function ImageGalleryFocusView({
     );
     if (sentinels.length === 0) return;
 
+    let cooldown = false;
     const observer = new IntersectionObserver(
       entries => {
-        if (entries.some(entry => entry.isIntersecting)) {
-          onLoadMore();
-        }
+        if (cooldown || !entries.some(entry => entry.isIntersecting)) return;
+        cooldown = true;
+        onLoadMore();
+        window.setTimeout(() => {
+          cooldown = false;
+        }, 600);
       },
       { root: scrollRootRef?.current ?? null, rootMargin: "800px" },
     );
@@ -247,7 +252,7 @@ export function ImageGalleryFocusView({
                     }
                   }}
                   className={`group relative w-full rounded-lg overflow-hidden cursor-pointer block ${
-                    theme === "dark" ? "bg-neutral-800" : "bg-neutral-100"
+                    isDarkTheme(theme) ? "bg-neutral-800" : "bg-neutral-100"
                   }`}
                 >
                   <ProxiedImage

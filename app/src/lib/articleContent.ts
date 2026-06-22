@@ -108,11 +108,106 @@ export function resolveLazyLoadedImages(html: string): string {
   return changed ? doc.body.innerHTML : html;
 }
 
+const DARK_TEXT_LUMINANCE_THRESHOLD = 0.45;
+
+let colorProbe: HTMLDivElement | null = null;
+
+function parseCssColorToRgb(color: string): [number, number, number] | null {
+  const trimmed = color.trim();
+  if (!trimmed) return null;
+
+  if (typeof document !== "undefined") {
+    colorProbe ??= document.createElement("div");
+    colorProbe.style.color = "";
+    colorProbe.style.color = trimmed;
+    const normalized = colorProbe.style.color;
+    if (!normalized) return null;
+    const rgbMatch = normalized.match(
+      /^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/,
+    );
+    if (rgbMatch) {
+      return [
+        Number(rgbMatch[1]),
+        Number(rgbMatch[2]),
+        Number(rgbMatch[3]),
+      ];
+    }
+  }
+
+  const lower = trimmed.toLowerCase();
+  if (lower === "black") return [0, 0, 0];
+  const hexMatch = lower.match(/^#([0-9a-f]{3,8})$/);
+  if (!hexMatch) return null;
+
+  let hex = hexMatch[1];
+  if (hex.length === 3) {
+    hex = hex
+      .split("")
+      .map(ch => ch + ch)
+      .join("");
+  }
+  if (hex.length < 6) return null;
+
+  return [
+    Number.parseInt(hex.slice(0, 2), 16),
+    Number.parseInt(hex.slice(2, 4), 16),
+    Number.parseInt(hex.slice(4, 6), 16),
+  ];
+}
+
+function isDarkTextColor(color: string): boolean {
+  const rgb = parseCssColorToRgb(color);
+  if (!rgb) return false;
+  const [r, g, b] = rgb;
+  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+  return luminance < DARK_TEXT_LUMINANCE_THRESHOLD;
+}
+
+function stripDarkInlineTextColors(root: ParentNode): boolean {
+  let changed = false;
+
+  for (const el of root.querySelectorAll("[style]")) {
+    const style = (el as HTMLElement).style;
+    const color = style.color?.trim() ?? "";
+    if (!color || !isDarkTextColor(color)) continue;
+
+    style.removeProperty("color");
+    if (!style.cssText.trim()) {
+      el.removeAttribute("style");
+    }
+    changed = true;
+  }
+
+  for (const font of root.querySelectorAll("font[color]")) {
+    const color = font.getAttribute("color")?.trim() ?? "";
+    if (!color || !isDarkTextColor(color)) continue;
+    font.removeAttribute("color");
+    changed = true;
+  }
+
+  return changed;
+}
+
+/** Remove publisher inline colors that are too dark for dark-theme reading. */
+export function adjustInlineTextColorsForDarkTheme(html: string): string {
+  if (!html.trim() || typeof DOMParser === "undefined") {
+    return html;
+  }
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return stripDarkInlineTextColors(doc.body) ? doc.body.innerHTML : html;
+}
+
 export function prepareArticleHtmlContent(
   html: string,
   runtimeBase: string | null | undefined,
+  options?: { darkTheme?: boolean },
 ): string {
-  return rewriteHtmlImageUrls(resolveLazyLoadedImages(html), runtimeBase);
+  let result = rewriteHtmlImageUrls(resolveLazyLoadedImages(html), runtimeBase);
+  if (options?.darkTheme) {
+    result = adjustInlineTextColorsForDarkTheme(result);
+  }
+  return result;
 }
 
 /** Feed list items omit detail fields; keep them when syncing list metadata. */

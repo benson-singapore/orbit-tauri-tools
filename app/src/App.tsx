@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import orbitLogo from "@/assets/logo.png";
+import orbitLogoBlack from "@/assets/logo-black.png";
+import orbitLogoWhite from "@/assets/logo-white.png";
 import { Icon } from "@/components/Icon";
 import { ImageGalleryFocusView } from "@/components/ImageGalleryFocusView";
 import { ArticleReaderModal } from "@/components/ArticleReaderModal";
@@ -36,6 +37,8 @@ import {
   isRatingPluginArticle,
   resolveBrowseDynamicChannel,
   resolveDefaultPluginChannel,
+  resolveArticleDetailChannel,
+  resolveArticleHasDetail,
   shouldSkipFeedItemDetailFetch,
 } from "@/lib/browseDynamicFeed";
 import { isImageGalleryPlugin } from "@/lib/imagePlugin";
@@ -53,6 +56,7 @@ import {
   runtimeRefreshChapters,
   runtimeClearRefreshChapters,
   runtimeOpenDetail,
+  resolveChannelHasDetail,
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
 import { bindArticleContentImages } from "@/lib/imageProxy";
@@ -65,6 +69,7 @@ import {
   getStoredPluginChannel,
   persistPluginChannel,
 } from "@/lib/pluginChannelMemory";
+import { pluginNeedsVariablesConfiguration } from "@/lib/pluginVariablesReady";
 import {
   getStoredPluginPreviewMode,
   persistPluginPreviewMode,
@@ -89,12 +94,14 @@ import {
   splitPanelVideoSessions,
 } from "@/lib/sessionVideoTarget";
 import {
+  DEFAULT_VIDEO_WALL_COLUMN_COUNT,
+  getStoredVideoWallColumnCount,
   persistVideoWallColumnCount,
-  readStoredVideoWallColumnCount,
 } from "@/lib/videoWallColumnCount";
 import {
+  DEFAULT_SPLIT_PANE_RATIO,
+  getStoredSplitPaneRatio,
   persistSplitPaneRatio,
-  readStoredSplitPaneRatio,
 } from "@/lib/splitPaneRatio";
 import {
   hasDockedVideoSessions,
@@ -114,11 +121,26 @@ import type {
 } from "@/types";
 import type { PluginPreviewMode } from "@/lib/pluginPreviewMode";
 import {
+  DEFAULT_GRID_COLUMN_COUNT,
+  getStoredGridColumnCount,
   persistGridColumnCount,
-  readStoredGridColumnCount,
   type GridColumnCount,
 } from "@/lib/gridColumnCount";
+import {
+  DEFAULT_GRID_COVER_ASPECT_RATIO,
+  getStoredGridCoverAspectRatio,
+  persistGridCoverAspectRatio,
+  type GridCoverAspectRatio,
+} from "@/lib/gridCoverAspectRatio";
 import { GridColumnSwitcher } from "@/components/GridColumnSwitcher";
+import { GridCoverAspectSwitcher } from "@/components/GridCoverAspectSwitcher";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import {
+  applyThemeMode,
+  articleContentTheme,
+  isDarkTheme,
+  readStoredThemeMode,
+} from "@/lib/themeMode";
 
 const PREVIEW_MODE_OPTIONS = [
   ["reader", "阅读模式", "文章阅读布局"] as const,
@@ -162,9 +184,9 @@ function previewModeOptionsForPlugin(plugin: Plugin | undefined, showVideoWall: 
   const base = PREVIEW_MODE_OPTIONS.filter(([mode]) => mode !== "waterfall" || showWaterfall);
   return [
     ...base,
-    SPLIT_BROADCAST_OPTION,
     SPLIT_DETAIL_OPTION,
     ...(showVideoWall ? [VIDEO_WALL_PREVIEW_OPTION] : []),
+    SPLIT_BROADCAST_OPTION,
   ];
 }
 
@@ -173,7 +195,7 @@ export default function App() {
   useTitlebarEnv();
   const onTitlebarMouseDown = useTitlebarDrag();
 
-  const [theme, _setTheme] = useState<ThemeMode>("light");
+  const [theme, setTheme] = useState<ThemeMode>(readStoredThemeMode);
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>(readStoredExperienceMode);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [feedPanelVisible, setFeedPanelVisible] = useState(true);
@@ -232,6 +254,7 @@ export default function App() {
     markArticleRead,
     installCustomRSS,
     togglePluginActive: orbitTogglePluginActive,
+    togglePluginIncludeInAll: orbitTogglePluginIncludeInAll,
     removePlugin: orbitRemovePlugin,
     movePlugin: orbitMovePlugin,
     reorderPlugins: orbitReorderPlugins,
@@ -261,6 +284,14 @@ export default function App() {
       setActivePlugin("all");
     }
   }, [experienceMode, activePlugin, pluginById]);
+
+  useEffect(() => {
+    if (activePlugin === "all") return;
+    const plugin = pluginById.get(activePlugin);
+    if (plugin && pluginNeedsVariablesConfiguration(plugin)) {
+      setActivePlugin("all");
+    }
+  }, [activePlugin, pluginById]);
 
   const sidebarPluginGroups = useMemo(
     () => filterGroupedPluginsForExperienceMode(
@@ -336,11 +367,14 @@ export default function App() {
 
   const [pluginPreviewMode, setPluginPreviewMode] = useState<PluginPreviewMode>("reader");
   const [previewModeMenuOpen, setPreviewModeMenuOpen] = useState(false);
-  const [gridColumnCount, setGridColumnCount] = useState<GridColumnCount>(() => readStoredGridColumnCount());
-  const [videoWallColumnCount, setVideoWallColumnCount] = useState<GridColumnCount>(
-    () => readStoredVideoWallColumnCount(),
+  const [gridColumnCount, setGridColumnCount] = useState<GridColumnCount>(DEFAULT_GRID_COLUMN_COUNT);
+  const [gridCoverAspectRatio, setGridCoverAspectRatio] = useState<GridCoverAspectRatio>(
+    DEFAULT_GRID_COVER_ASPECT_RATIO,
   );
-  const [splitPaneRatio, setSplitPaneRatio] = useState(() => readStoredSplitPaneRatio());
+  const [videoWallColumnCount, setVideoWallColumnCount] = useState<GridColumnCount>(
+    DEFAULT_VIDEO_WALL_COLUMN_COUNT,
+  );
+  const [splitPaneRatio, setSplitPaneRatio] = useState(DEFAULT_SPLIT_PANE_RATIO);
   const [splitDetailArticle, setSplitDetailArticle] = useState<Article | null>(null);
   const previewModeMenuRef = useRef<HTMLDivElement>(null);
   const [readerSessions, setReaderSessions] = useState<ReaderSession[]>([]);
@@ -405,8 +439,10 @@ export default function App() {
     if (selectedItem.type === "text" && selectedItem.image) {
       content = dedupeCoverImageFromContent(selectedItem.image, content);
     }
-    return prepareArticleHtmlContent(content, runtimeBase);
-  }, [runtimeBase, selectedItem?.content, selectedItem?.image, selectedItem?.type]);
+    return prepareArticleHtmlContent(content, runtimeBase, {
+      darkTheme: isDarkTheme(theme),
+    });
+  }, [runtimeBase, selectedItem?.content, selectedItem?.image, selectedItem?.type, theme]);
 
   useEffect(() => {
     highlightArticleCode(articleContentRef.current);
@@ -458,6 +494,11 @@ export default function App() {
   const activePluginMeta = useMemo(
     () => (activePlugin === "all" ? undefined : pluginById.get(activePlugin)),
     [activePlugin, pluginById],
+  );
+
+  const activeChannelHasDetail = useMemo(
+    () => resolveChannelHasDetail(activePluginMeta, activeChannel, channelCapabilities),
+    [activePluginMeta, activeChannel, channelCapabilities],
   );
 
   const activeChannelMeta = useMemo(() => {
@@ -548,10 +589,9 @@ export default function App() {
       .finally(() => setFeedRefreshing(false));
   };
 
-  // TODO: 暗色主题待完善后恢复切换入口
-  // const toggleTheme = () => {
-  //   setTheme(prev => prev === 'light' ? 'dark' : 'light');
-  // };
+  useEffect(() => {
+    applyThemeMode(theme);
+  }, [theme]);
 
   const handleSidebarRefresh = () => {
     if (isSidebarRefreshing) return;
@@ -570,7 +610,12 @@ export default function App() {
     setActiveChapterItem(null);
 
     const pluginMeta = pluginById.get(item.pluginId);
-    const channelId = item.channelId ?? activeChannel;
+    const channelId = resolveArticleDetailChannel(
+      item,
+      pluginMeta,
+      activeChannel,
+      getStoredPluginChannel(item.pluginId),
+    );
 
     if (
       shouldUseRuntimeV2(item.pluginId, pluginMeta)
@@ -782,17 +827,29 @@ export default function App() {
     const pluginMeta = selectedItem
       ? pluginById.get(selectedItem.pluginId)
       : undefined;
-    if (shouldSkipFeedItemDetailFetch(selectedItem, pluginMeta, channelCapabilities.hasDetail)) {
+    const channelId = resolveArticleDetailChannel(
+      selectedItem,
+      pluginMeta,
+      activeChannel,
+      getStoredPluginChannel(selectedItem.pluginId),
+    );
+    const itemHasDetail = resolveArticleHasDetail(
+      selectedItem,
+      pluginMeta,
+      activeChannel,
+      channelCapabilities,
+      getStoredPluginChannel(selectedItem.pluginId),
+    );
+    if (shouldSkipFeedItemDetailFetch(selectedItem, pluginMeta, itemHasDetail)) {
       setContentLoading(false);
       return;
     }
 
-    const channelId = selectedItem.channelId ?? activeChannel;
     if (
       shouldUseRuntimeV2(selectedItem.pluginId, pluginMeta)
       && channelId !== "all"
       && !chaptersParent
-      && channelCapabilities.hasDetail
+      && itemHasDetail
     ) {
       let cancelled = false;
       setContentLoading(true);
@@ -851,7 +908,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedItem?.id, pluginById, activeChannel, channelCapabilities.hasDetail, chaptersParent, activeChapterItem]);
+  }, [selectedItem?.id, pluginById, activeChannel, channelCapabilities, chaptersParent, activeChapterItem]);
 
   const handleBookmarkToggle = (id: string) => {
     setBookmarkedIds(prev => {
@@ -910,6 +967,10 @@ export default function App() {
         selectGroupAll(getPluginGroupId(id));
       }
     }
+  };
+
+  const handleTogglePluginIncludeInAll = (id: string) => {
+    void orbitTogglePluginIncludeInAll(id).catch(console.error);
   };
 
   const handleMovePlugin = (id: string, direction: "up" | "down") => {
@@ -1030,6 +1091,10 @@ export default function App() {
     }
     const saved = getStoredPluginPreviewMode(activePlugin);
     setPluginPreviewMode(resolvePreviewModeForPlugin(activePluginMeta, saved));
+    setGridColumnCount(getStoredGridColumnCount(activePlugin));
+    setGridCoverAspectRatio(getStoredGridCoverAspectRatio(activePlugin));
+    setVideoWallColumnCount(getStoredVideoWallColumnCount(activePlugin));
+    setSplitPaneRatio(getStoredSplitPaneRatio(activePlugin));
   }, [activePlugin, activePluginMeta]);
 
   useEffect(() => {
@@ -1092,6 +1157,14 @@ export default function App() {
   }, []);
 
   const openReaderDetailModal = useCallback((article: Article) => {
+    const pluginMeta = pluginById.get(article.pluginId);
+    const sessionHasDetail = resolveArticleHasDetail(
+      article,
+      pluginMeta,
+      activeChannel,
+      channelCapabilities,
+      getStoredPluginChannel(article.pluginId),
+    );
     setReaderSessions(prev => {
       const key = articleSessionKey(article);
       const existing = prev.find(session => articleSessionKey(session.article) === key);
@@ -1104,7 +1177,7 @@ export default function App() {
       const newSession = createReaderSession(
         article,
         activeChannel,
-        channelCapabilities.hasDetail,
+        sessionHasDetail,
       );
       return [
         ...prev.map(session => ({ ...session, mode: "docked" as const })),
@@ -1112,7 +1185,7 @@ export default function App() {
       ];
     });
     void markArticleRead(article);
-  }, [markArticleRead, activeChannel, channelCapabilities.hasDetail]);
+  }, [markArticleRead, activeChannel, channelCapabilities, pluginById]);
 
   const handleSplitDetailSelect = useCallback((article: Article) => {
     setSplitDetailArticle(article);
@@ -1164,18 +1237,31 @@ export default function App() {
 
   const handleGridColumnCountChange = useCallback((count: GridColumnCount) => {
     setGridColumnCount(count);
-    persistGridColumnCount(count);
-  }, []);
+    if (activePlugin !== "all") {
+      persistGridColumnCount(activePlugin, count);
+    }
+  }, [activePlugin]);
+
+  const handleGridCoverAspectRatioChange = useCallback((ratio: GridCoverAspectRatio) => {
+    setGridCoverAspectRatio(ratio);
+    if (activePlugin !== "all") {
+      persistGridCoverAspectRatio(activePlugin, ratio);
+    }
+  }, [activePlugin]);
 
   const handleVideoWallColumnCountChange = useCallback((count: GridColumnCount) => {
     setVideoWallColumnCount(count);
-    persistVideoWallColumnCount(count);
-  }, []);
+    if (activePlugin !== "all") {
+      persistVideoWallColumnCount(activePlugin, count);
+    }
+  }, [activePlugin]);
 
   const handleSplitPaneRatioChange = useCallback((ratio: number) => {
     setSplitPaneRatio(ratio);
-    persistSplitPaneRatio(ratio);
-  }, []);
+    if (activePlugin !== "all") {
+      persistSplitPaneRatio(activePlugin, ratio);
+    }
+  }, [activePlugin]);
 
   useEffect(() => {
     if (!previewModeMenuOpen) return;
@@ -1202,24 +1288,28 @@ export default function App() {
 
   return (
     <VideoSessionMountProvider active={isWallVideoActive}>
-    <div className={`h-screen flex flex-col font-sans transition-colors duration-300 ${theme === 'dark' ? 'bg-[#121314] text-[#e3e3e3]' : 'bg-[#f8f9fa] text-[#1f1f1f]'}`}>
+    <div className="orbit-shell h-screen flex flex-col font-sans transition-colors duration-300">
       
       {}
       <header
         data-tauri-drag-region
         onMouseDown={onTitlebarMouseDown}
-        className={`app-titlebar app-titlebar-drag shrink-0 z-40 flex h-12 items-center justify-between border-b px-4 transition-colors duration-300 ${theme === "dark" ? "bg-[#1c1d1f] border-neutral-800" : "bg-white border-neutral-100"}`}
+        className={`app-titlebar app-titlebar-drag shrink-0 z-40 flex h-12 items-center justify-between border-b px-4 transition-colors duration-300 ${
+          isDarkTheme(theme)
+            ? "orbit-surface border-[var(--orbit-border)] backdrop-blur-md"
+            : "bg-white border-neutral-100"
+        }`}
       >
         <div className="flex items-center gap-1.5 min-w-0 select-none pointer-events-none">
           <img
-            src={orbitLogo}
+            src={isDarkTheme(theme) ? orbitLogoWhite : orbitLogoBlack}
             alt=""
             className="h-7 w-7 shrink-0 object-contain"
             draggable={false}
           />
           <span
             className={`text-sm font-bold tracking-tight truncate ${
-              theme === "dark" ? "text-white" : "text-black"
+              isDarkTheme(theme) ? "text-white" : "text-black"
             }`}
           >
             ORBIT
@@ -1264,39 +1354,51 @@ export default function App() {
             </button>
           ) : null}
 
-          {/* Theme Switcher — 暂时隐藏，暗色主题待完善后恢复 */}
 
-          <div className="relative shrink-0" aria-label="体验模式">
-            <select
-              value={experienceMode}
-              onChange={e => {
-                const mode = e.target.value as ExperienceMode;
-                setExperienceMode(mode);
-                persistExperienceMode(mode);
-              }}
-              className="orbit-select appearance-none pl-2.5 pr-7 py-1 rounded-lg text-[11px] font-semibold border border-neutral-200 bg-white text-neutral-700 outline-none focus:border-indigo-300"
-            >
-              {(["safe", "full"] as const).map(mode => (
-                <option key={mode} value={mode}>
-                  {EXPERIENCE_MODE_LABELS[mode]}
-                </option>
-              ))}
-            </select>
-            <svg
-              className="pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 text-neutral-400"
-              viewBox="0 0 12 12"
-              fill="none"
-              aria-hidden
-            >
-              <path
-                d="M2.5 4.5L6 8l3.5-3.5"
-                stroke="currentColor"
-                strokeWidth="1.5"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </div>
+          {experienceMode === "full" ? (
+            <div className="relative shrink-0" aria-label="体验模式">
+              <select
+                value={experienceMode}
+                onChange={e => {
+                  const mode = e.target.value as ExperienceMode;
+                  setExperienceMode(mode);
+                  persistExperienceMode(mode);
+                }}
+                className={
+                  isDarkTheme(theme)
+                    ? "orbit-titlebar-select"
+                    : "orbit-titlebar-select orbit-titlebar-select-light"
+                }
+              >
+                {(["safe", "full"] as const).map(mode => (
+                  <option key={mode} value={mode}>
+                    {EXPERIENCE_MODE_LABELS[mode]}
+                  </option>
+                ))}
+              </select>
+              <svg
+                className={`pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 ${
+                  isDarkTheme(theme) ? "orbit-titlebar-select-chevron" : "text-neutral-400"
+                }`}
+                viewBox="0 0 12 12"
+                fill="none"
+                aria-hidden
+              >
+                <path
+                  d="M2.5 4.5L6 8l3.5-3.5"
+                  stroke="currentColor"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+          ) : null}
+
+          <ThemeSwitcher
+            theme={theme}
+            onThemeChange={setTheme}
+          />
         </div>
       </header>
 
@@ -1305,13 +1407,13 @@ export default function App() {
         
         {}
         <aside className={`h-full flex flex-col justify-between border-r transition-all duration-300 ${
-          theme === 'dark' ? 'bg-[#1c1d1f] border-neutral-800' : 'bg-white border-neutral-100'
+          isDarkTheme(theme) ? 'orbit-surface border-[var(--orbit-border)]' : 'bg-white border-neutral-100'
         } ${isSidebarCollapsed ? 'w-16' : 'w-64'}`}>
           
           <div className="shrink-0 pt-3">
             {/* Sidebar collapse toggle */}
             <div
-              className={`mb-1 pb-1 border-b ${theme === "dark" ? "border-neutral-800" : "border-neutral-100"} ${isSidebarCollapsed ? "px-0" : "px-3"}`}
+              className={`mb-1 pb-1 border-b ${isDarkTheme(theme) ? "border-[var(--orbit-border)]" : "border-neutral-100"} ${isSidebarCollapsed ? "px-0" : "px-3"}`}
             >
               <button
                 type="button"
@@ -1319,7 +1421,7 @@ export default function App() {
                 className={`w-full flex items-center py-1 rounded-lg text-xs transition-all duration-200 ${
                   isSidebarCollapsed ? "justify-center px-0" : "gap-2 px-2"
                 } ${
-                  theme === "dark"
+                  isDarkTheme(theme)
                     ? "text-neutral-400 hover:bg-neutral-800/50"
                     : "text-neutral-500 hover:bg-neutral-50"
                 }`}
@@ -1562,6 +1664,10 @@ export default function App() {
             <PluginManagerModal
               theme={theme}
               experienceMode={experienceMode}
+              onExperienceModeChange={mode => {
+                setExperienceMode(mode);
+                persistExperienceMode(mode);
+              }}
               myPlugins={myPlugins}
               pluginGroups={pluginGroups}
               groupedPluginsForManage={managePluginGroups}
@@ -1571,6 +1677,7 @@ export default function App() {
               onUpdate={handleUpdatePlugin}
               onUninstall={handleUninstallPlugin}
               onToggleActive={handleTogglePluginActive}
+              onToggleIncludeInAll={handleTogglePluginIncludeInAll}
               onMove={handleMovePlugin}
               onReorder={handleReorderPlugins}
               onImport={handleImportCustomPlugin}
@@ -1595,14 +1702,14 @@ export default function App() {
             <>
           {}
           <section className={`w-full md:w-80 lg:w-96 h-full flex flex-col border-r border-l transition-all duration-300 ${
-            theme === 'dark' ? 'bg-[#121314] border-neutral-800' : 'bg-white border-neutral-100'
+            isDarkTheme(theme) ? 'orbit-surface border-[var(--orbit-border)]' : 'bg-white border-neutral-100'
           } ${hideFeedPanel ? 'hidden' : 'flex'}`}>
             
             {/* Search Column Container */}
-            <div className="p-4 border-b dark:border-neutral-800 space-y-3">
+            <div className="p-4 border-b orbit-feed-panel-header space-y-3">
               {!isBrowseDynamicPluginActive && (
                 <div className={`relative flex items-center rounded-xl p-1 transition-all ${
-                  theme === 'dark' ? 'bg-[#1c1d1f]' : 'bg-[#f0f4f9]'
+                  isDarkTheme(theme) ? 'orbit-surface-elevated' : 'bg-[#f0f4f9]'
                 }`}>
                   <div className="pl-3 pr-2 text-neutral-400">
                     <Icon name="search" className="w-4 h-4" />
@@ -1653,8 +1760,8 @@ export default function App() {
                         onClick={() => setActiveCategory(cat.id)}
                         className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
                           activeCategory === cat.id
-                            ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm"
-                            : "bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300"
+                            ? "orbit-filter-chip orbit-filter-chip--active"
+                            : "orbit-filter-chip"
                         }`}
                       >
                         {cat.label}
@@ -1673,7 +1780,7 @@ export default function App() {
 
             {/* Scrollable list of feeds */}
             <div className="flex-1 overflow-y-auto p-4 space-y-3 no-scrollbar">
-              <div className="flex items-center justify-between text-xs text-neutral-400 mb-2 gap-2">
+              <div className="flex items-center justify-between text-xs orbit-text-subtle mb-2 gap-2">
                 <span className="inline-flex items-center gap-1.5 min-w-0">
                   {activeTab === "bookmarks"
                     ? "收藏的文章"
@@ -1762,10 +1869,8 @@ export default function App() {
                       <div 
                         key={item.id}
                         onClick={() => handleItemSelect(item)}
-                        className={`group relative p-3.5 rounded-2xl cursor-pointer transition-all duration-300 border-[0.5px] ${
-                          isSelected 
-                            ? 'bg-[#e9eef6] dark:bg-neutral-800 border-indigo-300 dark:border-neutral-600 shadow-sm' 
-                            : 'bg-white hover:bg-[#f0f4f9] dark:bg-neutral-900 dark:hover:bg-neutral-800/40 border-neutral-200 dark:border-neutral-700'
+                        className={`group relative p-3.5 rounded-2xl cursor-pointer transition-all duration-300 border-[0.5px] orbit-feed-card ${
+                          isSelected ? "orbit-feed-card--selected" : ""
                         }`}
                       >
                         <div className="flex gap-3 items-start">
@@ -1781,20 +1886,20 @@ export default function App() {
                               ) : (
                                 <div className="w-2.5 h-2.5 rounded-full bg-neutral-800" />
                               )}
-                              <span className="text-[11px] font-medium text-neutral-400 dark:text-neutral-500">{item.pluginName}</span>
-                              <span className="text-[10px] text-neutral-300">•</span>
-                              <div className="text-neutral-400 group-hover:text-indigo-600 transition-colors">
+                              <span className="text-[11px] font-medium orbit-feed-card-meta">{item.pluginName}</span>
+                              <span className="text-[10px] orbit-text-subtle">•</span>
+                              <div className="orbit-feed-card-meta group-hover:text-[var(--orbit-accent)] transition-colors">
                                 <Icon name={item.type} className="w-3 h-3" />
                               </div>
                             </div>
 
                             <h4 className={`text-sm font-semibold leading-snug line-clamp-2 transition-colors ${
-                              isSelected ? 'text-indigo-700 dark:text-indigo-400' : 'text-neutral-800 dark:text-neutral-200'
+                              isSelected ? "orbit-feed-card-title--selected" : "orbit-feed-card-title"
                             }`}>
                               {item.title}
                             </h4>
                             {item.summary && (
-                              <p className="text-xs text-neutral-400 dark:text-neutral-500 line-clamp-2 mt-0.5 leading-snug">
+                              <p className="text-xs orbit-feed-card-summary line-clamp-2 mt-0.5 leading-snug">
                                 {item.summary}
                               </p>
                             )}
@@ -1829,7 +1934,7 @@ export default function App() {
                         </div>
 
                         {/* Footer specs inside card */}
-                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-dashed border-neutral-100 dark:border-neutral-800/80 text-[10px] text-neutral-400">
+                        <div className="flex items-center justify-between mt-3 pt-2 border-t border-dashed orbit-feed-card-divider text-[10px] orbit-feed-card-meta">
                           <div className="flex items-center gap-2">
                             <span>{item.author}</span>
                             <span>•</span>
@@ -1842,20 +1947,20 @@ export default function App() {
                                 e.stopPropagation();
                                 handleIgnoreArticle(item.id);
                               }}
-                              className="p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full"
+                              className="p-1 orbit-feed-card-action rounded-full"
                               title="忽略此文章"
                             >
-                              <Icon name="eye-off" className="w-3 h-3 text-neutral-400" />
+                              <Icon name="eye-off" className="w-3 h-3 orbit-feed-card-meta" />
                             </button>
                             <button 
                               onClick={(e) => {
                                 e.stopPropagation();
                                 handleBookmarkToggle(item.id);
                               }}
-                              className="p-1 hover:bg-neutral-100 dark:hover:bg-neutral-800 rounded-full"
+                              className="p-1 orbit-feed-card-action rounded-full"
                               title="收藏"
                             >
-                              <Icon name="bookmark" className="w-3 h-3 text-neutral-400" active={item.isBookmarked} />
+                              <Icon name="bookmark" className="w-3 h-3 orbit-feed-card-meta" active={item.isBookmarked} />
                             </button>
                           </div>
                         </div>
@@ -1883,14 +1988,14 @@ export default function App() {
           {}
           <section
             className={`flex-1 h-full flex flex-row min-h-0 overflow-hidden transition-all duration-300 ${
-            theme === 'dark' ? 'bg-[#121314]' : 'bg-[#fafafa]'
+            isDarkTheme(theme) ? 'bg-transparent' : 'bg-[#fafafa]'
           }`}
           >
             <div
               ref={readerPanelRef}
               className={`flex-1 h-full min-w-0 ${
                 isSplitPaneLayout ? "overflow-hidden" : "overflow-y-auto"
-              } ${theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"}`}
+              } ${isDarkTheme(theme) ? "bg-transparent" : "bg-[#fafafa]"}`}
             >
             
             {isPluginFocusMode || selectedItem ? (
@@ -1901,12 +2006,12 @@ export default function App() {
               }>
                 {/* Reader toolbar — sticky near top */}
                 <div
-                  className={`${isSplitPaneLayout ? "shrink-0" : "sticky top-0"} z-10 -mx-6 px-6 pt-2 pb-2 ${theme === "dark" ? "bg-[#121314]" : "bg-[#fafafa]"}`}
+                  className={`${isSplitPaneLayout ? "shrink-0" : "sticky top-0"} z-10 -mx-6 px-6 pt-2 pb-2 ${isDarkTheme(theme) ? "bg-transparent" : "bg-[#fafafa]"}`}
                 >
                   <div
                     className={`rounded-xl border transition-all duration-200 ${
-                      theme === "dark"
-                        ? "bg-[#1c1d1f] border-neutral-800"
+                      isDarkTheme(theme)
+                        ? "orbit-surface-elevated border-[var(--orbit-border)]"
                         : "bg-white border-neutral-100"
                     } shadow-sm`}
                   >
@@ -1988,6 +2093,11 @@ export default function App() {
                               value={gridColumnCount}
                               onChange={handleGridColumnCountChange}
                             />
+                            <GridCoverAspectSwitcher
+                              theme={theme}
+                              value={gridCoverAspectRatio}
+                              onChange={handleGridCoverAspectRatioChange}
+                            />
                             <GridColumnSwitcher
                               theme={theme}
                               label="视频列"
@@ -2002,6 +2112,14 @@ export default function App() {
                             theme={theme}
                             value={gridColumnCount}
                             onChange={handleGridColumnCountChange}
+                          />
+                        ) : null}
+
+                        {(isGridPreviewMode || isSplitDetailMode) && activePlugin !== "all" ? (
+                          <GridCoverAspectSwitcher
+                            theme={theme}
+                            value={gridCoverAspectRatio}
+                            onChange={handleGridCoverAspectRatioChange}
                           />
                         ) : null}
 
@@ -2065,13 +2183,13 @@ export default function App() {
                             <div
                               role="menu"
                               className={`absolute right-0 top-full z-50 mt-1.5 w-52 overflow-hidden rounded-xl border shadow-lg ${
-                                theme === "dark"
-                                  ? "border-neutral-700 bg-[#1c1d1f]"
+                                isDarkTheme(theme)
+                                  ? "border-[var(--orbit-border-strong)] orbit-surface-elevated"
                                   : "border-neutral-200 bg-white"
                               }`}
                             >
                               <div className={`px-3 py-2 text-[11px] font-medium ${
-                                theme === "dark" ? "text-neutral-400" : "text-neutral-500"
+                                isDarkTheme(theme) ? "text-neutral-400" : "text-neutral-500"
                               }`}>
                                 布局模式
                               </div>
@@ -2086,10 +2204,10 @@ export default function App() {
                                     onClick={() => handleSelectPreviewMode(mode)}
                                     className={`flex w-full items-start gap-2 px-3 py-2 text-left transition-colors ${
                                       isActive
-                                        ? theme === "dark"
+                                        ? isDarkTheme(theme)
                                           ? "bg-indigo-950/40 text-indigo-300"
                                           : "bg-indigo-50 text-indigo-700"
-                                        : theme === "dark"
+                                        : isDarkTheme(theme)
                                           ? "hover:bg-neutral-800/80 text-neutral-200"
                                           : "hover:bg-neutral-50 text-neutral-800"
                                     }`}
@@ -2097,7 +2215,7 @@ export default function App() {
                                     <div className="min-w-0 flex-1">
                                       <div className="text-xs font-medium">{label}</div>
                                       <div className={`text-[11px] ${
-                                        theme === "dark" ? "text-neutral-500" : "text-neutral-400"
+                                        isDarkTheme(theme) ? "text-neutral-500" : "text-neutral-400"
                                       }`}>
                                         {desc}
                                       </div>
@@ -2184,7 +2302,7 @@ export default function App() {
                   {showFocusSearchInput ? (
                     <div className="mt-2">
                       <div className={`relative flex items-center rounded-xl p-1 transition-all ${
-                        theme === "dark" ? "bg-[#1c1d1f]" : "bg-[#f0f4f9]"
+                        isDarkTheme(theme) ? "orbit-surface-elevated" : "bg-[#f0f4f9]"
                       }`}>
                         <div className="pl-3 pr-2 text-neutral-400">
                           {feedSearching ? (
@@ -2249,6 +2367,7 @@ export default function App() {
                       runtimeBase={runtimeBase}
                       articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
                       gridColumnCount={gridColumnCount}
+                      coverAspectRatio={gridCoverAspectRatio}
                       videoColumnCount={videoWallColumnCount}
                       splitRatio={splitPaneRatio}
                       onSplitRatioChange={handleSplitPaneRatioChange}
@@ -2273,10 +2392,11 @@ export default function App() {
                       articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
                       selectedArticle={splitDetailArticle}
                       gridColumnCount={gridColumnCount}
+                      coverAspectRatio={gridCoverAspectRatio}
                       splitRatio={splitPaneRatio}
                       onSplitRatioChange={handleSplitPaneRatioChange}
                       readerFontScale={readerFontScale}
-                      hasDetail={channelCapabilities.hasDetail}
+                      hasDetail={activeChannelHasDetail}
                       activeChannel={activeChannel}
                       pluginMeta={activePluginMeta}
                       loading={feedLoading}
@@ -2327,11 +2447,12 @@ export default function App() {
                   />
                 ) : isGridPreviewMode && activePlugin !== "all" ? (
                   <RatingFocusView
-                    key={`${activePlugin}-${activeChannel}-${gridColumnCount}`}
+                    key={`${activePlugin}-${activeChannel}-${gridColumnCount}-${gridCoverAspectRatio}`}
                     theme={theme}
                     runtimeBase={runtimeBase}
                     articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
                     columnCount={gridColumnCount}
+                    coverAspectRatio={gridCoverAspectRatio}
                     loading={feedLoading}
                     loadingMore={feedLoadingMore}
                     searching={feedSearching}
@@ -2370,15 +2491,8 @@ export default function App() {
                   </h1>
 
                   {/* Dynamic Interactive Media Section (Based on Resource Type) */}
-                  {showArticleMedia && isRatingCoverLayout && selectedItem.type === "text" && selectedItem.image?.trim() ? (
-                    <ProxiedImage
-                      runtimeBase={runtimeBase}
-                      src={selectedItem.image}
-                      alt="Article Cover"
-                      className="h-[380px] w-auto max-w-full object-contain mx-auto block"
-                      onError={() => setCoverImageFailed(true)}
-                    />
-                  ) : showArticleMedia
+                  {showArticleMedia
+                    && !isRatingCoverLayout
                     && selectedItem.type === "image"
                     && selectedItem.image?.trim()
                     && !selectedItem.galleryImages?.length ? (
@@ -2388,7 +2502,7 @@ export default function App() {
                       alt={selectedItem.title}
                       onError={() => setCoverImageFailed(true)}
                     />
-                  ) : showArticleMedia ? (
+                  ) : showArticleMedia && !isRatingCoverLayout ? (
                   <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                     
                     {/* Type 1: Standard Article Main Image */}
@@ -2560,7 +2674,7 @@ export default function App() {
                   <>
                     <div
                       ref={articleContentRef}
-                      data-theme={theme}
+                      data-theme={articleContentTheme(theme)}
                       className="article-content mt-6"
                       dangerouslySetInnerHTML={{ __html: selectedItemDisplayContent }}
                     />
@@ -2618,7 +2732,7 @@ export default function App() {
                           type="button"
                           onClick={() => handleItemSelect(item)}
                           className={`w-full flex gap-3 p-2.5 rounded-xl text-left transition-all border ${
-                            theme === "dark"
+                            isDarkTheme(theme)
                               ? "border-neutral-800 hover:bg-neutral-900"
                               : "border-neutral-100 hover:bg-white hover:shadow-sm"
                           }`}
@@ -2679,8 +2793,8 @@ export default function App() {
 
             {showChaptersSidebar && chaptersParent && chaptersPanelVisible ? (
               <aside className={`w-full md:w-80 lg:w-96 h-full flex flex-col border-l shrink-0 transition-all duration-300 ${
-                theme === "dark"
-                  ? "bg-[#121314] border-neutral-800"
+                isDarkTheme(theme)
+                  ? "bg-transparent border-[var(--orbit-border)]"
                   : "bg-white border-neutral-100"
               }`}>
                 <ChaptersSidebar
