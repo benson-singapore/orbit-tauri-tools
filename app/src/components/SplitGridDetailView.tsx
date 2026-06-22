@@ -1,16 +1,13 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type RefObject } from "react";
+import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from "react";
 import { isDarkTheme } from "@/lib/themeMode";
 import { ArticleDetailPanel } from "@/components/ArticleDetailPanel";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import {
   clampSplitPaneRatio,
 } from "@/lib/splitPaneRatio";
-import {
-  resolveEffectiveColumnCount,
-  type GridColumnCount,
-} from "@/lib/gridColumnCount";
+import type { GridColumnCount } from "@/lib/gridColumnCount";
 import type { GridCoverAspectRatio } from "@/lib/gridCoverAspectRatio";
-import type { Article, Plugin, ThemeMode } from "@/types";
+import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
 
 interface SplitGridDetailViewProps {
   theme: ThemeMode;
@@ -25,32 +22,14 @@ interface SplitGridDetailViewProps {
   hasDetail: boolean;
   activeChannel: string;
   pluginMeta?: Plugin;
+  channelCapabilities: ChannelCapabilities;
+  storedChannel?: string | null;
   loading: boolean;
   loadingMore: boolean;
   searching?: boolean;
   hasMore: boolean;
   onLoadMore: () => void;
   onItemSelect: (article: Article) => void;
-}
-
-function usePaneWidth(ref: RefObject<HTMLElement | null>): number {
-  const [width, setWidth] = useState(0);
-
-  useEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-
-    const update = () => {
-      setWidth(element.clientWidth);
-    };
-    update();
-
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [ref]);
-
-  return width;
 }
 
 export function splitDetailSessionId(article: Pick<Article, "id" | "pluginId">): string {
@@ -70,6 +49,8 @@ export function SplitGridDetailView({
   hasDetail,
   activeChannel,
   pluginMeta,
+  channelCapabilities,
+  storedChannel,
   loading,
   loadingMore,
   searching = false,
@@ -79,16 +60,8 @@ export function SplitGridDetailView({
 }: SplitGridDetailViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPaneRef = useRef<HTMLDivElement>(null);
-  const rightPaneRef = useRef<HTMLDivElement>(null);
   const isDark = isDarkTheme(theme);
   const leftPercent = clampSplitPaneRatio(splitRatio) * 100;
-
-  const leftPaneWidth = usePaneWidth(leftPaneRef);
-
-  const effectiveGridColumns = useMemo(
-    () => resolveEffectiveColumnCount(leftPaneWidth, gridColumnCount),
-    [leftPaneWidth, gridColumnCount],
-  );
 
   const handleDividerPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -131,7 +104,7 @@ export function SplitGridDetailView({
           theme={theme}
           runtimeBase={runtimeBase}
           articles={articles}
-          columnCount={effectiveGridColumns}
+          columnCount={gridColumnCount}
           coverAspectRatio={coverAspectRatio}
           selectedArticleId={selectedArticle?.id}
           loading={loading}
@@ -163,7 +136,6 @@ export function SplitGridDetailView({
       </div>
 
       <div
-        ref={rightPaneRef}
         className={`min-h-0 min-w-0 flex-1 overflow-hidden border-l ${
           isDark ? "border-neutral-800 bg-[#111113]" : "border-neutral-200 bg-neutral-50/80"
         }`}
@@ -179,6 +151,8 @@ export function SplitGridDetailView({
             hasDetail={hasDetail}
             activeChannel={activeChannel}
             pluginMeta={pluginMeta}
+            channelCapabilities={channelCapabilities}
+            storedChannel={storedChannel}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center">

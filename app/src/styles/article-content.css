@@ -307,3 +307,146 @@
 .article-content[data-theme="dark"] :where(.hljs-meta, .hljs-meta .hljs-keyword) { color: #8b949e; }
 .article-content[data-theme="dark"] :where(.hljs-emphasis) { font-style: italic; }
 .article-content[data-theme="dark"] :where(.hljs-strong) { font-weight: 700; }
+
+/* Plugin-injected category / metadata pills (see normalizeContentTagPills) */
+.article-content :where(.orbit-content-tag) {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.25;
+  background: #f5f5f5;
+  color: #737373;
+}
+
+.article-content[data-theme="dark"] :where(.orbit-content-tag) {
+  background: #262626;
+  color: #a3a3a3;
+}
+
+/* Plugin-injected playback source switchers (see articleContentPlayer) */
+.article-content :where(.orbit-content-source-btn) {
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #525252;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.25;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.article-content :where(.orbit-content-source-btn:hover) {
+  border-color: #d4d4d4;
+  background: #fafafa;
+}
+
+.article-content :where(.orbit-content-source-btn--active) {
+  border-color: #e11d48;
+  background: #fff1f2;
+  color: #be123c;
+}
+
+.article-content[data-theme="dark"] :where(.orbit-content-source-btn) {
+  border-color: #404040;
+  background: #262626;
+  color: #d4d4d4;
+}
+
+.article-content[data-theme="dark"] :where(.orbit-content-source-btn:hover) {
+  border-color: #525252;
+  background: #2e2e2e;
+}
+
+.article-content[data-theme="dark"] :where(.orbit-content-source-btn--active) {
+  border-color: #fb7185;
+  background: rgba(225, 29, 72, 0.16);
+  color: #fda4af;
+}
+
+/* Embedded article video theater mode (mirrors YouTubeEmbed controls) */
+.article-content :where(.orbit-content-video-shell) {
+  position: relative;
+  width: 100%;
+}
+
+.article-content :where(.orbit-content-video-control) {
+  position: absolute;
+  right: 0;
+  bottom: 0.75rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.article-content :where(.orbit-content-video-control:hover) {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.article-content :where(.orbit-content-video-control svg) {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.orbit-content-video-theater {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #000000;
+}
+
+.orbit-content-video-theater > .orbit-content-video-control {
+  position: absolute;
+  right: 0;
+  bottom: 0.75rem;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3.5rem;
+  height: 3rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.orbit-content-video-theater > .orbit-content-video-control:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+}
+
+.orbit-content-video-theater > .orbit-content-video-control svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+.orbit-content-video-theater-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.orbit-content-video-theater :where(video) {
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 0 !important;
+}

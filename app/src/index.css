@@ -248,3 +248,61 @@ html.dark .orbit-surface-elevated {
 .orbit-text-muted {
   color: var(--orbit-text-muted);
 }
+
+.orbit-chapters-drawer-backdrop {
+  background: rgb(0 0 0 / 0.08);
+}
+
+html.dark .orbit-chapters-drawer-backdrop {
+  background: rgb(0 0 0 / 0.22);
+}
+
+.orbit-chapters-drawer {
+  color: var(--orbit-text);
+  background: var(--orbit-surface-elevated);
+  border-color: var(--orbit-border-strong);
+  box-shadow: -12px 0 40px rgb(0 0 0 / 0.1);
+}
+
+html.dark .orbit-chapters-drawer {
+  box-shadow: -12px 0 40px rgb(0 0 0 / 0.35);
+}
+
+.orbit-chapters-drawer-header {
+  border-color: var(--orbit-border);
+}
+
+.orbit-chapters-drawer-icon-btn {
+  color: var(--orbit-text-muted);
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.orbit-chapters-drawer-icon-btn:hover {
+  color: var(--orbit-text);
+  background: color-mix(in srgb, var(--orbit-accent) 12%, transparent);
+}
+
+.orbit-chapters-list-header {
+  border-color: var(--orbit-border);
+}
+
+.orbit-chapters-list-action {
+  color: var(--orbit-text-muted);
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.orbit-chapters-list-action:hover:not(:disabled) {
+  color: var(--orbit-text);
+  background: color-mix(in srgb, var(--orbit-accent) 12%, transparent);
+}
+
+.orbit-chapters-list-load-more {
+  border-color: var(--orbit-border-strong);
+  color: var(--orbit-text-muted);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.orbit-chapters-list-load-more:hover:not(:disabled) {
+  background: var(--orbit-card-hover);
+  color: var(--orbit-text);
+}

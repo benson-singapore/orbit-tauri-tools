@@ -1,3 +1,4 @@
+import { extractRycjVideoUrlFromContent } from "@/lib/articleContentPlayer";
 import type { Article } from "@/types";
 
 const BLOB_SRC_RE = /^blob:/i;
@@ -78,7 +79,10 @@ export function resolveArticleVideoUrl(
   if (direct) return direct;
 
   if (article.content?.trim()) {
-    return extractVideoUrlFromContent(article.content);
+    return (
+      extractVideoUrlFromContent(article.content)
+      ?? extractRycjVideoUrlFromContent(article.content)
+    );
   }
 
   return null;

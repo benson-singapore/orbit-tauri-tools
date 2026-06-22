@@ -7,6 +7,10 @@ import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { prepareArticleHtmlContent } from "@/lib/articleContent";
 import { bindArticleContentImages } from "@/lib/imageProxy";
 import {
+  bindArticleContentPlayers,
+  destroyArticleContentPlayers,
+} from "@/lib/articleContentPlayer";
+import {
   parseRatingScore,
   parseRatingSummary,
   ratingDisplayTags,
@@ -74,7 +78,9 @@ export function RatingDetailModal({
     if (displayContent) {
       highlightArticleCode(contentRef.current);
       bindArticleContentImages(contentRef.current, runtimeBase);
+      bindArticleContentPlayers(contentRef.current);
     }
+    return () => destroyArticleContentPlayers(contentRef.current);
   }, [displayContent, runtimeBase, theme]);
 
   useEffect(() => {

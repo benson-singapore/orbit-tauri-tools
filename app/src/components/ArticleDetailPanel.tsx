@@ -1,13 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { articleContentTheme, isDarkTheme } from "@/lib/themeMode";
-import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
-import { useVideoSessionMountRegistry } from "@/components/VideoWallMountContext";
+import { YouTubeEmbed } from "@/components/YouTubeEmbed";
+import { ChaptersDrawer } from "@/components/ChaptersDrawer";
+import { ChaptersList } from "@/components/ChaptersList";
+import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
+import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import {
   dedupeCoverImageFromContent,
   prepareArticleHtmlContent,
 } from "@/lib/articleContent";
-import { stripEmbeddedVideosFromContent } from "@/lib/articleVideoUrl";
 import {
   resolveArticleDetailChannel,
   resolveArticleHasDetail,
@@ -18,13 +20,13 @@ import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
 import {
-  parseRatingScore,
-  parseRatingSummary,
-  ratingDisplayTags,
-} from "@/lib/ratingPlugin";
+  bindArticleContentPlayers,
+  destroyArticleContentPlayers,
+} from "@/lib/articleContentPlayer";
+import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
 import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
-import { isVideoArticle } from "@/lib/readerSessionVideos";
-import type { Article, Plugin, ThemeMode } from "@/types";
+import { resolveYouTubeVideoId } from "@/lib/youtube";
+import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
 
 interface ArticleDetailPanelProps {
   sessionId: string;
@@ -35,35 +37,11 @@ interface ArticleDetailPanelProps {
   hasDetail: boolean;
   activeChannel: string;
   pluginMeta?: Plugin;
-}
-
-function MetaRow({
-  label,
-  children,
-  isDark,
-}: {
-  label: string;
-  children: ReactNode;
-  isDark: boolean;
-}) {
-  return (
-    <div className="flex gap-3 text-sm leading-relaxed">
-      <span
-        className={`shrink-0 w-9 text-right text-xs font-medium tracking-wide ${
-          isDark ? "text-neutral-500" : "text-neutral-400"
-        }`}
-      >
-        {label}
-      </span>
-      <div className={`flex-1 min-w-0 ${isDark ? "text-neutral-200" : "text-neutral-700"}`}>
-        {children}
-      </div>
-    </div>
-  );
+  channelCapabilities: ChannelCapabilities;
+  storedChannel?: string | null;
 }
 
 export function ArticleDetailPanel({
-  sessionId,
   theme,
   runtimeBase,
   article: initialArticle,
@@ -71,16 +49,37 @@ export function ArticleDetailPanel({
   hasDetail,
   activeChannel,
   pluginMeta,
+  channelCapabilities,
+  storedChannel,
 }: ArticleDetailPanelProps) {
-  const isDark = isDarkTheme(theme);
   const [article, setArticle] = useState(initialArticle);
   const [loading, setLoading] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
+  const [chaptersDrawerOpen, setChaptersDrawerOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+
+  const hasChaptersMode = shouldOpenChaptersForArticle(
+    initialArticle,
+    pluginMeta,
+    activeChannel,
+    channelCapabilities,
+    storedChannel,
+  );
+
+  const chapters = useArticleChapters({
+    parent: hasChaptersMode ? initialArticle : null,
+    activeChannel,
+    pluginMeta,
+    capabilities: channelCapabilities,
+    storedChannel,
+    enabled: hasChaptersMode,
+    onChapterDetail: setArticle,
+  });
 
   useEffect(() => {
     setArticle(initialArticle);
     setCoverImageFailed(false);
+    setChaptersDrawerOpen(false);
   }, [initialArticle]);
 
   const channelId = resolveArticleDetailChannel(article, pluginMeta, activeChannel);
@@ -93,6 +92,11 @@ export function ArticleDetailPanel({
 
   useEffect(() => {
     const itemId = article.id;
+    if (hasChaptersMode) {
+      setLoading(false);
+      return;
+    }
+
     if (shouldSkipFeedItemDetailFetch(article, pluginMeta, effectiveHasDetail)) {
       setLoading(false);
       return;
@@ -142,22 +146,30 @@ export function ArticleDetailPanel({
     return () => {
       cancelled = true;
     };
-  }, [article, pluginMeta, effectiveHasDetail, channelId]);
+  }, [article.id, pluginMeta, effectiveHasDetail, channelId, hasChaptersMode]);
 
-  const isRatingLayout = isRatingPluginArticle(article, pluginMeta);
-  const hasVideoMedia = isVideoArticle(article);
-  const { registerMount } = useVideoSessionMountRegistry();
+  const isRatingCoverLayout = isRatingPluginArticle(article, pluginMeta);
 
-  const videoMountRef = useCallback(
-    (element: HTMLDivElement | null) => {
-      if (hasVideoMedia) {
-        registerMount(sessionId, "modal", element);
-        return;
+  const showArticleMedia = useMemo(() => {
+    if (article.type === "text") {
+      return Boolean(article.image?.trim()) && !coverImageFailed;
+    }
+    if (article.type === "video") {
+      return Boolean(resolveYouTubeVideoId(article) || article.videoUrl?.trim());
+    }
+    if (article.type === "audio") {
+      return true;
+    }
+    if (article.type === "image") {
+      if (article.galleryImages?.length) {
+        return true;
       }
-      registerMount(sessionId, "modal", null);
-    },
-    [registerMount, sessionId, hasVideoMedia],
-  );
+      return Boolean(article.image?.trim()) && !coverImageFailed;
+    }
+    return false;
+  }, [article, coverImageFailed]);
+
+  const youTubeVideoId = useMemo(() => resolveYouTubeVideoId(article), [article]);
 
   const displayContent = useMemo(() => {
     if (!article.content?.trim()) return "";
@@ -165,275 +177,220 @@ export function ArticleDetailPanel({
     if (article.type === "text" && article.image) {
       content = dedupeCoverImageFromContent(article.image, content);
     }
-    if (hasVideoMedia) {
-      content = stripEmbeddedVideosFromContent(content);
-    }
     return prepareArticleHtmlContent(content, runtimeBase, {
       darkTheme: isDarkTheme(theme),
     });
-  }, [article.content, article.image, article.type, runtimeBase, hasVideoMedia, theme]);
+  }, [article.content, article.image, article.type, runtimeBase, theme]);
 
   useEffect(() => {
     if (displayContent) {
       highlightArticleCode(contentRef.current);
       bindArticleContentImages(contentRef.current, runtimeBase);
+      bindArticleContentPlayers(contentRef.current);
     }
+    return () => destroyArticleContentPlayers(contentRef.current);
   }, [displayContent, runtimeBase, theme]);
 
-  const score = parseRatingScore(article.tags ?? []);
-  const extraTags = ratingDisplayTags(article.tags ?? []);
-  const meta = useMemo(
-    () => parseRatingSummary(article.summary ?? ""),
-    [article.summary],
-  );
+  const showContentLoading = loading
+    || chapters.detailLoading
+    || (chapters.isActive && chapters.loading);
 
-  const hasStructuredMeta =
-    meta.year
-    || meta.region
-    || meta.genres.length > 0
-    || meta.director
-    || meta.cast.length > 0;
+  const showRatingHero = shouldShowArticleRatingHero(article, {
+    isRatingLayout: isRatingCoverLayout,
+    showArticleMedia,
+    coverImageFailed,
+  });
 
-  if (isRatingLayout) {
-    return (
-      <div
-        className="article-reader h-full min-h-0 overflow-y-auto px-4 pb-5 sm:px-5"
-        style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
-      >
-        <div className="flex flex-col sm:flex-row gap-4">
-          {article.image?.trim() ? (
-            <div className="relative sm:w-[140px] lg:w-[156px] shrink-0 mx-auto sm:mx-0">
-              <div className="aspect-[2/3] sm:aspect-auto sm:h-full sm:min-h-[220px] overflow-hidden rounded-xl">
-                <ProxiedImage
-                  runtimeBase={runtimeBase}
-                  src={article.image}
-                  alt={article.title}
-                  className="w-full h-full object-cover"
-                />
-              </div>
-            </div>
-          ) : null}
+  const toggleChaptersDrawer = () => setChaptersDrawerOpen(open => !open);
 
-          <div className="flex-1 min-w-0 space-y-3">
-            <div className="space-y-2">
-              <span
-                className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md ${
-                  isDark ? "bg-neutral-800 text-neutral-400" : "bg-neutral-100 text-neutral-500"
-                }`}
-              >
-                {article.pluginName}
-              </span>
-              <div className="flex items-start justify-between gap-3">
-                <h2 className="text-lg sm:text-xl font-bold leading-tight tracking-tight">
+  const chaptersOpenButton = chapters.isActive ? (
+    <ChaptersOpenButton
+      theme={theme}
+      open={chaptersDrawerOpen}
+      onClick={toggleChaptersDrawer}
+    />
+  ) : null;
+
+  const chaptersList = chapters.isActive && initialArticle ? (
+    <ChaptersList
+      theme={theme}
+      variant="sidebar"
+      title={chapters.title}
+      items={chapters.items}
+      loading={chapters.loading}
+      loadingMore={chapters.loadingMore}
+      refreshing={chapters.refreshing}
+      hasMore={chapters.hasMore}
+      canLoadMore={channelCapabilities.canLoadMoreChapters}
+      canRefresh={channelCapabilities.canRefreshChapters || channelCapabilities.hasChapters}
+      parentItem={initialArticle}
+      activeItemId={chapters.activeChapter?.id ?? article.id}
+      itemLabel={channelCapabilities.chaptersItemLabel}
+      onSelect={chapter => {
+        setChaptersDrawerOpen(false);
+        void chapters.selectChapter(chapter);
+      }}
+      onLoadMore={chapters.loadMore}
+      onRefresh={chapters.refresh}
+      onClearAndRefresh={chapters.clearAndRefresh}
+    />
+  ) : null;
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col">
+      {showRatingHero ? (
+        <div className="shrink-0 w-full px-4 pt-4 sm:px-5 sm:pt-5">
+          <ArticleRatingHero
+            article={article}
+            theme={theme}
+            runtimeBase={runtimeBase}
+            trailing={chaptersOpenButton}
+            onCoverError={() => setCoverImageFailed(true)}
+          />
+        </div>
+      ) : null}
+
+      <div className="flex-1 min-h-0 w-full overflow-y-auto">
+          <div
+            className="article-reader space-y-6 px-4 pb-5 sm:px-5"
+            style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
+          >
+            <div className="space-y-4">
+              {!showRatingHero ? (
+              <div className="flex items-start gap-3">
+                <h1 className="article-reader-title font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight flex-1 min-w-0">
                   {article.title}
-                </h2>
-                {score ? (
-                  <div className="shrink-0 flex items-center gap-0.5 text-amber-500">
-                    <Icon name="star" className="w-4 h-4" />
-                    <span className="text-xl font-bold tabular-nums leading-none">{score}</span>
-                  </div>
-                ) : null}
+                </h1>
+                {chaptersOpenButton}
               </div>
-            </div>
+              ) : null}
 
-            {hasStructuredMeta ? (
-              <div className="space-y-2.5">
-                {meta.year || meta.region ? (
-                  <p className={`text-sm ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                    {[meta.year, meta.region].filter(Boolean).join(" · ")}
-                  </p>
+            {showArticleMedia
+              && !showRatingHero
+              && article.type === "image"
+              && article.image?.trim()
+              && !article.galleryImages?.length ? (
+              <ProxiedImage
+                runtimeBase={runtimeBase}
+                src={article.image}
+                alt={article.title}
+                onError={() => setCoverImageFailed(true)}
+              />
+            ) : showArticleMedia && !showRatingHero ? (
+              <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
+                {article.type === "text" && article.image?.trim() ? (
+                  <ProxiedImage
+                    runtimeBase={runtimeBase}
+                    src={article.image}
+                    alt="Article Cover"
+                    className="w-auto h-auto max-w-full mx-auto block"
+                    onError={() => setCoverImageFailed(true)}
+                  />
                 ) : null}
-                {meta.genres.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5">
-                    {meta.genres.map(genre => (
-                      <span
-                        key={genre}
-                        className={`px-2 py-0.5 rounded-md text-xs font-medium ${
-                          isDark
-                            ? "bg-indigo-950/60 text-indigo-300"
-                            : "bg-indigo-50 text-indigo-600"
-                        }`}
-                      >
-                        {genre}
-                      </span>
-                    ))}
+
+                {article.type === "video" ? (
+                  <div className="relative aspect-video bg-neutral-950 flex flex-col items-center justify-center text-white">
+                    {youTubeVideoId ? (
+                      <YouTubeEmbed videoId={youTubeVideoId} title={article.title} />
+                    ) : article.videoUrl ? (
+                      <video
+                        src={article.videoUrl}
+                        className="w-full h-full object-cover"
+                        controls
+                      />
+                    ) : null}
+                    <div className="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full text-xs flex items-center gap-1.5 backdrop-blur-md pointer-events-none">
+                      <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                      <span>{youTubeVideoId ? "YouTube" : "视频流"}</span>
+                    </div>
                   </div>
                 ) : null}
-                {meta.director ? (
-                  <MetaRow label="导演" isDark={isDark}>{meta.director}</MetaRow>
-                ) : null}
-                {meta.cast.length > 0 ? (
-                  <MetaRow label="主演" isDark={isDark}>
-                    <span className="flex flex-wrap gap-x-1 gap-y-0.5">
-                      {meta.cast.map((name, idx) => (
-                        <span key={name}>
-                          {idx > 0 ? (
-                            <span className={isDark ? "text-neutral-600" : "text-neutral-300"}>
-                              {" / "}
-                            </span>
-                          ) : null}
-                          {name}
-                        </span>
-                      ))}
-                    </span>
-                  </MetaRow>
+
+                {article.type === "audio" && article.image ? (
+                  <ProxiedImage
+                    runtimeBase={runtimeBase}
+                    src={article.image}
+                    alt={article.title}
+                    className="w-full max-h-64 object-cover"
+                  />
                 ) : null}
               </div>
-            ) : meta.fallback ? (
-              <p className={`text-sm leading-relaxed ${isDark ? "text-neutral-300" : "text-neutral-600"}`}>
-                {meta.fallback}
-              </p>
             ) : null}
 
-            {extraTags.length > 0 ? (
-              <div className="flex flex-wrap gap-1.5">
-                {extraTags.map((tag, idx) => (
+            {!showRatingHero && (article.tags ?? []).length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {(article.tags ?? []).map((tag, index) => (
                   <span
-                    key={idx}
-                    className={`px-2 py-0.5 rounded-md text-xs ${
-                      isDark
-                        ? "bg-neutral-800 text-neutral-400"
-                        : "bg-neutral-100 text-neutral-500"
-                    }`}
+                    key={index}
+                    className="px-3 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
                   >
-                    {tag}
+                    #{tag}
                   </span>
                 ))}
               </div>
             ) : null}
+
+            {showContentLoading ? (
+              <div className="mt-6 flex items-center gap-2 text-sm text-neutral-400">
+                <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
+                加载正文中…
+              </div>
+            ) : displayContent ? (
+              <>
+                <div
+                  ref={contentRef}
+                  data-theme={articleContentTheme(theme)}
+                  className="article-content mt-6"
+                  dangerouslySetInnerHTML={{ __html: displayContent }}
+                />
+                {article.sourceUrl ? (
+                  <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
+                    <a
+                      href={article.sourceUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 text-sm text-indigo-500 hover:underline dark:text-indigo-400"
+                    >
+                      阅读原文 →
+                    </a>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className="mt-6 border-t border-dashed dark:border-neutral-800 pt-6 space-y-4">
+                {article.summary?.trim() ? (
+                  <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed italic">
+                    “ {article.summary} ”
+                  </p>
+                ) : null}
+                {article.sourceUrl ? (
+                  <a
+                    href={article.sourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex text-sm text-indigo-500 hover:underline"
+                  >
+                    阅读原文 →
+                  </a>
+                ) : (
+                  <p className="text-sm text-neutral-400">
+                    （这是一个带有交互式卡片的媒体项目资源，详情请在正文中直接点击交互并体验。）
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </div>
-
-        {loading ? (
-          <div className="mt-4 flex items-center gap-2 text-sm text-neutral-400">
-            <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
-            加载详情中…
-          </div>
-        ) : displayContent ? (
-          <div
-            ref={contentRef}
-            data-theme={articleContentTheme(theme)}
-            className={`article-content text-sm mt-4 pt-4 border-t ${
-              isDark ? "border-neutral-800" : "border-neutral-100"
-            }`}
-            dangerouslySetInnerHTML={{ __html: displayContent }}
-          />
-        ) : null}
-
-        {article.sourceUrl ? (
-          <div className="mt-5">
-            <a
-              href={article.sourceUrl}
-              target="_blank"
-              rel="noreferrer"
-              className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors ${
-                isDark
-                  ? "bg-indigo-600 hover:bg-indigo-500 text-white"
-                  : "bg-indigo-600 hover:bg-indigo-700 text-white"
-              }`}
-            >
-              在 {article.pluginName} 查看详情
-              <Icon name="share" className="w-3.5 h-3.5" />
-            </a>
-          </div>
-        ) : null}
       </div>
-    );
-  }
 
-  const showCoverImage =
-    Boolean(article.image?.trim())
-    && !coverImageFailed
-    && (article.type === "text" || article.type === "image");
-
-  return (
-    <div
-      className="article-reader h-full min-h-0 overflow-y-auto px-4 pb-5 sm:px-5"
-      style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
-    >
-      <div className="space-y-4">
-        <div className="space-y-2">
-          <span
-            className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md ${
-              isDark ? "bg-neutral-800 text-neutral-400" : "bg-neutral-100 text-neutral-500"
-            }`}
-          >
-            {article.pluginName}
-          </span>
-          <h2 className="article-reader-title font-extrabold tracking-tight leading-tight">
-            {article.title}
-          </h2>
-          {article.author ? (
-            <p className={`text-xs ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-              由 {article.author} 撰写
-            </p>
-          ) : null}
-        </div>
-
-        {hasVideoMedia ? (
-          <div
-            ref={videoMountRef}
-            className="relative aspect-video w-full rounded-xl overflow-hidden bg-neutral-950"
-          />
-        ) : showCoverImage ? (
-          <ProxiedImage
-            runtimeBase={runtimeBase}
-            src={article.image!}
-            alt={article.title}
-            className="rounded-xl w-full max-h-80 object-contain mx-auto"
-            onError={() => setCoverImageFailed(true)}
-          />
-        ) : null}
-
-        {(article.tags ?? []).length > 0 ? (
-          <div className="flex flex-wrap gap-2">
-            {(article.tags ?? []).map((tag, index) => (
-              <span
-                key={index}
-                className={`px-3 py-1 rounded-full text-xs font-medium ${
-                  isDark
-                    ? "bg-neutral-800 text-neutral-400"
-                    : "bg-neutral-100 text-neutral-600"
-                }`}
-              >
-                #{tag}
-              </span>
-            ))}
-          </div>
-        ) : null}
-
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-neutral-400">
-            <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
-            加载正文中…
-          </div>
-        ) : displayContent ? (
-          <>
-            <div
-              ref={contentRef}
-              data-theme={articleContentTheme(theme)}
-              className="article-content"
-              dangerouslySetInnerHTML={{ __html: displayContent }}
-            />
-            {article.sourceUrl ? (
-              <a
-                href={article.sourceUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 text-sm text-indigo-500 hover:underline dark:text-indigo-400"
-              >
-                阅读原文 →
-              </a>
-            ) : null}
-          </>
-        ) : article.summary?.trim() ? (
-          <p className={`text-base leading-relaxed italic ${
-            isDark ? "text-neutral-400" : "text-neutral-600"
-          }`}>
-            “ {article.summary} ”
-          </p>
-        ) : null}
-      </div>
+      <ChaptersDrawer
+        open={chaptersDrawerOpen}
+        theme={theme}
+        title={chapters.title || "选集"}
+        onClose={() => setChaptersDrawerOpen(false)}
+      >
+        {chaptersList}
+      </ChaptersDrawer>
     </div>
   );
 }

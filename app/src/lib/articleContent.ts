@@ -1,5 +1,9 @@
 import type { Article } from "@/types";
 import { isHttpImageUrl, rewriteHtmlImageUrls } from "@/lib/imageProxy";
+import {
+  extractRycjPlayerScripts,
+  normalizeContentSourceButtons,
+} from "@/lib/articleContentPlayer";
 
 const LAZY_IMAGE_ATTRS = ["data-original", "data-src", "data-lazy-src"] as const;
 
@@ -37,7 +41,7 @@ export function imagesReferToSameAsset(a: string, b: string): boolean {
   return leftName.length > 8 && leftName === rightName;
 }
 
-/** Remove the first content image when it duplicates the article cover. */
+/** Remove content images that duplicate the article cover (top hero keeps the cover). */
 export function dedupeCoverImageFromContent(
   coverUrl: string | undefined,
   html: string,
@@ -49,27 +53,34 @@ export function dedupeCoverImageFromContent(
   }
 
   const doc = new DOMParser().parseFromString(content, "text/html");
-  const firstImg = doc.body.querySelector("img");
-  if (!firstImg) return html;
+  const imgs = Array.from(doc.body.querySelectorAll("img"));
+  const parentsToMaybeRemove = new Set<Element>();
 
-  const src =
-    firstImg.getAttribute("src") ??
-    firstImg.getAttribute("data-src") ??
-    "";
-  if (!imagesReferToSameAsset(cover, src)) {
-    return html;
+  for (const img of imgs) {
+    const src =
+      img.getAttribute("src") ??
+      img.getAttribute("data-src") ??
+      img.getAttribute("data-original") ??
+      "";
+    if (!imagesReferToSameAsset(cover, src)) {
+      continue;
+    }
+
+    const parent = img.parentElement;
+    img.remove();
+    if (parent) {
+      parentsToMaybeRemove.add(parent);
+    }
   }
 
-  const parent = firstImg.parentElement;
-  firstImg.remove();
-
-  if (
-    parent &&
-    (parent.tagName === "P" || parent.tagName === "DIV") &&
-    !parent.textContent?.trim() &&
-    !parent.querySelector("img,video,iframe,audio,source")
-  ) {
-    parent.remove();
+  for (const parent of parentsToMaybeRemove) {
+    if (
+      (parent.tagName === "P" || parent.tagName === "DIV") &&
+      !parent.textContent?.trim() &&
+      !parent.querySelector("img,video,iframe,audio,source")
+    ) {
+      parent.remove();
+    }
   }
 
   return doc.body.innerHTML;
@@ -109,6 +120,8 @@ export function resolveLazyLoadedImages(html: string): string {
 }
 
 const DARK_TEXT_LUMINANCE_THRESHOLD = 0.45;
+const LIGHT_BG_LUMINANCE_THRESHOLD = 0.72;
+const CONTENT_TAG_CLASS = "orbit-content-tag";
 
 let colorProbe: HTMLDivElement | null = null;
 
@@ -155,12 +168,81 @@ function parseCssColorToRgb(color: string): [number, number, number] | null {
   ];
 }
 
-function isDarkTextColor(color: string): boolean {
+function colorLuminance(color: string): number | null {
   const rgb = parseCssColorToRgb(color);
-  if (!rgb) return false;
+  if (!rgb) return null;
   const [r, g, b] = rgb;
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance < DARK_TEXT_LUMINANCE_THRESHOLD;
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+}
+
+function isDarkTextColor(color: string): boolean {
+  const luminance = colorLuminance(color);
+  return luminance !== null && luminance < DARK_TEXT_LUMINANCE_THRESHOLD;
+}
+
+function isLightBackgroundColor(color: string): boolean {
+  const luminance = colorLuminance(color);
+  return luminance !== null && luminance > LIGHT_BG_LUMINANCE_THRESHOLD;
+}
+
+function isPillBorderRadius(value: string): boolean {
+  const normalized = value.replace(/\s+/g, "").toLowerCase();
+  if (!normalized) return false;
+  if (normalized.includes("999")) return true;
+  if (normalized === "50%") return true;
+  const match = normalized.match(/^([\d.]+)(px|rem|em)$/);
+  if (!match) return false;
+  const amount = Number.parseFloat(match[1]);
+  const unit = match[2];
+  if (unit === "px") return amount >= 12;
+  return amount >= 0.75;
+}
+
+function isInlineTagPill(el: HTMLElement): boolean {
+  if (el.tagName !== "SPAN") return false;
+
+  const style = el.style;
+  const background = style.backgroundColor?.trim() || style.background?.trim() || "";
+  if (!background || !isLightBackgroundColor(background)) return false;
+
+  const borderRadius = style.borderRadius?.trim() ?? "";
+  if (isPillBorderRadius(borderRadius)) return true;
+
+  const styleAttr = el.getAttribute("style")?.toLowerCase() ?? "";
+  return (
+    styleAttr.includes("border-radius") &&
+    (styleAttr.includes("999") || styleAttr.includes("50%"))
+  );
+}
+
+function normalizeInlineTagPills(root: ParentNode): boolean {
+  let changed = false;
+
+  for (const el of root.querySelectorAll("span[style]")) {
+    const span = el as HTMLElement;
+    if (!isInlineTagPill(span)) continue;
+
+    span.classList.add(CONTENT_TAG_CLASS);
+    span.style.removeProperty("background");
+    span.style.removeProperty("background-color");
+    span.style.removeProperty("color");
+    if (!span.style.cssText.trim()) {
+      span.removeAttribute("style");
+    }
+    changed = true;
+  }
+
+  return changed;
+}
+
+/** Replace plugin inline tag pills with theme-aware classes. */
+export function normalizeContentTagPills(html: string): string {
+  if (!html.trim() || typeof DOMParser === "undefined") {
+    return html;
+  }
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  return normalizeInlineTagPills(doc.body) ? doc.body.innerHTML : html;
 }
 
 function stripDarkInlineTextColors(root: ParentNode): boolean {
@@ -203,7 +285,24 @@ export function prepareArticleHtmlContent(
   runtimeBase: string | null | undefined,
   options?: { darkTheme?: boolean },
 ): string {
-  let result = rewriteHtmlImageUrls(resolveLazyLoadedImages(html), runtimeBase);
+  if (!html.trim() || typeof DOMParser === "undefined") {
+    return html;
+  }
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  let changed = false;
+
+  const rewritten = rewriteHtmlImageUrls(resolveLazyLoadedImages(html), runtimeBase);
+  if (rewritten !== html) {
+    doc.body.innerHTML = rewritten;
+    changed = true;
+  }
+
+  if (extractRycjPlayerScripts(doc.body)) changed = true;
+  if (normalizeInlineTagPills(doc.body)) changed = true;
+  if (normalizeContentSourceButtons(doc.body)) changed = true;
+
+  let result = changed ? doc.body.innerHTML : rewritten;
   if (options?.darkTheme) {
     result = adjustInlineTextColorsForDarkTheme(result);
   }

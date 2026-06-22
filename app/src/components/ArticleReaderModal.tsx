@@ -18,11 +18,21 @@ import {
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
+import {
+  bindArticleContentPlayers,
+  destroyArticleContentPlayers,
+} from "@/lib/articleContentPlayer";
 import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
-import { isVideoArticle } from "@/lib/readerSessionVideos";
+import { ChaptersDrawer } from "@/components/ChaptersDrawer";
+import { ChaptersList } from "@/components/ChaptersList";
+import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
+import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
+import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
+import { usesDedicatedSessionVideoPlayer, promoteArticleForSessionVideo } from "@/lib/readerSessionVideos";
+import { resolveYouTubeVideoId } from "@/lib/youtube";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
 import type { ReaderSessionMode } from "@/lib/readerSessions";
-import type { Article, Plugin, ThemeMode } from "@/types";
+import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
 
 interface ArticleReaderModalProps {
   sessionId: string;
@@ -33,6 +43,8 @@ interface ArticleReaderModalProps {
   hasDetail: boolean;
   activeChannel: string;
   pluginMeta?: Plugin;
+  channelCapabilities: ChannelCapabilities;
+  storedChannel?: string | null;
   mode: ReaderSessionMode;
   autoDockOnDismiss: boolean;
   inVideoWall: boolean;
@@ -50,6 +62,8 @@ export function ArticleReaderModal({
   hasDetail,
   activeChannel,
   pluginMeta,
+  channelCapabilities,
+  storedChannel,
   mode,
   autoDockOnDismiss,
   inVideoWall,
@@ -63,6 +77,18 @@ export function ArticleReaderModal({
   const [article, setArticle] = useState(initialArticle);
   const [loading, setLoading] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
+  const [chaptersDrawerOpen, setChaptersDrawerOpen] = useState(false);
+  const [chaptersParent] = useState<Article | null>(() =>
+    shouldOpenChaptersForArticle(
+      initialArticle,
+      pluginMeta,
+      activeChannel,
+      channelCapabilities,
+      storedChannel,
+    )
+      ? initialArticle
+      : null,
+  );
   const contentRef = useRef<HTMLDivElement>(null);
   const onArticleChangeRef = useRef(onArticleChange);
   onArticleChangeRef.current = onArticleChange;
@@ -78,14 +104,35 @@ export function ArticleReaderModal({
     activeChannel,
     { hasDetail },
   );
+  const hasChaptersMode = Boolean(chaptersParent);
+
+  const chapters = useArticleChapters({
+    parent: chaptersParent,
+    activeChannel,
+    pluginMeta,
+    capabilities: channelCapabilities,
+    storedChannel,
+    enabled: hasChaptersMode,
+    onChapterDetail: next => {
+      setArticle(next);
+      syncArticleToSession(next);
+    },
+  });
 
   useEffect(() => {
+    if (hasChaptersMode) return;
     setArticle(initialArticle);
     setCoverImageFailed(false);
-  }, [initialArticle]);
+    setChaptersDrawerOpen(false);
+  }, [initialArticle, hasChaptersMode]);
 
   useEffect(() => {
     if (!isExpanded) {
+      setLoading(false);
+      return;
+    }
+
+    if (hasChaptersMode) {
       setLoading(false);
       return;
     }
@@ -150,18 +197,22 @@ export function ArticleReaderModal({
     return () => {
       cancelled = true;
     };
-  }, [isExpanded, article, pluginMeta, effectiveHasDetail, channelId, syncArticleToSession]);
+  }, [isExpanded, article.id, pluginMeta, effectiveHasDetail, channelId, syncArticleToSession, hasChaptersMode]);
 
   const isRatingCoverLayout = isRatingPluginArticle(article, pluginMeta);
 
+  const showContentLoading = loading
+    || chapters.detailLoading
+    || (chapters.isActive && chapters.loading);
+
   const showArticleMedia = useMemo(() => {
-    if (isVideoArticle(article)) {
-      return true;
-    }
     if (article.type === "text") {
       return Boolean(article.image?.trim()) && !coverImageFailed;
     }
-    if (article.type === "video" || article.type === "audio") {
+    if (article.type === "video") {
+      return Boolean(resolveYouTubeVideoId(article) || article.videoUrl?.trim());
+    }
+    if (article.type === "audio") {
       return true;
     }
     if (article.type === "image") {
@@ -173,18 +224,18 @@ export function ArticleReaderModal({
     return false;
   }, [article, coverImageFailed]);
 
-  const hasVideoMedia = isVideoArticle(article);
+  const hasSessionVideoMedia = usesDedicatedSessionVideoPlayer(article);
   const { registerMount } = useVideoSessionMountRegistry();
 
   const modalMountRef = useCallback(
     (element: HTMLDivElement | null) => {
-      if (hasVideoMedia) {
+      if (hasSessionVideoMedia) {
         registerMount(sessionId, "modal", element);
         return;
       }
       registerMount(sessionId, "modal", null);
     },
-    [registerMount, sessionId, hasVideoMedia],
+    [registerMount, sessionId, hasSessionVideoMedia],
   );
 
   const displayContent = useMemo(() => {
@@ -193,25 +244,32 @@ export function ArticleReaderModal({
     if (article.type === "text" && article.image) {
       content = dedupeCoverImageFromContent(article.image, content);
     }
-    if (hasVideoMedia) {
+    if (hasSessionVideoMedia) {
       content = stripEmbeddedVideosFromContent(content);
     }
     return prepareArticleHtmlContent(content, runtimeBase, {
       darkTheme: isDarkTheme(theme),
     });
-  }, [article.content, article.image, article.type, runtimeBase, hasVideoMedia, theme]);
+  }, [article.content, article.image, article.type, runtimeBase, hasSessionVideoMedia, theme]);
 
   useEffect(() => {
     if (displayContent) {
       highlightArticleCode(contentRef.current);
       bindArticleContentImages(contentRef.current, runtimeBase);
+      bindArticleContentPlayers(contentRef.current);
     }
+    return () => destroyArticleContentPlayers(contentRef.current);
   }, [displayContent, runtimeBase, theme]);
 
   const handleDock = useCallback(() => {
     snapshotContentVideoProgress(sessionId, contentRef.current);
+    const promoted = promoteArticleForSessionVideo(article, contentRef.current);
+    if (promoted.videoUrl !== article.videoUrl) {
+      setArticle(promoted);
+      syncArticleToSession(promoted);
+    }
     onDock();
-  }, [sessionId, onDock]);
+  }, [sessionId, onDock, article, syncArticleToSession]);
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -225,12 +283,16 @@ export function ArticleReaderModal({
 
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (chaptersDrawerOpen) {
+          setChaptersDrawerOpen(false);
+          return;
+        }
         handleDock();
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [isExpanded, handleDock]);
+  }, [isExpanded, handleDock, chaptersDrawerOpen]);
 
   useEffect(() => {
     if (!isExpanded) return;
@@ -253,6 +315,47 @@ export function ArticleReaderModal({
   const headerButtonClass = isDark
     ? "bg-black/40 hover:bg-black/60 text-white/80"
     : "bg-black/20 hover:bg-black/30 text-neutral-600";
+
+  const showRatingHero = shouldShowArticleRatingHero(article, {
+    isRatingLayout: isRatingCoverLayout,
+    showArticleMedia,
+    coverImageFailed,
+  });
+
+  const toggleChaptersDrawer = () => setChaptersDrawerOpen(open => !open);
+
+  const chaptersOpenButton = chapters.isActive ? (
+    <ChaptersOpenButton
+      theme={theme}
+      open={chaptersDrawerOpen}
+      onClick={toggleChaptersDrawer}
+    />
+  ) : null;
+
+  const chaptersList = chapters.isActive && chaptersParent ? (
+    <ChaptersList
+      theme={theme}
+      variant="sidebar"
+      title={chapters.title}
+      items={chapters.items}
+      loading={chapters.loading}
+      loadingMore={chapters.loadingMore}
+      refreshing={chapters.refreshing}
+      hasMore={chapters.hasMore}
+      canLoadMore={channelCapabilities.canLoadMoreChapters}
+      canRefresh={channelCapabilities.canRefreshChapters || channelCapabilities.hasChapters}
+      parentItem={chaptersParent}
+      activeItemId={chapters.activeChapter?.id ?? article.id}
+      itemLabel={channelCapabilities.chaptersItemLabel}
+      onSelect={chapter => {
+        setChaptersDrawerOpen(false);
+        void chapters.selectChapter(chapter);
+      }}
+      onLoadMore={chapters.loadMore}
+      onRefresh={chapters.refresh}
+      onClearAndRefresh={chapters.clearAndRefresh}
+    />
+  ) : null;
 
   const modal = (
     <div
@@ -303,30 +406,34 @@ export function ArticleReaderModal({
           className="flex-1 min-h-0 overflow-y-auto article-reader px-5 sm:px-8 py-6 sm:py-8"
           style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
         >
-          <div className="space-y-4">
-            <div className={`space-y-2 ${isExpanded ? "pr-20" : "pr-8"}`}>
-              <span
-                className={`inline-block text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md ${
-                  isDark ? "bg-neutral-800 text-neutral-400" : "bg-neutral-100 text-neutral-500"
-                }`}
-              >
-                {article.pluginName}
-              </span>
-              <h2
-                id="article-reader-modal-title"
-                className="article-reader-title font-extrabold tracking-tight leading-tight"
-              >
-                {article.title}
-              </h2>
-              {article.author ? (
-                <p className={`text-xs ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-                  由 {article.author} 撰写
-                </p>
+          <div className="space-y-6">
+            {showRatingHero ? (
+              <div className={isExpanded ? "pr-20" : "pr-8"}>
+                <ArticleRatingHero
+                  article={article}
+                  theme={theme}
+                  runtimeBase={runtimeBase}
+                  trailing={chaptersOpenButton}
+                  onCoverError={() => setCoverImageFailed(true)}
+                />
+              </div>
+            ) : null}
+
+            <div className="space-y-4">
+              {!showRatingHero ? (
+                <div className={`flex items-start gap-3 ${isExpanded ? "pr-20" : "pr-8"}`}>
+                  <h2
+                    id="article-reader-modal-title"
+                    className="article-reader-title font-extrabold tracking-tight leading-tight flex-1 min-w-0"
+                  >
+                    {article.title}
+                  </h2>
+                  {chaptersOpenButton}
+                </div>
               ) : null}
-            </div>
 
             {showArticleMedia
-              && !isRatingCoverLayout
+              && !showRatingHero
               && article.type === "image"
               && article.image?.trim()
               && !article.galleryImages?.length ? (
@@ -337,7 +444,7 @@ export function ArticleReaderModal({
                 className="rounded-xl"
                 onError={() => setCoverImageFailed(true)}
               />
-            ) : showArticleMedia && !isRatingCoverLayout ? (
+            ) : showArticleMedia && !showRatingHero ? (
               <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                 {article.type === "text" && article.image?.trim() ? (
                   <ProxiedImage
@@ -349,7 +456,7 @@ export function ArticleReaderModal({
                   />
                 ) : null}
 
-                {hasVideoMedia ? (
+                {hasSessionVideoMedia ? (
                   <div
                     ref={modalMountRef}
                     className={
@@ -372,16 +479,12 @@ export function ArticleReaderModal({
               </div>
             ) : null}
 
-            {(article.tags ?? []).length > 0 ? (
+            {!showRatingHero && (article.tags ?? []).length > 0 ? (
               <div className="flex flex-wrap gap-2">
                 {(article.tags ?? []).map((tag, index) => (
                   <span
                     key={index}
-                    className={`px-3 py-1 rounded-full text-xs font-medium ${
-                      isDark
-                        ? "bg-neutral-800 text-neutral-400"
-                        : "bg-neutral-100 text-neutral-600"
-                    }`}
+                    className="px-3 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
                   >
                     #{tag}
                   </span>
@@ -389,8 +492,8 @@ export function ArticleReaderModal({
               </div>
             ) : null}
 
-            {loading ? (
-              <div className="mt-2 flex items-center gap-2 text-sm text-neutral-400">
+            {showContentLoading ? (
+              <div className="mt-6 flex items-center gap-2 text-sm text-neutral-400">
                 <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
                 加载正文中…
               </div>
@@ -399,7 +502,7 @@ export function ArticleReaderModal({
                 <div
                   ref={contentRef}
                   data-theme={articleContentTheme(theme)}
-                  className="article-content mt-2"
+                  className="article-content mt-6"
                   dangerouslySetInnerHTML={{ __html: displayContent }}
                 />
                 {article.sourceUrl ? (
@@ -416,11 +519,9 @@ export function ArticleReaderModal({
                 ) : null}
               </>
             ) : (
-              <div className="mt-2 border-t border-dashed dark:border-neutral-800 pt-6 space-y-4">
+              <div className="mt-6 border-t border-dashed dark:border-neutral-800 pt-6 space-y-4">
                 {article.summary?.trim() ? (
-                  <p className={`text-base leading-relaxed italic ${
-                    isDark ? "text-neutral-400" : "text-neutral-600"
-                  }`}>
+                  <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed italic">
                     “ {article.summary} ”
                   </p>
                 ) : null}
@@ -433,11 +534,26 @@ export function ArticleReaderModal({
                   >
                     阅读原文 →
                   </a>
-                ) : null}
+                ) : (
+                  <p className="text-sm text-neutral-400">
+                    （这是一个带有交互式卡片的媒体项目资源，详情请在正文中直接点击交互并体验。）
+                  </p>
+                )}
               </div>
             )}
           </div>
+          </div>
         </div>
+
+        <ChaptersDrawer
+          open={chaptersDrawerOpen}
+          theme={theme}
+          title={chapters.title || "选集"}
+          elevated
+          onClose={() => setChaptersDrawerOpen(false)}
+        >
+          {chaptersList}
+        </ChaptersDrawer>
       </div>
     </div>
   );

@@ -14,8 +14,12 @@ import { RatingFocusView } from "@/components/RatingFocusView";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginChannelBar } from "@/components/PluginChannelBar";
 import { YouTubeEmbed } from "@/components/YouTubeEmbed";
-import { ChaptersSidebar } from "@/components/ChaptersSidebar";
+import { ChaptersDrawer } from "@/components/ChaptersDrawer";
+import { ChaptersList } from "@/components/ChaptersList";
+import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
+import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
+import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import {
@@ -42,24 +46,21 @@ import {
   shouldSkipFeedItemDetailFetch,
 } from "@/lib/browseDynamicFeed";
 import { isImageGalleryPlugin } from "@/lib/imagePlugin";
-import { isVideoPluginChannel, resolveYouTubeVideoId } from "@/lib/youtube";
+import { resolveYouTubeVideoId } from "@/lib/youtube";
 import { isChannelDynamic, isChannelEnabled } from "@/lib/channelStatus";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import {
-  channelHasChapters,
-  fetchRuntimeChapters,
-  runtimeOpenChapterDetail,
-  runtimeOpenChapters,
-  runtimeLoadMoreChapters,
-  runtimeRefreshChapters,
-  runtimeClearRefreshChapters,
   runtimeOpenDetail,
   resolveChannelHasDetail,
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
 import { bindArticleContentImages } from "@/lib/imageProxy";
+import {
+  bindArticleContentPlayers,
+  destroyArticleContentPlayers,
+} from "@/lib/articleContentPlayer";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import {
   persistIgnoredArticleIds,
@@ -105,8 +106,8 @@ import {
 } from "@/lib/splitPaneRatio";
 import {
   hasDockedVideoSessions,
-  isVideoArticle,
-  isVideoReaderSession,
+  isDedicatedVideoReaderSession,
+  promoteArticleForSessionVideo,
 } from "@/lib/readerSessionVideos";
 import { useTitlebarDrag } from "@/hooks/useTitlebarDrag";
 import { useTitlebarEnv } from "@/hooks/useTitlebarEnv";
@@ -199,7 +200,7 @@ export default function App() {
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>(readStoredExperienceMode);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [feedPanelVisible, setFeedPanelVisible] = useState(true);
-  const [chaptersPanelVisible, setChaptersPanelVisible] = useState(true);
+  const [chaptersDrawerOpen, setChaptersDrawerOpen] = useState(false);
   const [activePlugin, setActivePlugin] = useState("all");
   const [activePluginGroupId, setActivePluginGroupId] = useState<string | null>(null);
   const [activeChannel, setActiveChannel] = useState("all");
@@ -334,13 +335,7 @@ export default function App() {
   const selectedItemRef = useRef<Article | null>(null);
   selectedItemRef.current = selectedItem;
   const [chaptersParent, setChaptersParent] = useState<Article | null>(null);
-  const [chaptersItems, setChaptersItems] = useState<Article[]>([]);
-  const [chaptersTitle, setChaptersTitle] = useState("");
-  const [chaptersLoading, setChaptersLoading] = useState(false);
-  const [chaptersLoadingMore, setChaptersLoadingMore] = useState(false);
-  const [chaptersRefreshing, setChaptersRefreshing] = useState(false);
-  const [chaptersHasMore, setChaptersHasMore] = useState(false);
-  const [activeChapterItem, setActiveChapterItem] = useState<Article | null>(null);
+  const [splitDetailArticle, setSplitDetailArticle] = useState<Article | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const articleContentRef = useRef<HTMLDivElement>(null);
   const [runtimeBase, setRuntimeBase] = useState<string | null>(null);
@@ -358,11 +353,6 @@ export default function App() {
 
   useEffect(() => {
     setChaptersParent(null);
-    setChaptersItems([]);
-    setChaptersTitle("");
-    setChaptersHasMore(false);
-    setActiveChapterItem(null);
-    setSplitDetailArticle(null);
   }, [activePlugin, activeChannel]);
 
   const [pluginPreviewMode, setPluginPreviewMode] = useState<PluginPreviewMode>("reader");
@@ -375,7 +365,6 @@ export default function App() {
     DEFAULT_VIDEO_WALL_COLUMN_COUNT,
   );
   const [splitPaneRatio, setSplitPaneRatio] = useState(DEFAULT_SPLIT_PANE_RATIO);
-  const [splitDetailArticle, setSplitDetailArticle] = useState<Article | null>(null);
   const previewModeMenuRef = useRef<HTMLDivElement>(null);
   const [readerSessions, setReaderSessions] = useState<ReaderSession[]>([]);
   const [feedRefreshing, setFeedRefreshing] = useState(false);
@@ -416,7 +405,12 @@ export default function App() {
     if (selectedItem.type === "text") {
       return Boolean(selectedItem.image?.trim()) && !coverImageFailed;
     }
-    if (selectedItem.type === "video" || selectedItem.type === "audio") {
+    if (selectedItem.type === "video") {
+      return Boolean(
+        resolveYouTubeVideoId(selectedItem) || selectedItem.videoUrl?.trim(),
+      );
+    }
+    if (selectedItem.type === "audio") {
       return true;
     }
     if (selectedItem.type === "image") {
@@ -426,7 +420,7 @@ export default function App() {
       return Boolean(selectedItem.image?.trim()) && !coverImageFailed;
     }
     return false;
-  }, [selectedItem, coverImageFailed, pluginById]);
+  }, [selectedItem, coverImageFailed]);
 
   const selectedYouTubeVideoId = useMemo(
     () => (selectedItem ? resolveYouTubeVideoId(selectedItem) : null),
@@ -447,6 +441,8 @@ export default function App() {
   useEffect(() => {
     highlightArticleCode(articleContentRef.current);
     bindArticleContentImages(articleContentRef.current, runtimeBase);
+    bindArticleContentPlayers(articleContentRef.current);
+    return () => destroyArticleContentPlayers(articleContentRef.current);
   }, [runtimeBase, selectedItemDisplayContent, theme]);
 
   const filteredArticles = useMemo(() => {
@@ -468,23 +464,14 @@ export default function App() {
   const isRatingCoverLayout = Boolean(
     selectedItem && isRatingPluginArticle(selectedItem, selectedPluginMeta),
   );
-
-  const relatedRecentVideos = useMemo(() => {
-    if (!selectedItem) return [];
-    if (!isVideoPluginChannel(selectedPluginMeta, selectedItem)) return [];
-
-    return articlesWithBookmarks
-      .filter(
-        item =>
-          item.id !== selectedItem.id &&
-          item.type === "video" &&
-          item.pluginId === selectedItem.pluginId &&
-          (!selectedItem.channelId ||
-            !item.channelId ||
-            item.channelId === selectedItem.channelId),
-      )
-      .slice(0, 5);
-  }, [selectedItem, selectedPluginMeta, articlesWithBookmarks]);
+  const showRatingHero = Boolean(
+    selectedItem
+    && shouldShowArticleRatingHero(selectedItem, {
+      isRatingLayout: isRatingCoverLayout,
+      showArticleMedia,
+      coverImageFailed,
+    }),
+  );
 
   const activePluginChannels = useMemo(() => {
     if (activePlugin === "all") return [];
@@ -542,7 +529,6 @@ export default function App() {
   }, [activeChannel, activePluginChannels, activePlugin, resolvePluginChannel]);
 
   const showPluginChannelBar = activePluginChannels.length > 1;
-  const showChaptersSidebar = chaptersParent != null;
   const isReaderPreviewMode = pluginPreviewMode === "reader";
   const isWaterfallPreviewMode = pluginPreviewMode === "waterfall";
   const isGridPreviewMode = pluginPreviewMode === "grid";
@@ -554,17 +540,33 @@ export default function App() {
   const isWallVideoActive = isWallVideoPreviewMode(pluginPreviewMode);
   const showVideoWallPreviewOption = hasDockedVideoSessions(readerSessions);
   const videoWallSessions = useMemo(
-    () => readerSessions.filter(isVideoReaderSession),
+    () => readerSessions.filter(isDedicatedVideoReaderSession),
     [readerSessions],
   );
   const splitWallSessions = useMemo(
     () => splitPanelVideoSessions(readerSessions),
     [readerSessions],
   );
-  const splitDetailVideoArticle = useMemo(
-    () => (splitDetailArticle && isVideoArticle(splitDetailArticle) ? splitDetailArticle : null),
-    [splitDetailArticle],
-  );
+  const splitDetailVideoArticle = useMemo(() => null, []);
+
+  useEffect(() => {
+    if (!isSplitDetailMode || activePlugin === "all") return;
+
+    const pluginArticles = filteredArticles.filter(item => item.pluginId === activePlugin);
+    if (pluginArticles.length === 0) {
+      setSplitDetailArticle(null);
+      return;
+    }
+
+    setSplitDetailArticle(prev => {
+      if (prev) {
+        const listItem = pluginArticles.find(article => article.id === prev.id);
+        if (listItem) return listItem;
+      }
+      return pluginArticles[0];
+    });
+  }, [isSplitDetailMode, activePlugin, activeChannel, filteredArticles]);
+
   const hideFeedPanel = !isReaderPreviewMode || !feedPanelVisible;
   const isPluginFocusMode = !isReaderPreviewMode && activePlugin !== "all";
   const showFocusModeSearch = isPluginFocusMode && !isBrowseDynamicPluginActive;
@@ -602,81 +604,61 @@ export default function App() {
       });
   };
 
+  const chaptersPluginMeta = chaptersParent
+    ? pluginById.get(chaptersParent.pluginId)
+    : undefined;
+  const chaptersStoredChannel = chaptersParent
+    ? getStoredPluginChannel(chaptersParent.pluginId)
+    : undefined;
+
+  const chapters = useArticleChapters({
+    parent: chaptersParent,
+    activeChannel,
+    pluginMeta: chaptersPluginMeta,
+    capabilities: channelCapabilities,
+    storedChannel: chaptersStoredChannel,
+    enabled: Boolean(chaptersParent),
+    onChapterDetail: article => {
+      setSelectedItem(article);
+    },
+  });
+
+  const showContentLoading = contentLoading
+    || chapters.detailLoading
+    || (chapters.isActive && chapters.loading);
+
+  const toggleChaptersDrawer = useCallback(() => {
+    setChaptersDrawerOpen(open => !open);
+  }, []);
+
+  const chaptersOpenButton = chapters.isActive ? (
+    <ChaptersOpenButton
+      theme={theme}
+      open={chaptersDrawerOpen}
+      onClick={toggleChaptersDrawer}
+    />
+  ) : null;
+
   const handleItemSelect = useCallback((item: Article) => {
     void markArticleRead(item);
     setAiSummary(null);
     setIsPlayingAudio(false);
     setActiveImageIndex(0);
-    setActiveChapterItem(null);
 
     const pluginMeta = pluginById.get(item.pluginId);
-    const channelId = resolveArticleDetailChannel(
-      item,
-      pluginMeta,
-      activeChannel,
-      getStoredPluginChannel(item.pluginId),
-    );
 
     if (
-      shouldUseRuntimeV2(item.pluginId, pluginMeta)
-      && (channelCapabilities.hasChapters || channelHasChapters(pluginMeta, channelId))
-      && channelId !== "all"
+      shouldOpenChaptersForArticle(
+        item,
+        pluginMeta,
+        activeChannel,
+        channelCapabilities,
+        getStoredPluginChannel(item.pluginId),
+      )
     ) {
       setChaptersParent(item);
-      setChaptersItems([]);
-      setChaptersTitle("");
-      setChaptersHasMore(false);
-      setChaptersLoading(true);
-      setActiveChapterItem(null);
+      setChaptersDrawerOpen(false);
       setSelectedItem(null);
-      const loadChapters = async () => {
-        if (channelCapabilities.canRefreshChapters) {
-          try {
-            const cached = await fetchRuntimeChapters({
-              pluginId: item.pluginId,
-              channelId,
-              parentId: item.id,
-            });
-            if ((cached.items ?? []).length > 0) {
-              return cached;
-            }
-          } catch (err) {
-            console.error("load cached chapters failed", err);
-          }
-        }
-        return runtimeOpenChapters(item.pluginId, channelId, item.id);
-      };
-      void loadChapters()
-        .then(result => {
-          const items = result.items ?? [];
-          setChaptersItems(items);
-          setChaptersHasMore(Boolean(result.hasMore));
-          setChaptersTitle(result.title ?? channelCapabilities.chaptersLabel ?? "目录");
-          const first = items[0];
-          if (!first) {
-            setSelectedItem(null);
-            return;
-          }
-          setActiveChapterItem(first);
-          setSelectedItem(first);
-          setContentLoading(true);
-          return runtimeOpenChapterDetail(
-            item.pluginId,
-            channelId,
-            item.id,
-            first.id,
-          );
-        })
-        .then(result => {
-          if (result?.item) {
-            setSelectedItem(result.item);
-          }
-        })
-        .catch(err => console.error("open chapters failed", err))
-        .finally(() => {
-          setChaptersLoading(false);
-          setContentLoading(false);
-        });
       return;
     }
 
@@ -688,9 +670,7 @@ export default function App() {
     );
   }, [
     activeChannel,
-    channelCapabilities.chaptersLabel,
-    channelCapabilities.canRefreshChapters,
-    channelCapabilities.hasChapters,
+    channelCapabilities,
     markArticleRead,
     pluginById,
   ]);
@@ -719,97 +699,6 @@ export default function App() {
       handleItemSelect(first);
     }
   }, [visibleArticles, chaptersParent, handleItemSelect]);
-
-  const handleChapterSelect = (chapter: Article) => {
-    if (!chaptersParent) return;
-    const channelId = chaptersParent.channelId ?? activeChannel;
-    setActiveChapterItem(chapter);
-    setSelectedItem(chapter);
-    setContentLoading(true);
-    void runtimeOpenChapterDetail(
-      chaptersParent.pluginId,
-      channelId,
-      chaptersParent.id,
-      chapter.id,
-    )
-      .then(result => {
-        if (result.item) {
-          setSelectedItem(result.item);
-        }
-      })
-      .catch(err => console.error("open chapter detail failed", err))
-      .finally(() => setContentLoading(false));
-  };
-
-  const handleChaptersLoadMore = () => {
-    if (!chaptersParent || chaptersLoadingMore || !chaptersHasMore) return;
-    const channelId = chaptersParent.channelId ?? activeChannel;
-    setChaptersLoadingMore(true);
-    void runtimeLoadMoreChapters(chaptersParent.pluginId, channelId, chaptersParent.id)
-      .then(result => {
-        const items = result.items ?? [];
-        setChaptersItems(prev => [...prev, ...items]);
-        setChaptersHasMore(Boolean(result.hasMore));
-        if (result.title) {
-          setChaptersTitle(result.title);
-        }
-      })
-      .catch(err => console.error("load more chapters failed", err))
-      .finally(() => setChaptersLoadingMore(false));
-  };
-
-  const applyChaptersRefreshResult = (result: { items?: Article[]; hasMore?: boolean; title?: string }) => {
-    const items = result.items ?? [];
-    setChaptersItems(items);
-    setChaptersHasMore(Boolean(result.hasMore));
-    if (result.title) {
-      setChaptersTitle(result.title);
-    }
-    const first = items[0];
-    if (!first) {
-      setActiveChapterItem(null);
-      setSelectedItem(null);
-      return;
-    }
-    setActiveChapterItem(first);
-    setSelectedItem(first);
-    setContentLoading(true);
-    const channelId = chaptersParent?.channelId ?? activeChannel;
-    if (!chaptersParent) return;
-    void runtimeOpenChapterDetail(
-      chaptersParent.pluginId,
-      channelId,
-      chaptersParent.id,
-      first.id,
-    )
-      .then(detail => {
-        if (detail.item) {
-          setSelectedItem(detail.item);
-        }
-      })
-      .catch(err => console.error("open chapter detail failed", err))
-      .finally(() => setContentLoading(false));
-  };
-
-  const handleChaptersRefresh = () => {
-    if (!chaptersParent || chaptersRefreshing) return;
-    const channelId = chaptersParent.channelId ?? activeChannel;
-    setChaptersRefreshing(true);
-    void runtimeRefreshChapters(chaptersParent.pluginId, channelId, chaptersParent.id)
-      .then(applyChaptersRefreshResult)
-      .catch(err => console.error("refresh chapters failed", err))
-      .finally(() => setChaptersRefreshing(false));
-  };
-
-  const handleChaptersClearAndRefresh = () => {
-    if (!chaptersParent || chaptersRefreshing) return;
-    const channelId = chaptersParent.channelId ?? activeChannel;
-    setChaptersRefreshing(true);
-    void runtimeClearRefreshChapters(chaptersParent.pluginId, channelId, chaptersParent.id)
-      .then(applyChaptersRefreshResult)
-      .catch(err => console.error("clear refresh chapters failed", err))
-      .finally(() => setChaptersRefreshing(false));
-  };
 
   useEffect(() => {
     if (readerPanelRef.current) {
@@ -848,7 +737,7 @@ export default function App() {
     if (
       shouldUseRuntimeV2(selectedItem.pluginId, pluginMeta)
       && channelId !== "all"
-      && !chaptersParent
+      && !chapters.isActive
       && itemHasDetail
     ) {
       let cancelled = false;
@@ -871,7 +760,7 @@ export default function App() {
       };
     }
 
-    if (chaptersParent && activeChapterItem) {
+    if (chapters.isActive) {
       return;
     }
 
@@ -908,7 +797,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedItem?.id, pluginById, activeChannel, channelCapabilities, chaptersParent, activeChapterItem]);
+  }, [selectedItem?.id, pluginById, activeChannel, channelCapabilities, chapters.isActive]);
 
   const handleBookmarkToggle = (id: string) => {
     setBookmarkedIds(prev => {
@@ -1201,9 +1090,18 @@ export default function App() {
           if (mode === "splitDetail") {
             return { ...session, mode: "docked", autoDockOnDismiss: true };
           }
-          return isVideoReaderSession(session)
-            ? { ...session, mode: "docked", autoDockOnDismiss: true }
-            : session;
+          const promotedArticle = promoteArticleForSessionVideo(session.article);
+          const videoSession = isDedicatedVideoReaderSession({
+            ...session,
+            article: promotedArticle,
+          });
+          if (!videoSession) return session;
+          return {
+            ...session,
+            article: promotedArticle,
+            mode: "docked",
+            autoDockOnDismiss: true,
+          };
         }),
       );
     }
@@ -1335,25 +1233,6 @@ export default function App() {
               {feedPanelVisible ? "隐藏左侧列表" : "显示左侧列表"}
             </span>
           </button>
-
-          {showChaptersSidebar ? (
-            <button
-              type="button"
-              onClick={() => setChaptersPanelVisible(v => !v)}
-              className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-all ${
-                chaptersPanelVisible
-                  ? "bg-transparent border-neutral-200 hover:bg-neutral-50 dark:border-neutral-700 dark:hover:bg-neutral-800"
-                  : "bg-indigo-50 border-indigo-200 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-800 dark:text-indigo-400"
-              }`}
-              title={chaptersPanelVisible ? "隐藏右侧章节目录" : "显示右侧章节目录"}
-            >
-              <Icon name={chaptersPanelVisible ? "collapse" : "expand"} className="w-3.5 h-3.5 scale-x-[-1]" />
-              <span className="hidden sm:inline">
-                {chaptersPanelVisible ? "隐藏右侧目录" : "显示右侧目录"}
-              </span>
-            </button>
-          ) : null}
-
 
           {experienceMode === "full" ? (
             <div className="relative shrink-0" aria-label="体验模式">
@@ -1998,7 +1877,7 @@ export default function App() {
               } ${isDarkTheme(theme) ? "bg-transparent" : "bg-[#fafafa]"}`}
             >
             
-            {isPluginFocusMode || selectedItem ? (
+            {isPluginFocusMode || selectedItem || chapters.isActive ? (
               <div className={
                 isSplitPaneLayout
                   ? "flex h-full min-h-0 w-full flex-col px-6"
@@ -2399,6 +2278,8 @@ export default function App() {
                       hasDetail={activeChannelHasDetail}
                       activeChannel={activeChannel}
                       pluginMeta={activePluginMeta}
+                      channelCapabilities={channelCapabilities}
+                      storedChannel={getStoredPluginChannel(activePlugin)}
                       loading={feedLoading}
                       loadingMore={feedLoadingMore}
                       searching={feedSearching}
@@ -2463,7 +2344,21 @@ export default function App() {
                     onItemSelect={openReaderDetailModal}
                     scrollRootRef={readerPanelRef}
                   />
-                ) : selectedItem ? (
+                ) : (selectedItem || chapters.isActive) ? (
+                <div className="flex min-h-0 w-full flex-col">
+                {showRatingHero && selectedItem ? (
+                  <div className="shrink-0 w-full mb-4">
+                    <ArticleRatingHero
+                      article={selectedItem}
+                      theme={theme}
+                      runtimeBase={runtimeBase}
+                      trailing={chaptersOpenButton}
+                      onCoverError={() => setCoverImageFailed(true)}
+                    />
+                  </div>
+                ) : null}
+                <div className="flex-1 min-h-0 w-full">
+                {selectedItem ? (
                 <div
                   className="article-reader space-y-6"
                   style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
@@ -2486,13 +2381,18 @@ export default function App() {
 
                 {/* Article Header (Title, Subinfo) */}
                 <div className="space-y-4">
-                  <h1 className="article-reader-title font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight">
-                    {selectedItem.title}
-                  </h1>
+                  {!showRatingHero ? (
+                  <div className="flex items-start gap-3">
+                    <h1 className="article-reader-title font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight flex-1 min-w-0">
+                      {selectedItem.title}
+                    </h1>
+                    {chaptersOpenButton}
+                  </div>
+                  ) : null}
 
                   {/* Dynamic Interactive Media Section (Based on Resource Type) */}
                   {showArticleMedia
-                    && !isRatingCoverLayout
+                    && !showRatingHero
                     && selectedItem.type === "image"
                     && selectedItem.image?.trim()
                     && !selectedItem.galleryImages?.length ? (
@@ -2502,7 +2402,7 @@ export default function App() {
                       alt={selectedItem.title}
                       onError={() => setCoverImageFailed(true)}
                     />
-                  ) : showArticleMedia && !isRatingCoverLayout ? (
+                  ) : showArticleMedia && !showRatingHero ? (
                   <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                     
                     {/* Type 1: Standard Article Main Image */}
@@ -2530,14 +2430,6 @@ export default function App() {
                             src={selectedItem.videoUrl}
                             className="w-full h-full object-cover"
                             controls
-                            poster={selectedItem.image}
-                          />
-                        ) : selectedItem.image ? (
-                          <ProxiedImage
-                            runtimeBase={runtimeBase}
-                            src={selectedItem.image}
-                            alt={selectedItem.title}
-                            className="w-full h-full object-cover opacity-80"
                           />
                         ) : null}
                         <div className="absolute top-4 left-4 bg-black/60 px-3 py-1 rounded-full text-xs flex items-center gap-1.5 backdrop-blur-md pointer-events-none">
@@ -2653,6 +2545,7 @@ export default function App() {
                 </div>
 
                 {/* Tags Section */}
+                {!showRatingHero ? (
                 <div className="flex flex-wrap gap-2">
                   {(selectedItem.tags ?? []).map((tag, idx) => (
                     <span 
@@ -2663,9 +2556,10 @@ export default function App() {
                     </span>
                   ))}
                 </div>
+                ) : null}
 
                 {/* Content body */}
-                {contentLoading ? (
+                {showContentLoading ? (
                   <div className="mt-6 flex items-center gap-2 text-sm text-neutral-400">
                     <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
                     加载正文中…
@@ -2715,67 +2609,43 @@ export default function App() {
                   </div>
                 )}
 
-                {relatedRecentVideos.length > 0 && (
-                  <section className="mt-10 pt-8 border-t border-neutral-100 dark:border-neutral-800">
-                    <div className="flex items-center justify-between mb-4">
-                      <h2 className="text-sm font-bold text-neutral-800 dark:text-neutral-200">
-                        更多视频
-                      </h2>
-                      <span className="text-[11px] text-neutral-400">
-                        最近 {relatedRecentVideos.length} 条
-                      </span>
-                    </div>
-                    <div className="space-y-2.5">
-                      {relatedRecentVideos.map(item => (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => handleItemSelect(item)}
-                          className={`w-full flex gap-3 p-2.5 rounded-xl text-left transition-all border ${
-                            isDarkTheme(theme)
-                              ? "border-neutral-800 hover:bg-neutral-900"
-                              : "border-neutral-100 hover:bg-white hover:shadow-sm"
-                          }`}
-                        >
-                          <div className="relative w-28 sm:w-32 aspect-video rounded-lg overflow-hidden shrink-0 bg-neutral-100 dark:bg-neutral-800">
-                            {item.image?.trim() ? (
-                              <ProxiedImage
-                                runtimeBase={runtimeBase}
-                                src={item.image}
-                                alt=""
-                                className="w-full h-full object-cover"
-                              />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-neutral-400">
-                                <Icon name="video" className="w-5 h-5" />
-                              </div>
-                            )}
-                            <div className="absolute inset-0 bg-black/20 flex items-center justify-center">
-                              <Icon name="play" className="w-5 h-5 text-white drop-shadow" />
-                            </div>
-                          </div>
-                          <div className="flex-1 min-w-0 py-0.5">
-                            <h3 className="text-sm font-semibold text-neutral-800 dark:text-neutral-200 line-clamp-2 leading-snug">
-                              {item.title}
-                            </h3>
-                            <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-neutral-400">
-                              <span>{item.author}</span>
-                              <span>•</span>
-                              <span>{item.time}</span>
-                              {item.reads ? (
-                                <>
-                                  <span>•</span>
-                                  <span>{item.reads}</span>
-                                </>
-                              ) : null}
-                            </div>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </section>
-                )}
+                </div>
+                ) : chapters.loading ? (
+                  <p className="text-sm text-neutral-400 text-center py-12">正在加载目录…</p>
+                ) : null}
+                </div>
 
+                <ChaptersDrawer
+                  open={chaptersDrawerOpen}
+                  theme={theme}
+                  title={chapters.title || "选集"}
+                  onClose={() => setChaptersDrawerOpen(false)}
+                >
+                  {chapters.isActive && chaptersParent ? (
+                    <ChaptersList
+                      theme={theme}
+                      variant="sidebar"
+                      title={chapters.title}
+                      items={chapters.items}
+                      loading={chapters.loading}
+                      loadingMore={chapters.loadingMore}
+                      refreshing={chapters.refreshing}
+                      hasMore={chapters.hasMore}
+                      canLoadMore={channelCapabilities.canLoadMoreChapters}
+                      canRefresh={channelCapabilities.canRefreshChapters || channelCapabilities.hasChapters}
+                      parentItem={chaptersParent}
+                      activeItemId={chapters.activeChapter?.id ?? selectedItem?.id}
+                      itemLabel={channelCapabilities.chaptersItemLabel}
+                      onSelect={chapter => {
+                        setChaptersDrawerOpen(false);
+                        void chapters.selectChapter(chapter);
+                      }}
+                      onLoadMore={chapters.loadMore}
+                      onRefresh={chapters.refresh}
+                      onClearAndRefresh={chapters.clearAndRefresh}
+                    />
+                  ) : null}
+                </ChaptersDrawer>
                 </div>
                 ) : null}
               </div>
@@ -2790,33 +2660,6 @@ export default function App() {
             )}
 
             </div>
-
-            {showChaptersSidebar && chaptersParent && chaptersPanelVisible ? (
-              <aside className={`w-full md:w-80 lg:w-96 h-full flex flex-col border-l shrink-0 transition-all duration-300 ${
-                isDarkTheme(theme)
-                  ? "bg-transparent border-[var(--orbit-border)]"
-                  : "bg-white border-neutral-100"
-              }`}>
-                <ChaptersSidebar
-                  theme={theme}
-                  title={chaptersTitle}
-                  items={chaptersItems}
-                  loading={chaptersLoading}
-                  loadingMore={chaptersLoadingMore}
-                  refreshing={chaptersRefreshing}
-                  hasMore={chaptersHasMore}
-                  canLoadMore={channelCapabilities.canLoadMoreChapters}
-                  canRefresh={channelCapabilities.canRefreshChapters || channelCapabilities.hasChapters}
-                  parentItem={chaptersParent}
-                  activeItemId={activeChapterItem?.id ?? selectedItem?.id}
-                  itemLabel={channelCapabilities.chaptersItemLabel}
-                  onSelect={handleChapterSelect}
-                  onLoadMore={handleChaptersLoadMore}
-                  onRefresh={handleChaptersRefresh}
-                  onClearAndRefresh={handleChaptersClearAndRefresh}
-                />
-              </aside>
-            ) : null}
           </section>
             </>
           )}
@@ -2834,7 +2677,7 @@ export default function App() {
         />
       ) : null}
 
-      {readerSessions.filter(isVideoReaderSession).map(session => (
+      {readerSessions.filter(isDedicatedVideoReaderSession).map(session => (
         <SessionVideoSurface
           key={session.id}
           sessionId={session.id}
@@ -2855,6 +2698,8 @@ export default function App() {
           hasDetail={session.hasDetail}
           activeChannel={session.activeChannel}
           pluginMeta={pluginById.get(session.article.pluginId)}
+          channelCapabilities={channelCapabilities}
+          storedChannel={getStoredPluginChannel(session.article.pluginId)}
           mode={session.mode}
           autoDockOnDismiss={session.autoDockOnDismiss}
           inVideoWall={sessionUsesWallMount(session, pluginPreviewMode)}
@@ -2869,7 +2714,7 @@ export default function App() {
         runtimeBase={runtimeBase}
         sessions={
           isWallVideoActive
-            ? readerSessions.filter(session => !isVideoReaderSession(session))
+            ? readerSessions.filter(session => !isDedicatedVideoReaderSession(session))
             : readerSessions
         }
         onExpand={expandReaderSession}

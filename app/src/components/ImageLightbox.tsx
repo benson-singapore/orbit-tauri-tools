@@ -115,8 +115,8 @@ export function ImageLightbox({
     >
       <div className="flex items-center justify-between px-4 py-3 shrink-0">
         <div className="min-w-0 flex-1 pr-4">
-          <div className="flex items-center gap-2 min-w-0">
-            <p className="text-sm font-medium text-white truncate min-w-0 flex-1">
+          <div className="flex items-center gap-2 min-w-0 overflow-hidden">
+            <p className="text-sm font-medium text-white truncate min-w-0">
               {current.title}
             </p>
             <button

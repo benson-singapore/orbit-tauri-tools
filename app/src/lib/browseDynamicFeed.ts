@@ -129,7 +129,7 @@ export function resolveArticleHasDetail(
 /** 列表记录即可作为详情展示，跳过 detail 请求 */
 export function shouldSkipFeedItemDetailFetch(
   article: Pick<Article, "pluginId" | "channelId" | "content">,
-  plugin?: Plugin | null,
+  _plugin?: Plugin | null,
   hasDetail = false,
 ): boolean {
   // 已有详情正文时直接展示；runtime open-detail 也会短路返回
