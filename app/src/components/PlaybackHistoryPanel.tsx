@@ -40,7 +40,10 @@ export function PlaybackHistoryPanel({
         limit: config.limit,
         channelId,
       });
-      setItems(result.items ?? []);
+      const sorted = [...(result.items ?? [])].sort(
+        (a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0),
+      );
+      setItems(sorted);
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {

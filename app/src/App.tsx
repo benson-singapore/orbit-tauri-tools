@@ -66,6 +66,9 @@ import {
 } from "@/lib/articleContentPlayer";
 import {
   applyPlaybackResume,
+  collectArticleScrollProgress,
+  collectMangaPageProgress,
+  hasMeaningfulProgress,
   playbackRecordToResumeIntent,
   resolveParentArticleForPlayback,
   seedPlaybackResumeSnapshot,
@@ -135,6 +138,11 @@ import type {
 } from "@/types";
 import type { PluginPreviewMode } from "@/lib/pluginPreviewMode";
 import {
+  getStoredGridDetailViewMode,
+  persistGridDetailViewMode,
+  type GridDetailViewMode,
+} from "@/lib/gridDetailViewMode";
+import {
   DEFAULT_GRID_COLUMN_COUNT,
   getStoredGridColumnCount,
   persistGridColumnCount,
@@ -148,6 +156,7 @@ import {
 } from "@/lib/gridCoverAspectRatio";
 import { GridColumnSwitcher } from "@/components/GridColumnSwitcher";
 import { GridCoverAspectSwitcher } from "@/components/GridCoverAspectSwitcher";
+import { GridDetailModeSwitcher } from "@/components/GridDetailModeSwitcher";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import {
   applyThemeMode,
@@ -348,6 +357,8 @@ export default function App() {
   const selectedItemRef = useRef<Article | null>(null);
   selectedItemRef.current = selectedItem;
   const [chaptersParent, setChaptersParent] = useState<Article | null>(null);
+  const [chaptersOpenToken, setChaptersOpenToken] = useState(0);
+  const chaptersParentRef = useRef<Article | null>(null);
   const [splitDetailArticle, setSplitDetailArticle] = useState<Article | null>(null);
   const [contentLoading, setContentLoading] = useState(false);
   const articleContentRef = useRef<HTMLDivElement>(null);
@@ -375,6 +386,8 @@ export default function App() {
   const [gridCoverAspectRatio, setGridCoverAspectRatio] = useState<GridCoverAspectRatio>(
     DEFAULT_GRID_COVER_ASPECT_RATIO,
   );
+  const [gridDetailViewMode, setGridDetailViewMode] = useState<GridDetailViewMode>("modal");
+  const [gridPageDetailOpen, setGridPageDetailOpen] = useState(false);
   const [videoWallColumnCount, setVideoWallColumnCount] = useState<GridColumnCount>(
     DEFAULT_VIDEO_WALL_COLUMN_COUNT,
   );
@@ -454,6 +467,11 @@ export default function App() {
       darkTheme: isDarkTheme(theme),
     });
   }, [runtimeBase, selectedItem?.content, selectedItem?.image, selectedItem?.type, theme]);
+
+  const isComicReaderContent = useMemo(
+    () => selectedItemDisplayContent.includes("comic-reader"),
+    [selectedItemDisplayContent],
+  );
 
   const filteredArticles = useMemo(() => {
     return visibleArticles.filter(item => {
@@ -547,6 +565,8 @@ export default function App() {
   const isSplitPreviewMode = isSplitBroadcastMode || isSplitDetailMode;
   const isSplitPaneLayout = isSplitPreviewMode && activePlugin !== "all";
   const isVideoWallPreviewMode = pluginPreviewMode === "videoWall";
+  const isGridPageMode = isGridPreviewMode && gridDetailViewMode === "page";
+  const isPageDetailView = isGridPageMode && gridPageDetailOpen;
   const isWallVideoActive = isWallVideoPreviewMode(pluginPreviewMode);
   const showVideoWallPreviewOption = hasDockedVideoSessions(readerSessions);
   const videoWallSessions = useMemo(
@@ -624,6 +644,8 @@ export default function App() {
     ? getStoredPluginChannel(chaptersParent.pluginId)
     : undefined;
 
+  chaptersParentRef.current = chaptersParent;
+
   const chapters = useArticleChapters({
     parent: chaptersParent,
     activeChannel,
@@ -632,6 +654,7 @@ export default function App() {
     storedChannel: chaptersStoredChannel,
     enabled: Boolean(chaptersParent),
     initialChapterId: detailResumeIntent?.chapterId,
+    openToken: chaptersOpenToken,
     onChapterDetail: article => {
       setSelectedItem(article);
     },
@@ -641,20 +664,26 @@ export default function App() {
   });
 
   const inlinePlaybackArticle = selectedItem ?? chaptersParent;
-  const inlineSessionId = inlinePlaybackArticle
-    ? `inline:${inlinePlaybackArticle.pluginId}:${inlinePlaybackArticle.id}`
+  const inlinePlaybackPluginMeta = chaptersParent
+    ? chaptersPluginMeta
+    : selectedPluginMeta ?? activePluginMeta;
+  const isInlinePlaybackEnabled = Boolean(
+    selectedItem
+    && !isPluginFocusMode
+    && (isReaderPreviewMode || isPageDetailView || isSplitDetailMode),
+  );
+  const inlineSessionId = selectedItem
+    ? `inline:${selectedItem.pluginId}:${chaptersParent?.id ?? selectedItem.id}`
     : undefined;
   usePlaybackProgress({
-    pluginMeta: selectedPluginMeta,
+    pluginMeta: inlinePlaybackPluginMeta,
     channelId: activeChannel,
     channelCapabilities,
     parentArticle: chaptersParent,
-    article: inlinePlaybackArticle,
+    article: selectedItem,
     sessionId: inlineSessionId,
     contentRef: articleContentRef,
-    enabled: Boolean(
-      inlinePlaybackArticle && isReaderPreviewMode && !isPluginFocusMode,
-    ),
+    enabled: isInlinePlaybackEnabled,
   });
 
   const showContentLoading = contentLoading
@@ -689,12 +718,18 @@ export default function App() {
       );
       const mode = detailResumeIntent.mode
         ?? resolveEffectivePlayback(inlineDetailPluginMeta, activeChannel, channelCapabilities).mode;
-      window.requestAnimationFrame(() => {
+      const applyResume = () => {
         applyPlaybackResume(mode, detailResumeIntent.progress, {
           sessionId: inlineSessionId,
           contentRoot: articleContentRef.current,
+          scrollRoot: readerPanelRef.current,
         });
-      });
+      };
+      window.requestAnimationFrame(applyResume);
+      if (mode === "manga") {
+        window.setTimeout(applyResume, 400);
+        window.setTimeout(applyResume, 1200);
+      }
     }
 
     return () => destroyArticleContentPlayers(articleContentRef.current);
@@ -714,7 +749,7 @@ export default function App() {
     setChaptersDrawerOpen(open => !open);
   }, []);
 
-  const chaptersOpenButton = chapters.isActive ? (
+  const chaptersOpenButton = chapters.isActive && isPageDetailView && !isSplitDetailMode ? (
     <ChaptersOpenButton
       theme={theme}
       open={chaptersDrawerOpen}
@@ -722,12 +757,145 @@ export default function App() {
     />
   ) : null;
 
-  const handleItemSelect = useCallback((item: Article) => {
+  const chapterNeighbors = useMemo(() => {
+    if (!chapters.isActive) {
+      return { prev: null as Article | null, next: null as Article | null, activeIndex: null as number | null };
+    }
+    const activeId = chapters.activeChapter?.id ?? selectedItem?.id ?? null;
+    if (!activeId) {
+      return { prev: null, next: null, activeIndex: null };
+    }
+    const idx = chapters.items.findIndex(item => item.id === activeId);
+    if (idx < 0) {
+      return { prev: null, next: null, activeIndex: null as number | null };
+    }
+    return {
+      prev: idx > 0 ? chapters.items[idx - 1] : null,
+      next: idx < chapters.items.length - 1 ? chapters.items[idx + 1] : null,
+      activeIndex: idx,
+    };
+  }, [chapters.isActive, chapters.activeChapter?.id, chapters.items, selectedItem?.id]);
+
+  const pageDetailSubtitle = useMemo(() => {
+    if (!isPageDetailView && !(chapters.isActive && chaptersParent)) return null;
+
+    const comicName = chaptersParent?.title ?? selectedItem?.title;
+    if (!comicName) return null;
+
+    if (chapters.isActive && chaptersParent && chapterNeighbors.activeIndex != null) {
+      const label = channelCapabilities.chaptersItemLabel ?? "话";
+      return `${comicName} · 第${chapterNeighbors.activeIndex + 1}${label}`;
+    }
+
+    return comicName;
+  }, [
+    isPageDetailView,
+    chapters.isActive,
+    chaptersParent,
+    chapterNeighbors.activeIndex,
+    channelCapabilities.chaptersItemLabel,
+    selectedItem?.title,
+  ]);
+
+  const goToChapter = useCallback((chapter: Article) => {
+    readerPanelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    void chapters.selectChapter(chapter);
+  }, [chapters.selectChapter]);
+
+  const chapterNavButtonClass = isDarkTheme(theme)
+    ? "border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+    : "border-neutral-200 text-neutral-600 hover:bg-neutral-50";
+
+  const chapterToolbarNav = chapters.isActive && (chapterNeighbors.prev || chapterNeighbors.next) ? (
+    <>
+      {chapterNeighbors.prev ? (
+        <button
+          type="button"
+          onClick={() => goToChapter(chapterNeighbors.prev!)}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors align-middle ${chapterNavButtonClass}`}
+          title={`上一话：${chapterNeighbors.prev.title}`}
+        >
+          <Icon name="arrow-left" className="w-3.5 h-3.5" />
+          <span>上一话</span>
+        </button>
+      ) : null}
+      {chapterNeighbors.next ? (
+        <button
+          type="button"
+          onClick={() => goToChapter(chapterNeighbors.next!)}
+          className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors align-middle ${chapterNavButtonClass}`}
+          title={`下一话：${chapterNeighbors.next.title}`}
+        >
+          <span>下一话</span>
+          <Icon name="arrow-left" className="w-3.5 h-3.5 rotate-180" />
+        </button>
+      ) : null}
+    </>
+  ) : null;
+
+  const closePageDetail = useCallback(() => {
+    setGridPageDetailOpen(false);
+    setSelectedItem(null);
+    detailResumeAppliedRef.current = false;
+  }, []);
+
+  const pageDetailBackButton = isPageDetailView ? (
+    <button
+      type="button"
+      onClick={closePageDetail}
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors align-middle ${chapterNavButtonClass}`}
+      title="返回列表"
+      aria-label="返回列表"
+    >
+      <Icon name="arrow-left" className="w-3.5 h-3.5" />
+      <span>返回</span>
+    </button>
+  ) : null;
+
+  const chapterPager = useMemo(() => {
+    if (!chapters.isActive || !isComicReaderContent) return null;
+    const { prev, next } = chapterNeighbors;
+    if (!prev && !next) return null;
+
+    return (
+      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
+        <div className="flex items-center justify-between gap-3">
+          {prev ? (
+            <button
+              type="button"
+              onClick={() => goToChapter(prev)}
+              className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              title={`上一话：${prev.title}`}
+            >
+              上一话
+            </button>
+          ) : (
+            <span />
+          )}
+
+          {next ? (
+            <button
+              type="button"
+              onClick={() => goToChapter(next)}
+              className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              title={`下一话：${next.title}`}
+            >
+              下一话
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }, [chapters.isActive, chapterNeighbors, goToChapter, isComicReaderContent]);
+
+  const handleItemSelect = useCallback((
+    item: Article,
+    resumeIntent?: PlaybackResumeIntent,
+  ) => {
     void markArticleRead(item);
     setAiSummary(null);
     setIsPlayingAudio(false);
     setActiveImageIndex(0);
-    setDetailResumeIntent(undefined);
     detailResumeAppliedRef.current = false;
 
     const pluginMeta = pluginById.get(item.pluginId);
@@ -738,41 +906,45 @@ export default function App() {
       getStoredPluginChannel(item.pluginId),
     );
 
-    const loadResumeIntent = isPlaybackHistoryEnabled(
-      pluginMeta,
-      activeChannel,
-      channelCapabilities,
-    )
-      ? fetchResumeIntentForArticle(item.pluginId, item.id, channelId)
-      : Promise.resolve(undefined);
+    void (async () => {
+      const intent = resumeIntent ?? (
+        isPlaybackHistoryEnabled(
+          pluginMeta,
+          activeChannel,
+          channelCapabilities,
+        )
+          ? await fetchResumeIntentForArticle(item.pluginId, item.id, channelId)
+          : undefined
+      );
 
-    if (
-      shouldOpenChaptersForArticle(
-        item,
-        pluginMeta,
-        activeChannel,
-        channelCapabilities,
-        getStoredPluginChannel(item.pluginId),
-      )
-    ) {
-      void loadResumeIntent.then(intent => {
-        setDetailResumeIntent(intent);
-      });
-      setChaptersParent(item);
-      setChaptersDrawerOpen(false);
-      setSelectedItem(null);
-      return;
-    }
-
-    void loadResumeIntent.then(intent => {
       setDetailResumeIntent(intent);
-    });
-    setChaptersParent(null);
-    setSelectedItem(prev =>
-      prev?.id === item.id
-        ? mergeArticleListWithDetail(item, prev)
-        : item,
-    );
+
+      if (
+        shouldOpenChaptersForArticle(
+          item,
+          pluginMeta,
+          activeChannel,
+          channelCapabilities,
+          getStoredPluginChannel(item.pluginId),
+        )
+      ) {
+        const reopeningSameParent = chaptersParentRef.current?.id === item.id;
+        setChaptersDrawerOpen(false);
+        setSelectedItem(null);
+        setChaptersParent(item);
+        if (reopeningSameParent) {
+          setChaptersOpenToken(token => token + 1);
+        }
+        return;
+      }
+
+      setChaptersParent(null);
+      setSelectedItem(prev =>
+        prev?.id === item.id
+          ? mergeArticleListWithDetail(item, prev)
+          : item,
+      );
+    })();
   }, [
     activeChannel,
     channelCapabilities,
@@ -781,6 +953,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (isGridPageMode && !gridPageDetailOpen) return;
     if (chaptersParent) return;
     if (visibleArticles.length === 0) {
       setSelectedItem(null);
@@ -803,7 +976,7 @@ export default function App() {
     if (first) {
       handleItemSelect(first);
     }
-  }, [visibleArticles, chaptersParent, handleItemSelect]);
+  }, [visibleArticles, chaptersParent, handleItemSelect, isGridPageMode, gridPageDetailOpen]);
 
   useEffect(() => {
     if (readerPanelRef.current) {
@@ -1081,15 +1254,33 @@ export default function App() {
     setPreviewModeMenuOpen(false);
     if (activePlugin === "all") {
       setPluginPreviewMode("reader");
+      setGridDetailViewMode("modal");
       return;
     }
     const saved = getStoredPluginPreviewMode(activePlugin);
     setPluginPreviewMode(resolvePreviewModeForPlugin(activePluginMeta, saved));
     setGridColumnCount(getStoredGridColumnCount(activePlugin));
     setGridCoverAspectRatio(getStoredGridCoverAspectRatio(activePlugin));
+    setGridDetailViewMode(getStoredGridDetailViewMode(activePlugin) ?? "modal");
     setVideoWallColumnCount(getStoredVideoWallColumnCount(activePlugin));
     setSplitPaneRatio(getStoredSplitPaneRatio(activePlugin));
   }, [activePlugin, activePluginMeta]);
+
+  useEffect(() => {
+    setGridPageDetailOpen(false);
+  }, [activePlugin, activeChannel]);
+
+  useEffect(() => {
+    if (gridDetailViewMode === "modal") {
+      setGridPageDetailOpen(false);
+    }
+  }, [gridDetailViewMode]);
+
+  useEffect(() => {
+    if (pluginPreviewMode !== "grid") {
+      setGridPageDetailOpen(false);
+    }
+  }, [pluginPreviewMode]);
 
   useEffect(() => {
     if (!isPluginFocusMode) {
@@ -1196,6 +1387,15 @@ export default function App() {
           activeChannel,
           sessionHasDetail,
           intent,
+          shouldOpenChaptersForArticle(
+            article,
+            pluginMeta,
+            activeChannel,
+            channelCapabilities,
+            getStoredPluginChannel(article.pluginId),
+          )
+            ? article
+            : null,
         );
         seedPlaybackResumeSnapshot(newSession.id, intent?.progress, intent?.mode);
         return [
@@ -1226,14 +1426,27 @@ export default function App() {
         activePlugin,
         filteredArticles,
       );
-      openReaderDetailModal(
-        parentArticle,
-        playbackRecordToResumeIntent(record),
-      );
+      const resumeIntent = playbackRecordToResumeIntent(record);
+
+      if (isGridPreviewMode && gridDetailViewMode === "page") {
+        setGridPageDetailOpen(true);
+        handleItemSelect(parentArticle, resumeIntent);
+        return;
+      }
+
+      openReaderDetailModal(parentArticle, resumeIntent);
     } catch (err) {
       console.error("resume playback failed", err);
     }
-  }, [activePlugin, activePluginMeta, filteredArticles, openReaderDetailModal]);
+  }, [
+    activePlugin,
+    activePluginMeta,
+    filteredArticles,
+    gridDetailViewMode,
+    handleItemSelect,
+    isGridPreviewMode,
+    openReaderDetailModal,
+  ]);
 
   const handleSplitDetailSelect = useCallback((article: Article) => {
     setSplitDetailArticle(article);
@@ -1305,6 +1518,143 @@ export default function App() {
       persistGridCoverAspectRatio(activePlugin, ratio);
     }
   }, [activePlugin]);
+
+  const handleGridItemSelect = useCallback((article: Article) => {
+    if (gridDetailViewMode === "page") {
+      setGridPageDetailOpen(true);
+      handleItemSelect(article);
+      return;
+    }
+    openReaderDetailModal(article);
+  }, [gridDetailViewMode, handleItemSelect, openReaderDetailModal]);
+
+  const switchReaderToPageDetail = useCallback((
+    sessionId: string,
+    payload?: { openArticle: Article; resumeIntent?: PlaybackResumeIntent },
+  ) => {
+    const session = readerSessions.find(item => item.id === sessionId);
+    if (!session && !payload) return;
+
+    const openArticle = payload?.openArticle
+      ?? session?.parentArticle
+      ?? session?.article;
+    if (!openArticle) return;
+
+    let resumeIntent = payload?.resumeIntent;
+    if (!resumeIntent && session) {
+      resumeIntent = {
+        ...session.resumeIntent,
+        chapterId: session.parentArticle ? session.article.id : session.resumeIntent?.chapterId,
+      };
+    }
+
+    closeReaderSession(sessionId);
+
+    if (pluginPreviewMode !== "grid") {
+      setPluginPreviewMode("grid");
+      persistPluginPreviewMode(openArticle.pluginId, "grid");
+    }
+    persistGridDetailViewMode(openArticle.pluginId, "page");
+    setGridDetailViewMode("page");
+    setGridPageDetailOpen(true);
+    handleItemSelect(openArticle, resumeIntent);
+  }, [
+    readerSessions,
+    closeReaderSession,
+    pluginPreviewMode,
+    handleItemSelect,
+  ]);
+
+  const switchPageDetailToModal = useCallback(() => {
+    if (!selectedItem || activePlugin === "all") return;
+
+    const openArticle = chaptersParent ?? selectedItem;
+    const pluginMeta = chaptersParent ? chaptersPluginMeta : selectedPluginMeta;
+    const mode = resolveEffectivePlayback(pluginMeta, activeChannel, channelCapabilities).mode;
+
+    let progress = detailResumeIntent?.progress;
+    if (articleContentRef.current) {
+      const collected = mode === "manga"
+        ? collectMangaPageProgress(articleContentRef.current)
+        : mode === "article"
+          ? collectArticleScrollProgress(articleContentRef.current)
+          : undefined;
+      if (hasMeaningfulProgress(collected)) {
+        progress = collected;
+      }
+    }
+
+    const resumeIntent: PlaybackResumeIntent = {
+      chapterId: chaptersParent ? selectedItem.id : detailResumeIntent?.chapterId,
+      progress,
+      mode: detailResumeIntent?.mode ?? mode,
+    };
+
+    setGridPageDetailOpen(false);
+    setSelectedItem(null);
+    setChaptersParent(null);
+    setChaptersDrawerOpen(false);
+    detailResumeAppliedRef.current = false;
+    persistGridDetailViewMode(activePlugin, "modal");
+    setGridDetailViewMode("modal");
+    openReaderDetailModal(openArticle, resumeIntent);
+  }, [
+    selectedItem,
+    activePlugin,
+    chaptersParent,
+    chaptersPluginMeta,
+    selectedPluginMeta,
+    activeChannel,
+    channelCapabilities,
+    detailResumeIntent,
+    openReaderDetailModal,
+  ]);
+
+  const handleGridDetailViewModeChange = useCallback((mode: GridDetailViewMode) => {
+    if (activePlugin === "all") return;
+
+    if (mode === "page" && isGridPreviewMode) {
+      const expandedSession = readerSessions.find(
+        session => session.mode === "expanded" && session.article.pluginId === activePlugin,
+      );
+      if (expandedSession) {
+        switchReaderToPageDetail(expandedSession.id);
+        return;
+      }
+    }
+
+    if (mode === "modal" && isPageDetailView && selectedItem) {
+      switchPageDetailToModal();
+      return;
+    }
+
+    setGridDetailViewMode(mode);
+    persistGridDetailViewMode(activePlugin, mode);
+    if (mode !== "page") {
+      setGridPageDetailOpen(false);
+    }
+  }, [
+    activePlugin,
+    isGridPreviewMode,
+    isPageDetailView,
+    readerSessions,
+    selectedItem,
+    switchPageDetailToModal,
+    switchReaderToPageDetail,
+  ]);
+
+  const pageDetailModalSwitchButton = isPageDetailView && isGridPreviewMode ? (
+    <button
+      type="button"
+      onClick={switchPageDetailToModal}
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors align-middle ${chapterNavButtonClass}`}
+      title="切换到弹窗详情"
+      aria-label="切换到弹窗详情"
+    >
+      <Icon name="pip" className="w-3.5 h-3.5" />
+      <span>弹窗</span>
+    </button>
+  ) : null;
 
   const handleVideoWallColumnCountChange = useCallback((count: GridColumnCount) => {
     setVideoWallColumnCount(count);
@@ -1806,11 +2156,13 @@ export default function App() {
                       </button>
                     ))
                     : (
+                      !isSplitDetailMode && !(isGridPageMode && gridPageDetailOpen) ? (
                       <PluginChannelBar
                         activeChannel={activeChannel}
                         channels={activePluginChannels}
                         onChannelChange={selectChannel}
                       />
+                      ) : null
                     )}
                 </div>
               )}
@@ -2063,7 +2415,14 @@ export default function App() {
                   >
                     <div className="flex items-center gap-2 p-2.5">
                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <span className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-1 rounded-lg shrink-0 inline-flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isGridPageMode && gridPageDetailOpen) closePageDetail();
+                          }}
+                          title="返回列表"
+                          className="text-[11px] font-semibold text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 dark:text-indigo-400 px-2 py-1 rounded-lg shrink-0 inline-flex items-center gap-1.5 hover:opacity-90 transition-opacity"
+                        >
                           {(isPluginFocusMode ? activePluginMeta : selectedPluginMeta) ? (
                             <PluginAvatar
                               plugin={(isPluginFocusMode ? activePluginMeta : selectedPluginMeta)!}
@@ -2074,10 +2433,10 @@ export default function App() {
                           {isPluginFocusMode
                             ? activePluginMeta?.name
                             : selectedItem?.pluginName}
-                        </span>
-                        {!isPluginFocusMode && selectedItem ? (
+                        </button>
+                        {pageDetailSubtitle ? (
                           <span className="text-xs text-neutral-400 truncate">
-                            由 {selectedItem.author} 撰写
+                            {pageDetailSubtitle}
                           </span>
                         ) : null}
                         {isWaterfallPreviewMode && activePlugin !== "all" ? (
@@ -2087,7 +2446,12 @@ export default function App() {
                               : `瀑布流 · 共 ${filteredArticles.filter(item => item.pluginId === activePlugin).length} 条`}
                           </span>
                         ) : null}
-                        {isGridPreviewMode && activePlugin !== "all" ? (
+                        {!isPluginFocusMode && selectedItem && !pageDetailSubtitle ? (
+                          <span className="text-xs text-neutral-400 truncate">
+                            由 {selectedItem.author} 撰写
+                          </span>
+                        ) : null}
+                        {isGridPreviewMode && activePlugin !== "all" && !pageDetailSubtitle ? (
                           <span className="text-xs text-neutral-400 truncate">
                             卡片视图 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条
                           </span>
@@ -2106,6 +2470,22 @@ export default function App() {
                       </div>
 
                       <div className="flex items-center justify-end gap-1 shrink-0 ml-auto">
+                        {isPageDetailView ? (
+                          <>
+                            {pageDetailBackButton}
+                            {chapterToolbarNav}
+                            {pageDetailModalSwitchButton}
+                            {showPlaybackHistoryButton && activePluginMeta ? (
+                              <PlaybackHistoryButton
+                                plugin={activePluginMeta}
+                                channelId={activeChannel}
+                                onClick={() => setPlaybackHistoryOpen(true)}
+                              />
+                            ) : null}
+                            {chaptersOpenButton}
+                          </>
+                        ) : (
+                          <>
                         {!isPluginFocusMode ? (
                           <div className="flex items-center gap-0.5 mr-0.5">
                             <button
@@ -2166,6 +2546,14 @@ export default function App() {
                             theme={theme}
                             value={gridCoverAspectRatio}
                             onChange={handleGridCoverAspectRatioChange}
+                          />
+                        ) : null}
+
+                        {isGridPreviewMode && activePlugin !== "all" ? (
+                          <GridDetailModeSwitcher
+                            theme={theme}
+                            value={gridDetailViewMode}
+                            onChange={handleGridDetailViewModeChange}
                           />
                         ) : null}
 
@@ -2349,6 +2737,9 @@ export default function App() {
                             </button>
                           </>
                         ) : null}
+
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2404,7 +2795,9 @@ export default function App() {
                     </div>
                   ) : null}
 
-                  {isPluginFocusMode && showPluginChannelBar ? (
+                  {isPluginFocusMode
+                    && showPluginChannelBar
+                    && !(isGridPageMode && gridPageDetailOpen) ? (
                     <PluginChannelBar
                       activeChannel={activeChannel}
                       channels={activePluginChannels}
@@ -2422,6 +2815,7 @@ export default function App() {
                       pluginId={activePlugin}
                       articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
                       gridColumnCount={gridColumnCount}
+                      onGridColumnCountChange={handleGridColumnCountChange}
                       coverAspectRatio={gridCoverAspectRatio}
                       videoColumnCount={videoWallColumnCount}
                       splitRatio={splitPaneRatio}
@@ -2447,6 +2841,7 @@ export default function App() {
                       articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
                       selectedArticle={splitDetailArticle}
                       gridColumnCount={gridColumnCount}
+                      onGridColumnCountChange={handleGridColumnCountChange}
                       coverAspectRatio={gridCoverAspectRatio}
                       splitRatio={splitPaneRatio}
                       onSplitRatioChange={handleSplitPaneRatioChange}
@@ -2503,7 +2898,7 @@ export default function App() {
                     }
                     scrollRootRef={readerPanelRef}
                   />
-                ) : isGridPreviewMode && activePlugin !== "all" ? (
+                ) : isGridPreviewMode && activePlugin !== "all" && !gridPageDetailOpen ? (
                   <RatingFocusView
                     key={`${activePlugin}-${activeChannel}-${gridColumnCount}-${gridCoverAspectRatio}`}
                     theme={theme}
@@ -2518,7 +2913,7 @@ export default function App() {
                     onLoadMore={() => {
                       void loadMore().catch(console.error);
                     }}
-                    onItemSelect={openReaderDetailModal}
+                    onItemSelect={handleGridItemSelect}
                     scrollRootRef={readerPanelRef}
                   />
                 ) : (selectedItem || chapters.isActive) ? (
@@ -2529,7 +2924,6 @@ export default function App() {
                       article={selectedItem}
                       theme={theme}
                       runtimeBase={runtimeBase}
-                      trailing={chaptersOpenButton}
                       onCoverError={() => setCoverImageFailed(true)}
                     />
                   </div>
@@ -2563,36 +2957,13 @@ export default function App() {
                     <h1 className="article-reader-title font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight flex-1 min-w-0">
                       {selectedItem.title}
                     </h1>
-                    {chaptersOpenButton}
                   </div>
                   ) : null}
 
                   {/* Dynamic Interactive Media Section (Based on Resource Type) */}
-                  {showArticleMedia
-                    && !showRatingHero
-                    && selectedItem.type === "image"
-                    && selectedItem.image?.trim()
-                    && !selectedItem.galleryImages?.length ? (
-                    <ProxiedImage
-                      runtimeBase={runtimeBase}
-                      src={selectedItem.image}
-                      alt={selectedItem.title}
-                      onError={() => setCoverImageFailed(true)}
-                    />
-                  ) : showArticleMedia && !showRatingHero ? (
+                  {showArticleMedia && !showRatingHero ? (
                   <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                     
-                    {/* Type 1: Standard Article Main Image */}
-                    {selectedItem.type === 'text' && selectedItem.image?.trim() && (
-                      <ProxiedImage
-                        runtimeBase={runtimeBase}
-                        src={selectedItem.image}
-                        alt="Article Cover"
-                        className="w-auto h-auto max-w-full mx-auto block"
-                        onError={() => setCoverImageFailed(true)}
-                      />
-                    )}
-
                     {/* Type 2: Video — YouTube embed or direct stream */}
                     {selectedItem.type === 'video' && (
                       <div className="relative aspect-video bg-neutral-950 flex flex-col items-center justify-center text-white">
@@ -2749,6 +3120,7 @@ export default function App() {
                       className="article-content mt-6"
                       dangerouslySetInnerHTML={{ __html: selectedItemDisplayContent }}
                     />
+                    {chapterPager}
                     {selectedItem.sourceUrl ? (
                       <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
                         <a
@@ -2885,6 +3257,12 @@ export default function App() {
           onArticleChange={article => updateReaderSessionArticle(session.id, article)}
           resumeIntent={session.resumeIntent}
           onResumeApplied={() => clearReaderSessionResume(session.id)}
+          pageDetailSwitchEnabled={
+            isGridPreviewMode
+            && session.mode === "expanded"
+            && session.article.pluginId === activePlugin
+          }
+          onSwitchToPageDetail={payload => switchReaderToPageDetail(session.id, payload)}
         />
       ))}
 

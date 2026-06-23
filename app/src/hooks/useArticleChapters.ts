@@ -44,6 +44,7 @@ interface UseArticleChaptersOptions {
   storedChannel?: string | null;
   enabled?: boolean;
   initialChapterId?: string;
+  openToken?: number;
   onChapterDetail?: (article: Article) => void;
   onChapterDetailLoaded?: (article: Article) => void;
 }
@@ -56,6 +57,7 @@ export function useArticleChapters({
   storedChannel,
   enabled = true,
   initialChapterId,
+  openToken = 0,
   onChapterDetail,
   onChapterDetailLoaded,
 }: UseArticleChaptersOptions) {
@@ -208,6 +210,7 @@ export function useArticleChapters({
     parent?.id,
     parent?.pluginId,
     enabled,
+    openToken,
     activeChannel,
     pluginMeta,
     capabilities.hasChapters,

@@ -2,6 +2,7 @@ import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from "rea
 import { isDarkTheme } from "@/lib/themeMode";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import { VideoWallFocusView } from "@/components/VideoWallFocusView";
+import { useSplitPaneAutoGridColumns } from "@/hooks/useSplitPaneAutoGridColumns";
 import {
   clampSplitPaneRatio,
 } from "@/lib/splitPaneRatio";
@@ -16,6 +17,7 @@ interface SplitGridVideoViewProps {
   pluginId: string;
   articles: Article[];
   gridColumnCount: GridColumnCount;
+  onGridColumnCountChange: (count: GridColumnCount) => void;
   coverAspectRatio: GridCoverAspectRatio;
   videoColumnCount: GridColumnCount;
   splitRatio: number;
@@ -37,6 +39,7 @@ export function SplitGridVideoView({
   pluginId,
   articles,
   gridColumnCount,
+  onGridColumnCountChange,
   coverAspectRatio,
   videoColumnCount,
   splitRatio,
@@ -55,6 +58,8 @@ export function SplitGridVideoView({
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const isDark = isDarkTheme(theme);
   const leftPercent = clampSplitPaneRatio(splitRatio) * 100;
+
+  useSplitPaneAutoGridColumns(leftPaneRef, onGridColumnCountChange);
 
   const handleDividerPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();

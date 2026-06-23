@@ -2,6 +2,7 @@ import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from "rea
 import { isDarkTheme } from "@/lib/themeMode";
 import { ArticleDetailPanel } from "@/components/ArticleDetailPanel";
 import { RatingFocusView } from "@/components/RatingFocusView";
+import { useSplitPaneAutoGridColumns } from "@/hooks/useSplitPaneAutoGridColumns";
 import {
   clampSplitPaneRatio,
 } from "@/lib/splitPaneRatio";
@@ -15,6 +16,7 @@ interface SplitGridDetailViewProps {
   articles: Article[];
   selectedArticle: Article | null;
   gridColumnCount: GridColumnCount;
+  onGridColumnCountChange: (count: GridColumnCount) => void;
   coverAspectRatio: GridCoverAspectRatio;
   splitRatio: number;
   onSplitRatioChange: (ratio: number) => void;
@@ -42,6 +44,7 @@ export function SplitGridDetailView({
   articles,
   selectedArticle,
   gridColumnCount,
+  onGridColumnCountChange,
   coverAspectRatio,
   splitRatio,
   onSplitRatioChange,
@@ -62,6 +65,8 @@ export function SplitGridDetailView({
   const leftPaneRef = useRef<HTMLDivElement>(null);
   const isDark = isDarkTheme(theme);
   const leftPercent = clampSplitPaneRatio(splitRatio) * 100;
+
+  useSplitPaneAutoGridColumns(leftPaneRef, onGridColumnCountChange);
 
   const handleDividerPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     event.preventDefault();

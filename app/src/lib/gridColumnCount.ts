@@ -68,6 +68,26 @@ export function readStoredGridColumnCount(): GridColumnCount {
   return readLegacyValue() ?? DEFAULT_GRID_COLUMN_COUNT;
 }
 
+const GRID_COLUMN_GAP_PX = 12;
+const MIN_GRID_CARD_WIDTH_PX = 100;
+
+/** Pick the widest column count that still fits the pane width. */
+export function resolveAutoGridColumnCount(containerWidth: number): GridColumnCount {
+  if (containerWidth <= 0) return DEFAULT_GRID_COLUMN_COUNT;
+
+  let best: GridColumnCount = GRID_COLUMN_OPTIONS[0];
+  for (const option of GRID_COLUMN_OPTIONS) {
+    const totalGap = GRID_COLUMN_GAP_PX * (option - 1);
+    const cardWidth = (containerWidth - totalGap) / option;
+    if (cardWidth >= MIN_GRID_CARD_WIDTH_PX) {
+      best = option;
+    } else {
+      break;
+    }
+  }
+  return best;
+}
+
 /** Honor the user-selected column count without clamping to pane width. */
 export function resolveEffectiveColumnCount(
   _width: number,

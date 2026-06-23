@@ -5,6 +5,7 @@ import {
   collectArticleScrollProgress,
   collectMangaPageProgress,
   collectTimeProgress,
+  findArticleScrollParent,
   hasMeaningfulProgress,
 } from "@/lib/playbackResume";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
@@ -187,4 +188,29 @@ export function usePlaybackProgress({
     captureProgressSnapshot,
     flush,
   ]);
+
+  useEffect(() => {
+    if (!enabled || !config.progress || !config.history || config.managedBy !== "runtime") return;
+    if (config.mode !== "manga" && config.mode !== "article") return;
+
+    const root = contentRef.current;
+    if (!root) return;
+
+    let timer = 0;
+    const onScroll = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void flush();
+      }, 400);
+    };
+
+    const scrollParent = findArticleScrollParent(root);
+    const target: HTMLElement | Window = scrollParent ?? window;
+    target.addEventListener("scroll", onScroll, { passive: true });
+
+    return () => {
+      target.removeEventListener("scroll", onScroll);
+      window.clearTimeout(timer);
+    };
+  }, [enabled, config.progress, config.history, config.managedBy, config.mode, contentRef, flush, article?.id]);
 }

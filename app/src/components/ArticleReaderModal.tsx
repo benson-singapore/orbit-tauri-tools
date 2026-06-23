@@ -30,9 +30,17 @@ import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/Art
 import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
 import { usePlaybackProgress } from "@/hooks/usePlaybackProgress";
 import { usesDedicatedSessionVideoPlayer, promoteArticleForSessionVideo } from "@/lib/readerSessionVideos";
-import { applyPlaybackResume, fetchResumeIntentForArticle, seedPlaybackResumeSnapshot } from "@/lib/playbackResume";
+import {
+  applyPlaybackResume,
+  collectArticleScrollProgress,
+  collectMangaPageProgress,
+  collectTimeProgress,
+  fetchResumeIntentForArticle,
+  hasMeaningfulProgress,
+  seedPlaybackResumeSnapshot,
+} from "@/lib/playbackResume";
 import { resolveEffectivePlayback } from "@/lib/playbackConfig";
-import type { PlaybackResumeIntent } from "@/types";
+import type { PlaybackResumeIntent, PlaybackProgress } from "@/types";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
 import type { ReaderSessionMode } from "@/lib/readerSessions";
@@ -57,6 +65,11 @@ interface ArticleReaderModalProps {
   onArticleChange?: (article: Article) => void;
   resumeIntent?: PlaybackResumeIntent;
   onResumeApplied?: () => void;
+  pageDetailSwitchEnabled?: boolean;
+  onSwitchToPageDetail?: (payload: {
+    openArticle: Article;
+    resumeIntent?: PlaybackResumeIntent;
+  }) => void;
 }
 
 export function ArticleReaderModal({
@@ -78,6 +91,8 @@ export function ArticleReaderModal({
   onArticleChange,
   resumeIntent,
   onResumeApplied,
+  pageDetailSwitchEnabled = false,
+  onSwitchToPageDetail,
 }: ArticleReaderModalProps) {
   const isExpanded = mode === "expanded";
   const isDark = isDarkTheme(theme);
@@ -98,6 +113,7 @@ export function ArticleReaderModal({
       : null,
   );
   const contentRef = useRef<HTMLDivElement>(null);
+  const scrollRootRef = useRef<HTMLDivElement>(null);
   const onArticleChangeRef = useRef(onArticleChange);
   onArticleChangeRef.current = onArticleChange;
 
@@ -310,6 +326,11 @@ export function ArticleReaderModal({
     });
   }, [article.content, article.image, article.type, runtimeBase, hasSessionVideoMedia, theme]);
 
+  const isComicReaderContent = useMemo(
+    () => displayContent.includes("comic-reader"),
+    [displayContent],
+  );
+
   useEffect(() => {
     if (!displayContent) return;
 
@@ -439,6 +460,58 @@ export function ArticleReaderModal({
 
   const toggleChaptersDrawer = () => setChaptersDrawerOpen(open => !open);
 
+  const buildPageDetailResumeIntent = useCallback((): PlaybackResumeIntent | undefined => {
+    const mode = resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities).mode;
+    let progress: PlaybackProgress | undefined;
+    const root = contentRef.current;
+    if (root) {
+      switch (mode) {
+        case "video":
+        case "audio":
+          progress = collectTimeProgress(sessionId, root);
+          break;
+        case "article":
+          progress = collectArticleScrollProgress(root);
+          break;
+        case "manga":
+          progress = collectMangaPageProgress(root);
+          break;
+        default:
+          break;
+      }
+    }
+
+    const effectiveProgress = hasMeaningfulProgress(progress)
+      ? progress
+      : resolvedResumeIntent?.progress;
+
+    if (!effectiveProgress && !chaptersParent) {
+      return resolvedResumeIntent;
+    }
+
+    return {
+      chapterId: chaptersParent ? article.id : resolvedResumeIntent?.chapterId,
+      progress: effectiveProgress,
+      mode: resolvedResumeIntent?.mode ?? mode,
+    };
+  }, [
+    article.id,
+    channelCapabilities,
+    channelId,
+    chaptersParent,
+    pluginMeta,
+    resolvedResumeIntent,
+    sessionId,
+  ]);
+
+  const handleSwitchToPageDetail = useCallback(() => {
+    if (!onSwitchToPageDetail) return;
+    onSwitchToPageDetail({
+      openArticle: chaptersParent ?? article,
+      resumeIntent: buildPageDetailResumeIntent(),
+    });
+  }, [article, buildPageDetailResumeIntent, chaptersParent, onSwitchToPageDetail]);
+
   const chaptersOpenButton = chapters.isActive ? (
     <ChaptersOpenButton
       theme={theme}
@@ -472,6 +545,53 @@ export function ArticleReaderModal({
     />
   ) : null;
 
+  const chapterPager = useMemo(() => {
+    if (!chapters.isActive || !isComicReaderContent) return null;
+    const activeId = chapters.activeChapter?.id ?? null;
+    if (!activeId) return null;
+    const idx = chapters.items.findIndex(item => item.id === activeId);
+    if (idx < 0) return null;
+    const prev = idx > 0 ? chapters.items[idx - 1] : null;
+    const next = idx < chapters.items.length - 1 ? chapters.items[idx + 1] : null;
+    if (!prev && !next) return null;
+
+    return (
+      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
+        <div className="flex items-center justify-between gap-3">
+          {prev ? (
+            <button
+              type="button"
+              onClick={() => {
+                scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                void chapters.selectChapter(prev);
+              }}
+              className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              title={`上一话：${prev.title}`}
+            >
+              上一话
+            </button>
+          ) : (
+            <span />
+          )}
+
+          {next ? (
+            <button
+              type="button"
+              onClick={() => {
+                scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+                void chapters.selectChapter(next);
+              }}
+              className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              title={`下一话：${next.title}`}
+            >
+              下一话
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }, [chapters, isComicReaderContent]);
+
   const modal = (
     <div
       className={
@@ -491,6 +611,21 @@ export function ArticleReaderModal({
       >
         {isExpanded ? (
           <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
+            {chaptersOpenButton}
+            {pageDetailSwitchEnabled ? (
+              <button
+                type="button"
+                onClick={event => {
+                  event.stopPropagation();
+                  handleSwitchToPageDetail();
+                }}
+                className={`p-2 rounded-full transition-colors ${headerButtonClass}`}
+                aria-label="切换到页面详情"
+                title="切换到页面详情"
+              >
+                <Icon name="maximize" className="w-4 h-4" />
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={event => {
@@ -518,6 +653,7 @@ export function ArticleReaderModal({
         ) : null}
 
         <div
+          ref={scrollRootRef}
           className="flex-1 min-h-0 overflow-y-auto article-reader px-5 sm:px-8 py-6 sm:py-8"
           style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
         >
@@ -528,7 +664,6 @@ export function ArticleReaderModal({
                   article={article}
                   theme={theme}
                   runtimeBase={runtimeBase}
-                  trailing={chaptersOpenButton}
                   onCoverError={() => setCoverImageFailed(true)}
                 />
               </div>
@@ -543,34 +678,11 @@ export function ArticleReaderModal({
                   >
                     {article.title}
                   </h2>
-                  {chaptersOpenButton}
                 </div>
               ) : null}
 
-            {showArticleMedia
-              && !showRatingHero
-              && article.type === "image"
-              && article.image?.trim()
-              && !article.galleryImages?.length ? (
-              <ProxiedImage
-                runtimeBase={runtimeBase}
-                src={article.image}
-                alt={article.title}
-                className="rounded-xl"
-                onError={() => setCoverImageFailed(true)}
-              />
-            ) : showArticleMedia && !showRatingHero ? (
+            {showArticleMedia && !showRatingHero && (article.type === "video" || article.type === "audio") ? (
               <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
-                {article.type === "text" && article.image?.trim() ? (
-                  <ProxiedImage
-                    runtimeBase={runtimeBase}
-                    src={article.image}
-                    alt="Article Cover"
-                    className="w-auto h-auto max-w-full mx-auto block"
-                    onError={() => setCoverImageFailed(true)}
-                  />
-                ) : null}
-
                 {hasSessionVideoMedia ? (
                   <div
                     ref={modalMountRef}
@@ -620,6 +732,7 @@ export function ArticleReaderModal({
                   className="article-content mt-6"
                   dangerouslySetInnerHTML={{ __html: displayContent }}
                 />
+                {chapterPager}
                 {article.sourceUrl ? (
                   <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
                     <a

@@ -200,11 +200,46 @@ export function collectMangaPageProgress(root: HTMLElement | null): ProgressMang
   return { page, totalPages: images.length };
 }
 
-export function applyMangaResume(root: HTMLElement | null, progress: ProgressManga): void {
+export function applyMangaResume(
+  root: HTMLElement | null,
+  progress: ProgressManga,
+  scrollRoot?: HTMLElement | null,
+): void {
   if (!root || !progress.page) return;
-  const images = getMangaImages(root);
-  const img = images[progress.page - 1];
-  img?.scrollIntoView({ block: "start" });
+
+  const scrollToPage = (): boolean => {
+    const images = getMangaImages(root);
+    const img = images[progress.page! - 1];
+    if (!img) return false;
+
+    if (scrollRoot) {
+      const rootRect = scrollRoot.getBoundingClientRect();
+      const imgRect = img.getBoundingClientRect();
+      scrollRoot.scrollTop += imgRect.top - rootRect.top;
+    } else {
+      img.scrollIntoView({ block: "start" });
+    }
+    return true;
+  };
+
+  if (scrollToPage()) return;
+
+  const images = Array.from(root.querySelectorAll("img"));
+  if (images.length === 0) return;
+
+  let pending = 0;
+  const tryScroll = () => {
+    scrollToPage();
+  };
+  for (const img of images) {
+    if (img.complete) continue;
+    pending += 1;
+    img.addEventListener("load", tryScroll, { once: true });
+    img.addEventListener("error", tryScroll, { once: true });
+  }
+  if (pending === 0) {
+    window.requestAnimationFrame(tryScroll);
+  }
 }
 
 export function collectTimeProgress(
@@ -252,6 +287,11 @@ function findScrollParent(node: HTMLElement): HTMLElement | null {
   return null;
 }
 
+export function findArticleScrollParent(node: HTMLElement | null): HTMLElement | null {
+  if (!node) return null;
+  return findScrollParent(node);
+}
+
 function countTextCharacters(root: HTMLElement): number {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   let count = 0;
@@ -283,6 +323,7 @@ export function applyPlaybackResume(
   options: {
     sessionId?: string;
     contentRoot: HTMLElement | null;
+    scrollRoot?: HTMLElement | null;
   },
 ): void {
   if (!progress) return;
@@ -303,7 +344,7 @@ export function applyPlaybackResume(
     return;
   }
   if (mode === "manga" && isProgressManga(progress)) {
-    applyMangaResume(options.contentRoot, progress);
+    applyMangaResume(options.contentRoot, progress, options.scrollRoot);
   }
 }
 
