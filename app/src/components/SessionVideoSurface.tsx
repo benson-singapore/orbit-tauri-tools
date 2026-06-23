@@ -81,8 +81,12 @@ export function SessionVideoSurface({
 
     return () => {
       unmountSessionVideo(sessionId);
-      clearSessionPlaybackSnapshot(sessionId);
-      clearSessionAspectRatio(sessionId);
+      // Defer clearing so sibling readers can flush playback history first.
+      const sid = sessionId;
+      window.setTimeout(() => {
+        clearSessionPlaybackSnapshot(sid);
+        clearSessionAspectRatio(sid);
+      }, 0);
     };
   }, [sessionId, videoIdentity, runtimeBase]);
 

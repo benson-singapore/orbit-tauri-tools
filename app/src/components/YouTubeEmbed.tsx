@@ -7,6 +7,8 @@ import {
 } from "@/lib/sessionVideoPlayback";
 import {
   getSessionPlaybackSnapshot,
+  PLAYBACK_RESUME_EVENT,
+  type PlaybackResumeEventDetail,
   updateSessionPlaybackSnapshot,
 } from "@/lib/sessionVideoProgress";
 import { youtubeEmbedUrl } from "@/lib/youtube";
@@ -86,6 +88,21 @@ export function YouTubeEmbed({ sessionId, videoId, title }: YouTubeEmbedProps) {
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
   }, [sessionId, videoId]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const onResume = (event: Event) => {
+      const detail = (event as CustomEvent<PlaybackResumeEventDetail>).detail;
+      if (detail.sessionId !== sessionId) return;
+      const iframe = iframeRef.current;
+      if (!iframe) return;
+      scheduleYouTubePlaybackRestore(iframe, sessionId);
+    };
+
+    window.addEventListener(PLAYBACK_RESUME_EVENT, onResume);
+    return () => window.removeEventListener(PLAYBACK_RESUME_EVENT, onResume);
+  }, [sessionId]);
 
   useEffect(() => {
     if (!sessionId) return;

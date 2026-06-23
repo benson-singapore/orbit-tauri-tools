@@ -436,6 +436,24 @@ func (r *Registry) PluginAssetPath(pluginID, relPath string) (string, error) {
 	return full, nil
 }
 
+// InvokeWasmAction runs an arbitrary WASM action for a plugin (e.g. playback_list).
+func (r *Registry) InvokeWasmAction(
+	ctx context.Context,
+	pluginID string,
+	action string,
+	data json.RawMessage,
+) (json.RawMessage, error) {
+	rec, ok := r.Get(pluginID)
+	if !ok {
+		return nil, fmt.Errorf("plugin not found: %s", pluginID)
+	}
+	dir, ok := r.getPluginDir(pluginID)
+	if !ok {
+		return nil, fmt.Errorf("plugin dir not found: %s", pluginID)
+	}
+	return r.wasmExec.InvokeAction(ctx, dir, rec, action, data)
+}
+
 func rowToRecord(row store.PluginRow) (*PluginRecord, error) {
 	var m Manifest
 	if err := store.DecodeJSON(row.ManifestJSON, &m); err != nil {

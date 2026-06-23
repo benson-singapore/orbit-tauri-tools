@@ -69,6 +69,7 @@ type ChannelFeatures struct {
 	Search     *SearchFeature     `json:"search,omitempty"`
 	Detail     *DetailFeature     `json:"detail,omitempty"`
 	Chapters   *ChaptersFeature   `json:"chapters,omitempty"`
+	Playback   *PlaybackFeature   `json:"playback,omitempty"`
 }
 
 type ResolvedFeedFeature struct {
@@ -125,6 +126,7 @@ type ChannelCapabilities struct {
 	Pagination          *PaginationFeature `json:"pagination,omitempty"`
 	ChaptersLabel       string             `json:"chaptersLabel,omitempty"`
 	ChaptersItemLabel   string             `json:"chaptersItemLabel,omitempty"`
+	Playback            *ResolvedPlayback  `json:"playback,omitempty"`
 }
 
 type FetchRequest struct {

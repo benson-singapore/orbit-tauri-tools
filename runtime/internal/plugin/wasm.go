@@ -262,6 +262,59 @@ func (e *WASMExecutor) FetchChannelWithParams(ctx context.Context, pluginDir str
 	return mapWasmFeedItems(rec, ch.ID, result), nil
 }
 
+// InvokeAction runs an arbitrary WASM action (e.g. playback_list) and returns raw response data.
+func (e *WASMExecutor) InvokeAction(
+	ctx context.Context,
+	pluginDir string,
+	rec *PluginRecord,
+	action string,
+	data json.RawMessage,
+) (json.RawMessage, error) {
+	if rec == nil {
+		return nil, fmt.Errorf("plugin record is required")
+	}
+	entry := strings.TrimSpace(rec.Config.Wasm.Entry)
+	if entry == "" {
+		entry = DefaultWasmConfig().Entry
+	}
+	wasmPath := filepath.Join(pluginDir, entry)
+	bin, err := loadWasmBinary(wasmPath)
+	if err != nil {
+		return nil, fmt.Errorf("read wasm: %w", err)
+	}
+
+	timeout := time.Duration(rec.Config.Wasm.TimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = time.Duration(DefaultWasmConfig().TimeoutMs) * time.Millisecond
+	}
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	if data == nil {
+		data = json.RawMessage(`{}`)
+	}
+	env, _ := json.Marshal(wasmEnvelope{Action: action, Data: data})
+	stdinLine := string(env) + "\n"
+	log.Printf("[orbit-playback] wasm action=%q plugin=%q", action, rec.ID)
+
+	raw, err := e.run(runCtx, bin, stdinLine, rec, timeout)
+	if err != nil {
+		return nil, err
+	}
+
+	var resp wasmResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return nil, fmt.Errorf("parse wasm response: %w", err)
+	}
+	if !resp.OK {
+		if resp.Error != "" {
+			return nil, fmt.Errorf("%s", resp.Error)
+		}
+		return nil, fmt.Errorf("wasm plugin returned error")
+	}
+	return resp.Data, nil
+}
+
 func (e *WASMExecutor) run(ctx context.Context, wasmBin []byte, stdinLine string, rec *PluginRecord, httpTimeout time.Duration) ([]byte, error) {
 	rt := wazero.NewRuntime(ctx)
 	defer rt.Close(ctx)

@@ -5,9 +5,16 @@ import {
   destroyEmbeddedVideoTheater,
   exitEmbeddedVideoTheater,
 } from "@/lib/articleContentVideoTheater";
+import {
+  getSessionPlaybackSnapshot,
+  PLAYBACK_RESUME_EVENT,
+  type PlaybackResumeEventDetail,
+  updateSessionPlaybackSnapshot,
+} from "@/lib/sessionVideoProgress";
 import type { Article } from "@/types";
 
 const hlsByVideo = new WeakMap<HTMLVideoElement, Hls>();
+const resumeCleanupByVideo = new WeakMap<HTMLVideoElement, () => void>();
 const SOURCE_SWITCH_RE = /rycjSwitchSource\s*\(\s*(\d+)\s*\)/i;
 const RYCJ_SOURCES_RE = /rycjSources\s*=\s*(\[[\s\S]*?\])/;
 
@@ -197,12 +204,88 @@ export function destroyEmbeddedVideoHls(video: HTMLVideoElement): void {
   hlsByVideo.delete(video);
 }
 
-export function setEmbeddedVideoSource(video: HTMLVideoElement, url: string): void {
+export interface BindArticleContentPlayersOptions {
+  sessionId?: string;
+}
+
+function resolveEmbeddedResumeTime(
+  video: HTMLVideoElement,
+  sessionId?: string,
+  capturedTime = 0,
+): number {
+  const dataTime = Number.parseFloat(video.dataset.orbitResumeTime ?? "");
+  if (Number.isFinite(dataTime) && dataTime > 0) return dataTime;
+  const snapshotTime = sessionId
+    ? getSessionPlaybackSnapshot(sessionId)?.currentTime ?? 0
+    : 0;
+  return Math.max(capturedTime, snapshotTime);
+}
+
+function seekEmbeddedVideoToPosition(video: HTMLVideoElement, position: number): void {
+  if (position <= 0.5) return;
+
+  const seek = () => {
+    try {
+      if (Math.abs(video.currentTime - position) > 0.75) {
+        video.currentTime = position;
+      }
+    } catch {
+      // Ignore seek failures before the media is ready.
+    }
+  };
+
+  if (video.readyState >= 1) {
+    seek();
+  }
+  video.addEventListener("loadedmetadata", seek, { once: true });
+  video.addEventListener("canplay", seek, { once: true });
+}
+
+function bindInlineVideoTracking(video: HTMLVideoElement, sessionId?: string): void {
+  if (!sessionId || video.dataset.orbitPlaybackTracked === "1") return;
+  video.dataset.orbitPlaybackTracked = "1";
+
+  video.addEventListener("timeupdate", () => {
+    updateSessionPlaybackSnapshot(sessionId, {
+      currentTime: video.currentTime,
+      playing: !video.paused,
+    });
+  });
+  video.addEventListener("play", () => {
+    updateSessionPlaybackSnapshot(sessionId, { playing: true });
+  });
+  video.addEventListener("pause", () => {
+    updateSessionPlaybackSnapshot(sessionId, { playing: false });
+  });
+}
+
+function bindEmbeddedResumeListener(video: HTMLVideoElement, sessionId?: string): void {
+  if (!sessionId || video.dataset.orbitResumeBound === "1") return;
+  video.dataset.orbitResumeBound = "1";
+
+  const onResume = (event: Event) => {
+    const detail = (event as CustomEvent<PlaybackResumeEventDetail>).detail;
+    if (detail.sessionId !== sessionId) return;
+    video.dataset.orbitResumeTime = String(detail.position);
+    seekEmbeddedVideoToPosition(video, detail.position);
+  };
+
+  window.addEventListener(PLAYBACK_RESUME_EVENT, onResume);
+  resumeCleanupByVideo.set(video, () => {
+    window.removeEventListener(PLAYBACK_RESUME_EVENT, onResume);
+  });
+}
+
+export function setEmbeddedVideoSource(
+  video: HTMLVideoElement,
+  url: string,
+  sessionId?: string,
+): void {
   const trimmed = url.trim();
   if (!trimmed) return;
 
   const wasPlaying = !video.paused;
-  const currentTime = video.currentTime;
+  const resumeTime = resolveEmbeddedResumeTime(video, sessionId, video.currentTime);
 
   destroyEmbeddedVideoHls(video);
   video.removeAttribute("src");
@@ -211,12 +294,9 @@ export function setEmbeddedVideoSource(video: HTMLVideoElement, url: string): vo
   }
 
   const resumePlayback = () => {
-    if (currentTime > 0.5) {
-      try {
-        video.currentTime = currentTime;
-      } catch {
-        // Ignore seek failures before metadata is ready.
-      }
+    const target = resolveEmbeddedResumeTime(video, sessionId, resumeTime);
+    if (target > 0.5) {
+      seekEmbeddedVideoToPosition(video, target);
     }
     if (wasPlaying) {
       void video.play().catch(() => {});
@@ -251,7 +331,7 @@ function resolveActiveSourceIndex(article: HTMLElement): number {
   return 0;
 }
 
-function bindRycjPlayer(article: HTMLElement): void {
+function bindRycjPlayer(article: HTMLElement, sessionId?: string): void {
   const sourcesJson = article.dataset.rycjSources;
   if (!sourcesJson) return;
 
@@ -269,11 +349,14 @@ function bindRycjPlayer(article: HTMLElement): void {
   const video = article.querySelector<HTMLVideoElement>("video");
   if (!video) return;
 
+  bindInlineVideoTracking(video, sessionId);
+  bindEmbeddedResumeListener(video, sessionId);
+
   const buttons = article.querySelectorAll<HTMLButtonElement>(`button.${CONTENT_SOURCE_BTN_CLASS}`);
   const activeIndex = resolveActiveSourceIndex(article);
   const initialUrl = sources[activeIndex] ?? sources[0];
   if (initialUrl) {
-    setEmbeddedVideoSource(video, initialUrl);
+    setEmbeddedVideoSource(video, initialUrl, sessionId);
   }
 
   bindEmbeddedVideoTheater(video);
@@ -288,7 +371,7 @@ function bindRycjPlayer(article: HTMLElement): void {
       const nextUrl = sources[sourceIndex];
       if (!nextUrl) return;
 
-      setEmbeddedVideoSource(video, nextUrl);
+      setEmbeddedVideoSource(video, nextUrl, sessionId);
       buttons.forEach(item => {
         item.classList.toggle(CONTENT_SOURCE_BTN_ACTIVE_CLASS, item === button);
       });
@@ -296,13 +379,17 @@ function bindRycjPlayer(article: HTMLElement): void {
   });
 }
 
-export function bindArticleContentPlayers(root: HTMLElement | null): void {
+export function bindArticleContentPlayers(
+  root: HTMLElement | null,
+  options?: BindArticleContentPlayersOptions,
+): void {
   if (!root) return;
+  const sessionId = options?.sessionId;
 
   for (const article of root.querySelectorAll<HTMLElement>("article.rycjapi-player")) {
     if (article.dataset.orbitPlayerBound === "1") continue;
     article.dataset.orbitPlayerBound = "1";
-    bindRycjPlayer(article);
+    bindRycjPlayer(article, sessionId);
   }
 }
 
@@ -310,6 +397,8 @@ export function destroyArticleContentPlayers(root: HTMLElement | null): void {
   if (!root) return;
 
   for (const video of root.querySelectorAll("video")) {
+    resumeCleanupByVideo.get(video)?.();
+    resumeCleanupByVideo.delete(video);
     exitEmbeddedVideoTheater(video);
     destroyEmbeddedVideoTheater(video);
     destroyEmbeddedVideoHls(video);

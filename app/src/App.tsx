@@ -19,7 +19,10 @@ import { ChaptersList } from "@/components/ChaptersList";
 import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
+import { PlaybackHistoryButton } from "@/components/PlaybackHistoryButton";
+import { PlaybackHistoryPanel } from "@/components/PlaybackHistoryPanel";
 import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
+import { usePlaybackProgress } from "@/hooks/usePlaybackProgress";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import {
@@ -61,6 +64,14 @@ import {
   bindArticleContentPlayers,
   destroyArticleContentPlayers,
 } from "@/lib/articleContentPlayer";
+import {
+  applyPlaybackResume,
+  playbackRecordToResumeIntent,
+  resolveParentArticleForPlayback,
+  seedPlaybackResumeSnapshot,
+  fetchResumeIntentForArticle,
+} from "@/lib/playbackResume";
+import { isPlaybackHistoryEnabled, resolveEffectivePlayback } from "@/lib/playbackConfig";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import {
   persistIgnoredArticleIds,
@@ -117,6 +128,8 @@ import type {
   Article,
   CategoryFilter,
   InstallRSSPluginRequest,
+  PlaybackRecord,
+  PlaybackResumeIntent,
   Plugin,
   ThemeMode,
 } from "@/types";
@@ -341,7 +354,7 @@ export default function App() {
   const [runtimeBase, setRuntimeBase] = useState<string | null>(null);
 
   useEffect(() => {
-    void waitForRuntimeReady().then(url => {
+    void waitForRuntimeReady().then((url: string) => {
       setRuntimeBase(url.replace(/\/$/, ""));
     });
   }, []);
@@ -353,6 +366,7 @@ export default function App() {
 
   useEffect(() => {
     setChaptersParent(null);
+    setDetailResumeIntent(undefined);
   }, [activePlugin, activeChannel]);
 
   const [pluginPreviewMode, setPluginPreviewMode] = useState<PluginPreviewMode>("reader");
@@ -367,6 +381,9 @@ export default function App() {
   const [splitPaneRatio, setSplitPaneRatio] = useState(DEFAULT_SPLIT_PANE_RATIO);
   const previewModeMenuRef = useRef<HTMLDivElement>(null);
   const [readerSessions, setReaderSessions] = useState<ReaderSession[]>([]);
+  const [playbackHistoryOpen, setPlaybackHistoryOpen] = useState(false);
+  const [detailResumeIntent, setDetailResumeIntent] = useState<PlaybackResumeIntent | undefined>();
+  const detailResumeAppliedRef = useRef(false);
   const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
 
@@ -437,13 +454,6 @@ export default function App() {
       darkTheme: isDarkTheme(theme),
     });
   }, [runtimeBase, selectedItem?.content, selectedItem?.image, selectedItem?.type, theme]);
-
-  useEffect(() => {
-    highlightArticleCode(articleContentRef.current);
-    bindArticleContentImages(articleContentRef.current, runtimeBase);
-    bindArticleContentPlayers(articleContentRef.current);
-    return () => destroyArticleContentPlayers(articleContentRef.current);
-  }, [runtimeBase, selectedItemDisplayContent, theme]);
 
   const filteredArticles = useMemo(() => {
     return visibleArticles.filter(item => {
@@ -581,6 +591,9 @@ export default function App() {
 
   const showFocusModeRefreshButton = isPluginFocusMode && showFeedChannelActions;
 
+  const showPlaybackHistoryButton = activePlugin !== "all"
+    && isPlaybackHistoryEnabled(activePluginMeta, activeChannel, channelCapabilities);
+
   const feedListBusy = feedLoading || feedRefreshing;
 
   const handleFeedRefresh = () => {
@@ -618,14 +631,84 @@ export default function App() {
     capabilities: channelCapabilities,
     storedChannel: chaptersStoredChannel,
     enabled: Boolean(chaptersParent),
+    initialChapterId: detailResumeIntent?.chapterId,
     onChapterDetail: article => {
       setSelectedItem(article);
     },
+    onChapterDetailLoaded: () => {
+      detailResumeAppliedRef.current = false;
+    },
+  });
+
+  const inlinePlaybackArticle = selectedItem ?? chaptersParent;
+  const inlineSessionId = inlinePlaybackArticle
+    ? `inline:${inlinePlaybackArticle.pluginId}:${inlinePlaybackArticle.id}`
+    : undefined;
+  usePlaybackProgress({
+    pluginMeta: selectedPluginMeta,
+    channelId: activeChannel,
+    channelCapabilities,
+    parentArticle: chaptersParent,
+    article: inlinePlaybackArticle,
+    sessionId: inlineSessionId,
+    contentRef: articleContentRef,
+    enabled: Boolean(
+      inlinePlaybackArticle && isReaderPreviewMode && !isPluginFocusMode,
+    ),
   });
 
   const showContentLoading = contentLoading
     || chapters.detailLoading
     || (chapters.isActive && chapters.loading);
+
+  const inlineDetailPluginMeta = inlinePlaybackArticle
+    ? pluginById.get(inlinePlaybackArticle.pluginId)
+    : undefined;
+
+  useEffect(() => {
+    detailResumeAppliedRef.current = false;
+  }, [inlinePlaybackArticle?.id, detailResumeIntent]);
+
+  useEffect(() => {
+    if (!selectedItemDisplayContent) return;
+
+    highlightArticleCode(articleContentRef.current);
+    bindArticleContentImages(articleContentRef.current, runtimeBase);
+    bindArticleContentPlayers(articleContentRef.current, { sessionId: inlineSessionId });
+
+    if (
+      detailResumeIntent?.progress
+      && !detailResumeAppliedRef.current
+      && !showContentLoading
+    ) {
+      detailResumeAppliedRef.current = true;
+      seedPlaybackResumeSnapshot(
+        inlineSessionId,
+        detailResumeIntent.progress,
+        detailResumeIntent.mode,
+      );
+      const mode = detailResumeIntent.mode
+        ?? resolveEffectivePlayback(inlineDetailPluginMeta, activeChannel, channelCapabilities).mode;
+      window.requestAnimationFrame(() => {
+        applyPlaybackResume(mode, detailResumeIntent.progress, {
+          sessionId: inlineSessionId,
+          contentRoot: articleContentRef.current,
+        });
+      });
+    }
+
+    return () => destroyArticleContentPlayers(articleContentRef.current);
+  }, [
+    selectedItemDisplayContent,
+    runtimeBase,
+    theme,
+    inlineSessionId,
+    detailResumeIntent,
+    showContentLoading,
+    inlineDetailPluginMeta,
+    activeChannel,
+    channelCapabilities,
+  ]);
 
   const toggleChaptersDrawer = useCallback(() => {
     setChaptersDrawerOpen(open => !open);
@@ -644,8 +727,24 @@ export default function App() {
     setAiSummary(null);
     setIsPlayingAudio(false);
     setActiveImageIndex(0);
+    setDetailResumeIntent(undefined);
+    detailResumeAppliedRef.current = false;
 
     const pluginMeta = pluginById.get(item.pluginId);
+    const channelId = resolveArticleDetailChannel(
+      item,
+      pluginMeta,
+      activeChannel,
+      getStoredPluginChannel(item.pluginId),
+    );
+
+    const loadResumeIntent = isPlaybackHistoryEnabled(
+      pluginMeta,
+      activeChannel,
+      channelCapabilities,
+    )
+      ? fetchResumeIntentForArticle(item.pluginId, item.id, channelId)
+      : Promise.resolve(undefined);
 
     if (
       shouldOpenChaptersForArticle(
@@ -656,12 +755,18 @@ export default function App() {
         getStoredPluginChannel(item.pluginId),
       )
     ) {
+      void loadResumeIntent.then(intent => {
+        setDetailResumeIntent(intent);
+      });
       setChaptersParent(item);
       setChaptersDrawerOpen(false);
       setSelectedItem(null);
       return;
     }
 
+    void loadResumeIntent.then(intent => {
+      setDetailResumeIntent(intent);
+    });
     setChaptersParent(null);
     setSelectedItem(prev =>
       prev?.id === item.id
@@ -1045,36 +1150,90 @@ export default function App() {
     );
   }, []);
 
-  const openReaderDetailModal = useCallback((article: Article) => {
-    const pluginMeta = pluginById.get(article.pluginId);
-    const sessionHasDetail = resolveArticleHasDetail(
-      article,
-      pluginMeta,
-      activeChannel,
-      channelCapabilities,
-      getStoredPluginChannel(article.pluginId),
-    );
-    setReaderSessions(prev => {
-      const key = articleSessionKey(article);
-      const existing = prev.find(session => articleSessionKey(session.article) === key);
-      if (existing) {
-        return prev.map(session => ({
-          ...session,
-          mode: session.id === existing.id ? "expanded" : "docked",
-        }));
-      }
-      const newSession = createReaderSession(
+  const openReaderDetailModal = useCallback((
+    article: Article,
+    resumeIntent?: PlaybackResumeIntent,
+  ) => {
+    void (async () => {
+      const pluginMeta = pluginById.get(article.pluginId);
+      const channelId = resolveArticleDetailChannel(
         article,
+        pluginMeta,
         activeChannel,
-        sessionHasDetail,
+        getStoredPluginChannel(article.pluginId),
       );
-      return [
-        ...prev.map(session => ({ ...session, mode: "docked" as const })),
-        newSession,
-      ];
-    });
-    void markArticleRead(article);
+      let intent = resumeIntent;
+      if (
+        !intent
+        && isPlaybackHistoryEnabled(pluginMeta, activeChannel, channelCapabilities)
+      ) {
+        intent = await fetchResumeIntentForArticle(article.pluginId, article.id, channelId);
+      }
+
+      const sessionHasDetail = resolveArticleHasDetail(
+        article,
+        pluginMeta,
+        activeChannel,
+        channelCapabilities,
+        getStoredPluginChannel(article.pluginId),
+      );
+      setReaderSessions(prev => {
+        const key = articleSessionKey(article);
+        const existing = prev.find(session => articleSessionKey(session.article) === key);
+        if (existing) {
+          const nextResumeIntent = intent ?? existing.resumeIntent;
+          seedPlaybackResumeSnapshot(existing.id, nextResumeIntent?.progress, nextResumeIntent?.mode);
+          return prev.map(session => ({
+            ...session,
+            mode: session.id === existing.id ? "expanded" : "docked",
+            resumeIntent: session.id === existing.id
+              ? nextResumeIntent
+              : session.resumeIntent,
+          }));
+        }
+        const newSession = createReaderSession(
+          article,
+          activeChannel,
+          sessionHasDetail,
+          intent,
+        );
+        seedPlaybackResumeSnapshot(newSession.id, intent?.progress, intent?.mode);
+        return [
+          ...prev.map(session => ({ ...session, mode: "docked" as const })),
+          newSession,
+        ];
+      });
+      void markArticleRead(article);
+    })();
   }, [markArticleRead, activeChannel, channelCapabilities, pluginById]);
+
+  const clearReaderSessionResume = useCallback((sessionId: string) => {
+    setReaderSessions(prev =>
+      prev.map(session =>
+        session.id === sessionId
+          ? { ...session, resumeIntent: undefined }
+          : session,
+      ),
+    );
+  }, []);
+
+  const handlePlaybackResume = useCallback(async (record: PlaybackRecord) => {
+    if (activePlugin === "all" || !activePluginMeta) return;
+    setPlaybackHistoryOpen(false);
+    try {
+      const parentArticle = await resolveParentArticleForPlayback(
+        record,
+        activePlugin,
+        filteredArticles,
+      );
+      openReaderDetailModal(
+        parentArticle,
+        playbackRecordToResumeIntent(record),
+      );
+    } catch (err) {
+      console.error("resume playback failed", err);
+    }
+  }, [activePlugin, activePluginMeta, filteredArticles, openReaderDetailModal]);
 
   const handleSplitDetailSelect = useCallback((article: Article) => {
     setSplitDetailArticle(article);
@@ -1691,6 +1850,14 @@ export default function App() {
                       >
                         <Icon name="refresh" className={`w-3.5 h-3.5 ${feedRefreshing ? "animate-spin" : ""}`} />
                       </button>
+                      {showPlaybackHistoryButton && activePluginMeta ? (
+                        <PlaybackHistoryButton
+                          plugin={activePluginMeta}
+                          channelId={activeChannel}
+                          onClick={() => setPlaybackHistoryOpen(true)}
+                          className="p-1 rounded-lg text-neutral-500 hover:text-neutral-800 hover:bg-neutral-100 dark:hover:text-neutral-200 dark:hover:bg-neutral-800 transition-colors"
+                        />
+                      ) : null}
                     </div>
                   ) : null}
                   <span>
@@ -2134,6 +2301,14 @@ export default function App() {
                           </button>
                         ) : null}
 
+                        {showPlaybackHistoryButton && activePluginMeta ? (
+                          <PlaybackHistoryButton
+                            plugin={activePluginMeta}
+                            channelId={activeChannel}
+                            onClick={() => setPlaybackHistoryOpen(true)}
+                          />
+                        ) : null}
+
                         {!isPluginFocusMode && selectedItem?.sourceUrl ? (
                           <a
                             href={selectedItem.sourceUrl}
@@ -2244,6 +2419,7 @@ export default function App() {
                     <SplitGridVideoView
                       theme={theme}
                       runtimeBase={runtimeBase}
+                      pluginId={activePlugin}
                       articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
                       gridColumnCount={gridColumnCount}
                       coverAspectRatio={gridCoverAspectRatio}
@@ -2294,6 +2470,7 @@ export default function App() {
                   <VideoWallFocusView
                     theme={theme}
                     runtimeBase={runtimeBase}
+                    pluginId={activePlugin}
                     sessions={videoWallSessions}
                     columnCount={videoWallColumnCount}
                     onExpandSession={handleVideoWallExpandSession}
@@ -2706,8 +2883,22 @@ export default function App() {
           onClose={() => closeReaderSession(session.id)}
           onDock={() => dockReaderSession(session.id)}
           onArticleChange={article => updateReaderSessionArticle(session.id, article)}
+          resumeIntent={session.resumeIntent}
+          onResumeApplied={() => clearReaderSessionResume(session.id)}
         />
       ))}
+
+      {activePluginMeta && showPlaybackHistoryButton ? (
+        <PlaybackHistoryPanel
+          open={playbackHistoryOpen}
+          onClose={() => setPlaybackHistoryOpen(false)}
+          plugin={activePluginMeta}
+          channelId={activeChannel}
+          runtimeBase={runtimeBase}
+          theme={theme}
+          onSelect={record => void handlePlaybackResume(record)}
+        />
+      ) : null}
 
       <ReaderDock
         theme={theme}

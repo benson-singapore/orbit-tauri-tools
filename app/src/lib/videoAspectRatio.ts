@@ -9,7 +9,15 @@ export const LANDSCAPE_HEIGHT_RATIO = 9 / 16;
 /** height / width for 9:16 portrait video */
 export const PORTRAIT_HEIGHT_RATIO = 16 / 9;
 
-export const DEFAULT_VIDEO_HEIGHT_RATIO = PORTRAIT_HEIGHT_RATIO;
+export const DEFAULT_VIDEO_HEIGHT_RATIO = LANDSCAPE_HEIGHT_RATIO;
+
+/** CSS `aspect-ratio` is width / height; stored ratios are height / width. */
+export function heightOverWidthToCssAspectRatio(heightOverWidth: number): string {
+  if (!Number.isFinite(heightOverWidth) || heightOverWidth <= 0) {
+    return "16 / 9";
+  }
+  return `${1 / heightOverWidth}`;
+}
 
 type Listener = () => void;
 

@@ -39,8 +39,10 @@ func (d *FeatureDispatcher) Capabilities(pluginID, channelID string) (ChannelCap
 	if err != nil {
 		return ChannelCapabilities{}, err
 	}
-	_ = rec
-	return GetChannelCapabilities(ch), nil
+	cap := GetChannelCapabilities(ch)
+	pb := ResolvePlayback(&rec.Manifest, ch)
+	cap.Playback = &pb
+	return cap, nil
 }
 
 func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID string, limit, offset int) (DispatchResult, error) {

@@ -62,6 +62,68 @@ export interface ChannelFeatures {
   search?: SearchFeature;
   detail?: DetailFeature;
   chapters?: ChaptersFeature;
+  playback?: PlaybackFeature;
+}
+
+export type PlaybackMode = "video" | "audio" | "article" | "manga";
+
+export interface PlaybackConfig {
+  history?: boolean;
+  progress?: boolean;
+  mode?: PlaybackMode;
+  limit?: number;
+  managedBy?: "runtime" | "plugin";
+}
+
+export interface PlaybackFeature {
+  history?: boolean;
+  progress?: boolean;
+  mode?: PlaybackMode;
+  limit?: number;
+}
+
+export interface ResolvedPlaybackConfig {
+  history: boolean;
+  progress: boolean;
+  mode: PlaybackMode;
+  limit: number;
+  managedBy: "runtime" | "plugin";
+}
+
+export interface ProgressTime {
+  position?: number;
+  duration?: number;
+}
+
+export interface ProgressArticle {
+  offset?: number;
+  total?: number;
+  anchor?: string;
+}
+
+export interface ProgressManga {
+  page?: number;
+  totalPages?: number;
+}
+
+export type PlaybackProgress = ProgressTime | ProgressArticle | ProgressManga;
+
+export interface PlaybackRecord {
+  parentId: string;
+  chapterId?: string;
+  channelId?: string;
+  parentTitle?: string;
+  chapterTitle?: string;
+  cover?: string;
+  mode?: PlaybackMode;
+  progress?: PlaybackProgress;
+  updatedAt: number;
+}
+
+export interface PlaybackResumeIntent {
+  chapterId?: string;
+  progress?: PlaybackProgress;
+  mode?: PlaybackMode;
 }
 
 export interface ChannelCapabilities {
@@ -76,6 +138,7 @@ export interface ChannelCapabilities {
   pagination?: PaginationFeature;
   chaptersLabel?: string;
   chaptersItemLabel?: string;
+  playback?: ResolvedPlaybackConfig;
 }
 
 export interface VariableDefinition {
@@ -228,6 +291,8 @@ export interface Plugin {
   variablesSchema?: Record<string, VariableDefinition>;
   /** Whether all required user variables are configured (wasm plugins). */
   variablesReady?: boolean;
+  playback?: PlaybackConfig;
+  capabilities?: string[];
 }
 
 export interface FeedResponse {

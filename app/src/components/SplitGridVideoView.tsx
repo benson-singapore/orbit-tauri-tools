@@ -13,6 +13,7 @@ import type { Article, ThemeMode } from "@/types";
 interface SplitGridVideoViewProps {
   theme: ThemeMode;
   runtimeBase: string | null;
+  pluginId: string;
   articles: Article[];
   gridColumnCount: GridColumnCount;
   coverAspectRatio: GridCoverAspectRatio;
@@ -33,6 +34,7 @@ interface SplitGridVideoViewProps {
 export function SplitGridVideoView({
   theme,
   runtimeBase,
+  pluginId,
   articles,
   gridColumnCount,
   coverAspectRatio,
@@ -133,6 +135,7 @@ export function SplitGridVideoView({
         <VideoWallFocusView
           theme={theme}
           runtimeBase={runtimeBase}
+          pluginId={pluginId}
           sessions={videoSessions}
           columnCount={videoColumnCount}
           onExpandSession={onExpandSession}

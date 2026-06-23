@@ -129,6 +129,35 @@ func (s *Store) migrate() error {
 	if err := s.migratePluginIncludeInAll(); err != nil {
 		return err
 	}
+	if err := s.migratePlaybackRecords(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Store) migratePlaybackRecords() error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS playback_records (
+			plugin_id     TEXT NOT NULL,
+			parent_id     TEXT NOT NULL,
+			chapter_id    TEXT,
+			channel_id    TEXT,
+			parent_title  TEXT,
+			chapter_title TEXT,
+			cover         TEXT,
+			mode          TEXT NOT NULL,
+			progress_json TEXT,
+			updated_at    INTEGER NOT NULL,
+			PRIMARY KEY (plugin_id, parent_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_playback_plugin_updated
+		 ON playback_records(plugin_id, updated_at DESC)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.DB.Exec(stmt); err != nil {
+			return fmt.Errorf("migrate playback records: %w", err)
+		}
+	}
 	return nil
 }
 

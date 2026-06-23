@@ -129,7 +129,9 @@ function scheduleFeedReloadAfterBackgroundFetch(
 
 function capabilitiesEqual(a: ChannelCapabilities, b: ChannelCapabilities): boolean {
   const pagEqual = JSON.stringify(a.pagination ?? null) === JSON.stringify(b.pagination ?? null);
+  const playbackEqual = JSON.stringify(a.playback ?? null) === JSON.stringify(b.playback ?? null);
   return pagEqual
+    && playbackEqual
     && a.canRefresh === b.canRefresh
     && a.canLoadMore === b.canLoadMore
     && a.canLoadMoreChapters === b.canLoadMoreChapters

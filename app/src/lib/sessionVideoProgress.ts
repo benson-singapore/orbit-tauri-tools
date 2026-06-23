@@ -21,6 +21,22 @@ export function clearSessionPlaybackSnapshot(sessionId: string): void {
   snapshots.delete(sessionId);
 }
 
+export const PLAYBACK_RESUME_EVENT = "orbit:playback-resume";
+
+export interface PlaybackResumeEventDetail {
+  sessionId: string;
+  position: number;
+}
+
+export function dispatchPlaybackResume(sessionId: string, position: number): void {
+  if (!sessionId || position <= 0) return;
+  window.dispatchEvent(
+    new CustomEvent<PlaybackResumeEventDetail>(PLAYBACK_RESUME_EVENT, {
+      detail: { sessionId, position },
+    }),
+  );
+}
+
 export function snapshotNativeVideoProgress(
   sessionId: string,
   container: HTMLElement,

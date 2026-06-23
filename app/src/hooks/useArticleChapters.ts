@@ -43,7 +43,9 @@ interface UseArticleChaptersOptions {
   >;
   storedChannel?: string | null;
   enabled?: boolean;
+  initialChapterId?: string;
   onChapterDetail?: (article: Article) => void;
+  onChapterDetailLoaded?: (article: Article) => void;
 }
 
 export function useArticleChapters({
@@ -53,7 +55,9 @@ export function useArticleChapters({
   capabilities,
   storedChannel,
   enabled = true,
+  initialChapterId,
   onChapterDetail,
+  onChapterDetailLoaded,
 }: UseArticleChaptersOptions) {
   const [items, setItems] = useState<Article[]>([]);
   const [title, setTitle] = useState("");
@@ -65,6 +69,10 @@ export function useArticleChapters({
   const [detailLoading, setDetailLoading] = useState(false);
   const onChapterDetailRef = useRef(onChapterDetail);
   onChapterDetailRef.current = onChapterDetail;
+  const onChapterDetailLoadedRef = useRef(onChapterDetailLoaded);
+  onChapterDetailLoadedRef.current = onChapterDetailLoaded;
+  const initialChapterIdRef = useRef(initialChapterId);
+  initialChapterIdRef.current = initialChapterId;
 
   const resolveChannelId = useCallback(
     (article: Article) =>
@@ -87,6 +95,7 @@ export function useArticleChapters({
         .then(result => {
           if (result.item) {
             onChapterDetailRef.current?.(result.item);
+            onChapterDetailLoadedRef.current?.(result.item);
           }
           return result.item ?? chapter;
         })
@@ -112,7 +121,11 @@ export function useArticleChapters({
         setActiveChapter(null);
         return Promise.resolve(null);
       }
-      return loadChapterDetail(first, parent);
+      const targetId = initialChapterIdRef.current;
+      const target = targetId
+        ? nextItems.find(item => item.id === targetId) ?? first
+        : first;
+      return loadChapterDetail(target, parent);
     },
     [parent, loadChapterDetail],
   );
@@ -175,7 +188,11 @@ export function useArticleChapters({
           setActiveChapter(null);
           return;
         }
-        return loadChapterDetail(first, parent);
+        const targetId = initialChapterIdRef.current;
+        const target = targetId
+          ? nextItems.find(item => item.id === targetId) ?? first
+          : first;
+        return loadChapterDetail(target, parent);
       })
       .catch(err => {
         if (!cancelled) console.error("open chapters failed", err);

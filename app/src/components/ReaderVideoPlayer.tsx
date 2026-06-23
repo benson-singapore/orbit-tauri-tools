@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import Hls from "hls.js";
 import { YouTubeEmbed } from "@/components/YouTubeEmbed";
 import { ProxiedImage } from "@/components/ProxiedImage";
@@ -6,6 +6,8 @@ import { isHlsVideoUrl, resolveArticleVideoUrl } from "@/lib/articleVideoUrl";
 import { reportSessionVideoAspectRatio } from "@/lib/videoAspectRatio";
 import {
   getSessionPlaybackSnapshot,
+  PLAYBACK_RESUME_EVENT,
+  type PlaybackResumeEventDetail,
   updateSessionPlaybackSnapshot,
 } from "@/lib/sessionVideoProgress";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
@@ -18,6 +20,26 @@ interface ReaderVideoPlayerProps {
   className?: string;
 }
 
+function seekVideoToPosition(video: HTMLVideoElement, position: number): void {
+  if (position <= 0.5) return;
+
+  const seek = () => {
+    try {
+      if (Math.abs(video.currentTime - position) > 0.75) {
+        video.currentTime = position;
+      }
+    } catch {
+      // Ignore seek failures before the media is ready.
+    }
+  };
+
+  if (video.readyState >= 1) {
+    seek();
+  }
+  video.addEventListener("loadedmetadata", seek, { once: true });
+  video.addEventListener("canplay", seek, { once: true });
+}
+
 export function ReaderVideoPlayer({
   sessionId,
   article,
@@ -27,48 +49,69 @@ export function ReaderVideoPlayer({
   const youTubeVideoId = resolveYouTubeVideoId(article);
   const videoUrl = resolveArticleVideoUrl(article);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const savedSnapshotRef = useRef(getSessionPlaybackSnapshot(sessionId));
+  const hlsRef = useRef<Hls | null>(null);
 
-  useEffect(() => {
-    savedSnapshotRef.current = getSessionPlaybackSnapshot(sessionId);
+  const restorePlaybackSnapshot = useCallback((position?: number) => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const target = position ?? getSessionPlaybackSnapshot(sessionId)?.currentTime ?? 0;
+    if (target <= 0.5) return;
+
+    seekVideoToPosition(video, target);
+
+    const snapshot = getSessionPlaybackSnapshot(sessionId);
+    if (snapshot?.playing) {
+      void video.play().catch(() => {});
+    }
   }, [sessionId]);
 
   useEffect(() => {
     const video = videoRef.current;
-    const savedSnapshot = savedSnapshotRef.current;
-    if (!video || !savedSnapshot) return;
+    if (!video) return;
 
-    const applySnapshot = () => {
+    const reportAspectRatio = () => {
       if (video.videoWidth > 0 && video.videoHeight > 0) {
         reportSessionVideoAspectRatio(
           sessionId,
           video.videoHeight / video.videoWidth,
         );
       }
-      if (savedSnapshot.currentTime > 0.5) {
-        try {
-          video.currentTime = savedSnapshot.currentTime;
-        } catch {
-          // Ignore seek failures before metadata is ready.
-        }
-      }
-      if (savedSnapshot.playing) {
-        void video.play().catch(() => {});
-      }
+    };
+
+    const onMetadata = () => {
+      reportAspectRatio();
+      restorePlaybackSnapshot();
     };
 
     if (video.readyState >= 1) {
-      applySnapshot();
+      onMetadata();
       return;
     }
 
-    video.addEventListener("loadedmetadata", applySnapshot, { once: true });
-    return () => video.removeEventListener("loadedmetadata", applySnapshot);
-  }, [sessionId, videoUrl]);
+    video.addEventListener("loadedmetadata", onMetadata, { once: true });
+    return () => video.removeEventListener("loadedmetadata", onMetadata);
+  }, [sessionId, videoUrl, restorePlaybackSnapshot]);
+
+  useEffect(() => {
+    const onResume = (event: Event) => {
+      const detail = (event as CustomEvent<PlaybackResumeEventDetail>).detail;
+      if (detail.sessionId !== sessionId) return;
+      restorePlaybackSnapshot(detail.position);
+    };
+
+    window.addEventListener(PLAYBACK_RESUME_EVENT, onResume);
+    return () => window.removeEventListener(PLAYBACK_RESUME_EVENT, onResume);
+  }, [sessionId, restorePlaybackSnapshot]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !videoUrl || youTubeVideoId) return;
+
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
 
     if (!isHlsVideoUrl(videoUrl)) {
       video.src = videoUrl;
@@ -77,15 +120,22 @@ export function ReaderVideoPlayer({
 
     if (Hls.isSupported()) {
       const hls = new Hls();
+      hlsRef.current = hls;
       hls.loadSource(videoUrl);
       hls.attachMedia(video);
-      return () => hls.destroy();
+      hls.on(Hls.Events.MANIFEST_PARSED, () => {
+        restorePlaybackSnapshot();
+      });
+      return () => {
+        hls.destroy();
+        hlsRef.current = null;
+      };
     }
 
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = videoUrl;
     }
-  }, [videoUrl, youTubeVideoId]);
+  }, [videoUrl, youTubeVideoId, restorePlaybackSnapshot]);
 
   return (
     <div className={className}>
@@ -94,10 +144,19 @@ export function ReaderVideoPlayer({
       ) : videoUrl ? (
         <video
           ref={videoRef}
-          className="w-full h-full object-cover"
+          className="w-full h-full object-contain"
           controls
           playsInline
           poster={article.image}
+          onLoadedMetadata={event => {
+            const video = event.currentTarget;
+            if (video.videoWidth > 0 && video.videoHeight > 0) {
+              reportSessionVideoAspectRatio(
+                sessionId,
+                video.videoHeight / video.videoWidth,
+              );
+            }
+          }}
           onTimeUpdate={event => {
             const video = event.currentTarget;
             updateSessionPlaybackSnapshot(sessionId, {

@@ -18,10 +18,11 @@ const (
 	MediaAudio   = "audio"
 	MediaRating  = "rating"
 
-	CapFeed    = "feed"
-	CapSearch  = "search"
-	CapDetail  = "detail"
-	CapContent = "content"
+	CapFeed     = "feed"
+	CapSearch   = "search"
+	CapDetail   = "detail"
+	CapContent  = "content"
+	CapPlayback = "playback"
 )
 
 // Manifest describes a plugin package (manifest.json).
@@ -54,6 +55,7 @@ type ManifestConfig struct {
 	Secrets         map[string]string              `json:"secrets,omitempty"` // deprecated: use variables
 	LegacyFeedURL   string                         `json:"feedUrl,omitempty"` // migrated to channels on load; not persisted after save
 	ExecutionMode   string                         `json:"executionMode,omitempty"` // wasm | browser | hybrid (Phase 3)
+	Playback        *PlaybackConfig                `json:"playback,omitempty"`
 	Wasm            WasmConfig                     `json:"wasm,omitempty"`
 	Browser         BrowserConfig                  `json:"browser,omitempty"`
 }

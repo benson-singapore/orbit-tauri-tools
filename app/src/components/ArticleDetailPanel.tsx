@@ -24,9 +24,16 @@ import {
   destroyArticleContentPlayers,
 } from "@/lib/articleContentPlayer";
 import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
+import { usePlaybackProgress } from "@/hooks/usePlaybackProgress";
+import {
+  applyPlaybackResume,
+  fetchResumeIntentForArticle,
+  seedPlaybackResumeSnapshot,
+} from "@/lib/playbackResume";
+import { resolveEffectivePlayback } from "@/lib/playbackConfig";
 import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
-import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
+import type { Article, ChannelCapabilities, PlaybackResumeIntent, Plugin, ThemeMode } from "@/types";
 
 interface ArticleDetailPanelProps {
   sessionId: string;
@@ -42,6 +49,7 @@ interface ArticleDetailPanelProps {
 }
 
 export function ArticleDetailPanel({
+  sessionId,
   theme,
   runtimeBase,
   article: initialArticle,
@@ -57,6 +65,8 @@ export function ArticleDetailPanel({
   const [coverImageFailed, setCoverImageFailed] = useState(false);
   const [chaptersDrawerOpen, setChaptersDrawerOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
+  const resumeAppliedRef = useRef(false);
+  const [resolvedResumeIntent, setResolvedResumeIntent] = useState<PlaybackResumeIntent | undefined>();
 
   const hasChaptersMode = shouldOpenChaptersForArticle(
     initialArticle,
@@ -66,6 +76,29 @@ export function ArticleDetailPanel({
     storedChannel,
   );
 
+  const channelId = resolveArticleDetailChannel(initialArticle, pluginMeta, activeChannel);
+
+  useEffect(() => {
+    resumeAppliedRef.current = false;
+    let cancelled = false;
+    void fetchResumeIntentForArticle(
+      initialArticle.pluginId,
+      initialArticle.id,
+      channelId,
+    ).then(intent => {
+      if (!cancelled) {
+        setResolvedResumeIntent(intent);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialArticle.id, initialArticle.pluginId, channelId]);
+
+  useEffect(() => {
+    seedPlaybackResumeSnapshot(sessionId, resolvedResumeIntent?.progress, resolvedResumeIntent?.mode);
+  }, [sessionId, resolvedResumeIntent?.progress, resolvedResumeIntent?.mode]);
+
   const chapters = useArticleChapters({
     parent: hasChaptersMode ? initialArticle : null,
     activeChannel,
@@ -73,7 +106,22 @@ export function ArticleDetailPanel({
     capabilities: channelCapabilities,
     storedChannel,
     enabled: hasChaptersMode,
+    initialChapterId: resolvedResumeIntent?.chapterId,
     onChapterDetail: setArticle,
+    onChapterDetailLoaded: () => {
+      resumeAppliedRef.current = false;
+    },
+  });
+
+  usePlaybackProgress({
+    pluginMeta,
+    channelId,
+    channelCapabilities,
+    parentArticle: hasChaptersMode ? initialArticle : null,
+    article,
+    sessionId,
+    contentRef,
+    enabled: true,
   });
 
   useEffect(() => {
@@ -82,7 +130,6 @@ export function ArticleDetailPanel({
     setChaptersDrawerOpen(false);
   }, [initialArticle]);
 
-  const channelId = resolveArticleDetailChannel(article, pluginMeta, activeChannel);
   const effectiveHasDetail = resolveArticleHasDetail(
     article,
     pluginMeta,
@@ -182,18 +229,41 @@ export function ArticleDetailPanel({
     });
   }, [article.content, article.image, article.type, runtimeBase, theme]);
 
-  useEffect(() => {
-    if (displayContent) {
-      highlightArticleCode(contentRef.current);
-      bindArticleContentImages(contentRef.current, runtimeBase);
-      bindArticleContentPlayers(contentRef.current);
-    }
-    return () => destroyArticleContentPlayers(contentRef.current);
-  }, [displayContent, runtimeBase, theme]);
-
   const showContentLoading = loading
     || chapters.detailLoading
     || (chapters.isActive && chapters.loading);
+
+  useEffect(() => {
+    if (!displayContent) return;
+
+    highlightArticleCode(contentRef.current);
+    bindArticleContentImages(contentRef.current, runtimeBase);
+    bindArticleContentPlayers(contentRef.current, { sessionId });
+
+    if (resolvedResumeIntent?.progress && !resumeAppliedRef.current && !showContentLoading) {
+      resumeAppliedRef.current = true;
+      const mode = resolvedResumeIntent.mode
+        ?? resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities).mode;
+      window.requestAnimationFrame(() => {
+        applyPlaybackResume(mode, resolvedResumeIntent.progress, {
+          sessionId,
+          contentRoot: contentRef.current,
+        });
+      });
+    }
+
+    return () => destroyArticleContentPlayers(contentRef.current);
+  }, [
+    displayContent,
+    runtimeBase,
+    theme,
+    sessionId,
+    resolvedResumeIntent,
+    showContentLoading,
+    pluginMeta,
+    channelId,
+    channelCapabilities,
+  ]);
 
   const showRatingHero = shouldShowArticleRatingHero(article, {
     isRatingLayout: isRatingCoverLayout,

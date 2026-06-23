@@ -214,6 +214,11 @@ func validateWasmChannels(channels []FeedChannel) error {
 }
 
 func findChannel(channels []FeedChannel, id string) (*FeedChannel, bool) {
+	return FindChannel(channels, id)
+}
+
+// FindChannel returns the channel with the given id.
+func FindChannel(channels []FeedChannel, id string) (*FeedChannel, bool) {
 	id = strings.TrimSpace(id)
 	for i := range channels {
 		if channels[i].ID == id {

@@ -78,6 +78,8 @@ type pluginView struct {
 	Version         string                               `json:"version,omitempty"`
 	MarketID        string               `json:"marketId,omitempty"`
 	ContentRating   string               `json:"contentRating,omitempty"`
+	Playback        *plugin.PlaybackConfig `json:"playback,omitempty"`
+	Capabilities    []string             `json:"capabilities,omitempty"`
 }
 
 func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
@@ -112,6 +114,8 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		Version:         rec.Version,
 		MarketID:        rec.Meta.MarketID,
 		ContentRating:   rec.ContentRating,
+		Playback:        rec.Config.Playback,
+		Capabilities:    rec.Capabilities,
 	}
 }
 

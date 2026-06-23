@@ -28,7 +28,11 @@ import { ChaptersList } from "@/components/ChaptersList";
 import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
+import { usePlaybackProgress } from "@/hooks/usePlaybackProgress";
 import { usesDedicatedSessionVideoPlayer, promoteArticleForSessionVideo } from "@/lib/readerSessionVideos";
+import { applyPlaybackResume, fetchResumeIntentForArticle, seedPlaybackResumeSnapshot } from "@/lib/playbackResume";
+import { resolveEffectivePlayback } from "@/lib/playbackConfig";
+import type { PlaybackResumeIntent } from "@/types";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
 import type { ReaderSessionMode } from "@/lib/readerSessions";
@@ -51,6 +55,8 @@ interface ArticleReaderModalProps {
   onClose: () => void;
   onDock: () => void;
   onArticleChange?: (article: Article) => void;
+  resumeIntent?: PlaybackResumeIntent;
+  onResumeApplied?: () => void;
 }
 
 export function ArticleReaderModal({
@@ -70,6 +76,8 @@ export function ArticleReaderModal({
   onClose,
   onDock,
   onArticleChange,
+  resumeIntent,
+  onResumeApplied,
 }: ArticleReaderModalProps) {
   const isExpanded = mode === "expanded";
   const isDark = isDarkTheme(theme);
@@ -105,6 +113,41 @@ export function ArticleReaderModal({
     { hasDetail },
   );
   const hasChaptersMode = Boolean(chaptersParent);
+  const resumeAppliedRef = useRef(false);
+  const [resolvedResumeIntent, setResolvedResumeIntent] = useState(resumeIntent);
+
+  useEffect(() => {
+    setResolvedResumeIntent(resumeIntent);
+  }, [resumeIntent]);
+
+  useEffect(() => {
+    if (resumeIntent?.progress) return;
+
+    let cancelled = false;
+    const parentId = chaptersParent?.id ?? article.id;
+    void fetchResumeIntentForArticle(article.pluginId, parentId, channelId).then(intent => {
+      if (!cancelled && intent) {
+        setResolvedResumeIntent(intent);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    article.id,
+    article.pluginId,
+    channelId,
+    chaptersParent?.id,
+    resumeIntent?.progress,
+  ]);
+
+  useEffect(() => {
+    resumeAppliedRef.current = false;
+  }, [sessionId, resolvedResumeIntent?.chapterId, resolvedResumeIntent?.progress]);
+
+  useEffect(() => {
+    seedPlaybackResumeSnapshot(sessionId, resolvedResumeIntent?.progress, resolvedResumeIntent?.mode);
+  }, [sessionId, resolvedResumeIntent?.progress, resolvedResumeIntent?.mode]);
 
   const chapters = useArticleChapters({
     parent: chaptersParent,
@@ -113,10 +156,25 @@ export function ArticleReaderModal({
     capabilities: channelCapabilities,
     storedChannel,
     enabled: hasChaptersMode,
+    initialChapterId: resolvedResumeIntent?.chapterId,
     onChapterDetail: next => {
       setArticle(next);
       syncArticleToSession(next);
     },
+    onChapterDetailLoaded: () => {
+      resumeAppliedRef.current = false;
+    },
+  });
+
+  usePlaybackProgress({
+    pluginMeta,
+    channelId,
+    channelCapabilities,
+    parentArticle: chaptersParent,
+    article,
+    sessionId,
+    contentRef,
+    enabled: isExpanded,
   });
 
   useEffect(() => {
@@ -253,13 +311,70 @@ export function ArticleReaderModal({
   }, [article.content, article.image, article.type, runtimeBase, hasSessionVideoMedia, theme]);
 
   useEffect(() => {
-    if (displayContent) {
-      highlightArticleCode(contentRef.current);
-      bindArticleContentImages(contentRef.current, runtimeBase);
-      bindArticleContentPlayers(contentRef.current);
+    if (!displayContent) return;
+
+    highlightArticleCode(contentRef.current);
+    bindArticleContentImages(contentRef.current, runtimeBase);
+    bindArticleContentPlayers(contentRef.current, { sessionId });
+
+    if (
+      isExpanded
+      && !hasSessionVideoMedia
+      && resolvedResumeIntent?.progress
+      && !resumeAppliedRef.current
+      && !showContentLoading
+    ) {
+      resumeAppliedRef.current = true;
+      const mode = resolvedResumeIntent.mode ?? resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities).mode;
+      window.requestAnimationFrame(() => {
+        applyPlaybackResume(mode, resolvedResumeIntent.progress, {
+          sessionId,
+          contentRoot: contentRef.current,
+        });
+        onResumeApplied?.();
+      });
     }
+
     return () => destroyArticleContentPlayers(contentRef.current);
-  }, [displayContent, runtimeBase, theme]);
+  }, [
+    displayContent,
+    runtimeBase,
+    theme,
+    sessionId,
+    isExpanded,
+    hasSessionVideoMedia,
+    resolvedResumeIntent,
+    showContentLoading,
+    pluginMeta,
+    channelId,
+    channelCapabilities,
+    onResumeApplied,
+  ]);
+
+  useEffect(() => {
+    if (!isExpanded || !hasSessionVideoMedia || !resolvedResumeIntent?.progress || resumeAppliedRef.current) return;
+    if (showContentLoading) return;
+
+    resumeAppliedRef.current = true;
+    const mode = resolvedResumeIntent.mode ?? resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities).mode;
+    window.requestAnimationFrame(() => {
+      applyPlaybackResume(mode, resolvedResumeIntent.progress, {
+        sessionId,
+        contentRoot: contentRef.current,
+      });
+      onResumeApplied?.();
+    });
+  }, [
+    isExpanded,
+    hasSessionVideoMedia,
+    resolvedResumeIntent,
+    showContentLoading,
+    pluginMeta,
+    channelId,
+    channelCapabilities,
+    sessionId,
+    onResumeApplied,
+  ]);
 
   const handleDock = useCallback(() => {
     snapshotContentVideoProgress(sessionId, contentRef.current);
