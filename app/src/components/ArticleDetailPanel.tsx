@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { articleContentTheme, isDarkTheme } from "@/lib/themeMode";
 import { ProxiedImage } from "@/components/ProxiedImage";
+import { Icon } from "@/components/Icon";
 import { YouTubeEmbed } from "@/components/YouTubeEmbed";
 import { ChaptersDrawer } from "@/components/ChaptersDrawer";
 import { ChaptersList } from "@/components/ChaptersList";
@@ -19,6 +20,8 @@ import {
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
+import { syncComicReaderImages } from "@/lib/comicChapterContent";
+import { comicPageWidthCssValue } from "@/lib/comicPageWidth";
 import {
   bindArticleContentPlayers,
   destroyArticleContentPlayers,
@@ -41,6 +44,7 @@ interface ArticleDetailPanelProps {
   runtimeBase: string | null;
   article: Article;
   readerFontScale: number;
+  comicPageWidth?: number;
   hasDetail: boolean;
   activeChannel: string;
   pluginMeta?: Plugin;
@@ -54,6 +58,7 @@ export function ArticleDetailPanel({
   runtimeBase,
   article: initialArticle,
   readerFontScale,
+  comicPageWidth = 100,
   hasDetail,
   activeChannel,
   pluginMeta,
@@ -112,17 +117,6 @@ export function ArticleDetailPanel({
     onChapterDetailLoaded: () => {
       resumeAppliedRef.current = false;
     },
-  });
-
-  usePlaybackProgress({
-    pluginMeta,
-    channelId,
-    channelCapabilities,
-    parentArticle: hasChaptersMode ? initialArticle : null,
-    article,
-    sessionId,
-    contentRef,
-    enabled: true,
   });
 
   useEffect(() => {
@@ -239,12 +233,29 @@ export function ArticleDetailPanel({
     || chapters.detailLoading
     || (chapters.isActive && chapters.loading);
 
-  useEffect(() => {
-    if (!displayContent) return;
+  usePlaybackProgress({
+    pluginMeta,
+    channelId,
+    channelCapabilities,
+    parentArticle: hasChaptersMode ? initialArticle : null,
+    article,
+    sessionId,
+    contentRef,
+    scrollRootRef,
+    contentReady: Boolean(displayContent) && !showContentLoading,
+    enabled: true,
+  });
 
-    highlightArticleCode(contentRef.current);
-    bindArticleContentImages(contentRef.current, runtimeBase);
-    bindArticleContentPlayers(contentRef.current, { sessionId });
+  useEffect(() => {
+    if (!displayContent || !contentRef.current) return;
+
+    const contentRoot = contentRef.current;
+    highlightArticleCode(contentRoot);
+    if (isComicReaderContent) {
+      syncComicReaderImages(contentRoot, scrollRootRef.current, { runtimeBase });
+    }
+    bindArticleContentImages(contentRoot, runtimeBase);
+    bindArticleContentPlayers(contentRoot, { sessionId });
 
     if (resolvedResumeIntent?.progress && !resumeAppliedRef.current && !showContentLoading) {
       resumeAppliedRef.current = true;
@@ -253,14 +264,17 @@ export function ArticleDetailPanel({
       window.requestAnimationFrame(() => {
         applyPlaybackResume(mode, resolvedResumeIntent.progress, {
           sessionId,
-          contentRoot: contentRef.current,
+          contentRoot,
+          scrollRoot: scrollRootRef.current,
+          chapterId: resolvedResumeIntent.chapterId,
         });
       });
     }
 
-    return () => destroyArticleContentPlayers(contentRef.current);
+    return () => destroyArticleContentPlayers(contentRoot);
   }, [
     displayContent,
+    isComicReaderContent,
     runtimeBase,
     theme,
     sessionId,
@@ -304,6 +318,7 @@ export function ArticleDetailPanel({
       itemLabel={channelCapabilities.chaptersItemLabel}
       onSelect={chapter => {
         setChaptersDrawerOpen(false);
+        scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
         void chapters.selectChapter(chapter);
       }}
       onLoadMore={chapters.loadMore}
@@ -359,6 +374,33 @@ export function ArticleDetailPanel({
     );
   }, [chapters, isComicReaderContent]);
 
+  const introStartReading = useMemo(() => {
+    if (!chapters.isActive || pluginMeta?.mediaType !== "manga" || isComicReaderContent) return null;
+    const activeId = chapters.activeChapter?.id ?? null;
+    if (!activeId) return null;
+    const idx = chapters.items.findIndex(item => item.id === activeId);
+    if (idx < 0) return null;
+    const next = idx < chapters.items.length - 1 ? chapters.items[idx + 1] : null;
+    if (!next) return null;
+
+    return (
+      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800 flex justify-center">
+        <button
+          type="button"
+          onClick={() => {
+            scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+            void chapters.selectChapter(next);
+          }}
+          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 transition-colors"
+          title={`开始阅读：${next.title}`}
+        >
+          开始阅读
+          <Icon name="arrow-left" className="w-4 h-4 rotate-180" />
+        </button>
+      </div>
+    );
+  }, [chapters, isComicReaderContent, pluginMeta?.mediaType]);
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
       {showRatingHero ? (
@@ -376,7 +418,10 @@ export function ArticleDetailPanel({
       <div ref={scrollRootRef} className="flex-1 min-h-0 w-full overflow-y-auto">
           <div
             className="article-reader space-y-6 px-4 pb-5 sm:px-5"
-            style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
+            style={{
+              "--reader-scale": readerFontScale,
+              "--comic-page-width": comicPageWidthCssValue(comicPageWidth),
+            } as React.CSSProperties}
           >
             <div className="space-y-4">
               {!showRatingHero ? (
@@ -445,6 +490,7 @@ export function ArticleDetailPanel({
                   className="article-content mt-6"
                   dangerouslySetInnerHTML={{ __html: displayContent }}
                 />
+                {introStartReading}
                 {chapterPager}
                 {article.sourceUrl ? (
                   <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">

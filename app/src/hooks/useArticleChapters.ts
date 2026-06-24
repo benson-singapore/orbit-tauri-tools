@@ -69,6 +69,8 @@ export function useArticleChapters({
   const [hasMore, setHasMore] = useState(false);
   const [activeChapter, setActiveChapter] = useState<Article | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const activeChapterRef = useRef<Article | null>(null);
+  activeChapterRef.current = activeChapter;
   const onChapterDetailRef = useRef(onChapterDetail);
   onChapterDetailRef.current = onChapterDetail;
   const onChapterDetailLoadedRef = useRef(onChapterDetailLoaded);
@@ -86,7 +88,6 @@ export function useArticleChapters({
     (chapter: Article, parentArticle: Article) => {
       const channelId = resolveChannelId(parentArticle);
       setActiveChapter(chapter);
-      onChapterDetailRef.current?.(chapter);
       setDetailLoading(true);
       return runtimeOpenChapterDetail(
         parentArticle.pluginId,
@@ -123,10 +124,13 @@ export function useArticleChapters({
         setActiveChapter(null);
         return Promise.resolve(null);
       }
-      const targetId = initialChapterIdRef.current;
-      const target = targetId
-        ? nextItems.find(item => item.id === targetId) ?? first
-        : first;
+      const resumeId = initialChapterIdRef.current;
+      const currentId = activeChapterRef.current?.id;
+      const target = (currentId
+        ? nextItems.find(item => item.id === currentId)
+        : null)
+        ?? (resumeId ? nextItems.find(item => item.id === resumeId) : null)
+        ?? first;
       return loadChapterDetail(target, parent);
     },
     [parent, loadChapterDetail],

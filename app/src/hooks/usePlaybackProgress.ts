@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import { putPlayback } from "@/lib/playback";
 import { resolveEffectivePlayback } from "@/lib/playbackConfig";
+import { syncComicLazyImages } from "@/lib/comicChapterContent";
 import {
   collectArticleScrollProgress,
   collectMangaPageProgress,
+  collectMangaStreamProgress,
   collectTimeProgress,
   findArticleScrollParent,
   hasMeaningfulProgress,
+  isComicContentRoot,
 } from "@/lib/playbackResume";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
 import type { Article, ChannelCapabilities, PlaybackProgress, PlaybackRecord, Plugin } from "@/types";
@@ -21,7 +24,18 @@ export interface UsePlaybackProgressOptions {
   article: Article | null;
   sessionId?: string;
   contentRef: RefObject<HTMLElement | null>;
+  scrollRootRef?: RefObject<HTMLElement | null>;
+  /** True once article HTML is mounted (not loading). Re-binds scroll tracking. */
+  contentReady?: boolean;
   enabled?: boolean;
+}
+
+function shouldTrackScrollProgress(
+  mode: string,
+  contentRoot: HTMLElement | null,
+): boolean {
+  if (mode === "manga" || mode === "article") return true;
+  return isComicContentRoot(contentRoot);
 }
 
 export function usePlaybackProgress({
@@ -32,19 +46,23 @@ export function usePlaybackProgress({
   article,
   sessionId,
   contentRef,
+  scrollRootRef,
+  contentReady = true,
   enabled = true,
 }: UsePlaybackProgressOptions): void {
   const config = useMemo(
     () => resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities),
     [pluginMeta, channelId, channelCapabilities],
   );
-  const lastPayloadRef = useRef("");
+  const lastProgressKeyRef = useRef("");
   const lastProgressRef = useRef<PlaybackProgress | undefined>(undefined);
   const playbackEngagedRef = useRef(false);
+  const articleRef = useRef(article);
+  articleRef.current = article;
 
   useEffect(() => {
     lastProgressRef.current = undefined;
-    lastPayloadRef.current = "";
+    lastProgressKeyRef.current = "";
     playbackEngagedRef.current = false;
   }, [article?.id, parentArticle?.id]);
 
@@ -66,18 +84,23 @@ export function usePlaybackProgress({
   }, [enabled, config.mode, config.progress, contentRef, article?.id]);
 
   const buildRecord = useCallback((): PlaybackRecord | null => {
-    if (!article || !config.history || config.managedBy !== "runtime") return null;
+    const currentArticle = articleRef.current;
+    if (!currentArticle || !config.history || config.managedBy !== "runtime") return null;
 
-    const parentId = parentArticle?.id ?? article.id;
-    const parentTitle = parentArticle?.title ?? article.title;
-    const chapterId = parentArticle ? article.id : undefined;
-    const chapterTitle = parentArticle ? article.title : undefined;
-    const cover = parentArticle?.image ?? article.image;
+    const parentId = parentArticle?.id ?? currentArticle.id;
+    const parentTitle = parentArticle?.title ?? currentArticle.title;
+    const cover = parentArticle?.image ?? currentArticle.image;
+    const scrollRoot = scrollRootRef?.current ?? null;
+    const root = contentRef.current;
 
+    let chapterId = parentArticle ? currentArticle.id : undefined;
+    let chapterTitle = parentArticle ? currentArticle.title : undefined;
     let progress: PlaybackProgress | undefined;
+    const isComic = isComicContentRoot(root);
+    const progressMode = isComic ? "manga" : config.mode;
+
     if (config.progress) {
-      const root = contentRef.current;
-      switch (config.mode) {
+      switch (progressMode) {
         case "video":
         case "audio":
           progress = collectTimeProgress(sessionId, root);
@@ -86,7 +109,15 @@ export function usePlaybackProgress({
           progress = collectArticleScrollProgress(root);
           break;
         case "manga":
-          progress = collectMangaPageProgress(root);
+          if (root?.dataset.comicStream === "true") {
+            const stream = collectMangaStreamProgress(root, scrollRoot);
+            progress = stream.progress;
+            if (stream.chapterId && parentArticle) {
+              chapterId = stream.chapterId;
+            }
+          } else {
+            progress = collectMangaPageProgress(root, scrollRoot);
+          }
           break;
         default:
           break;
@@ -100,6 +131,16 @@ export function usePlaybackProgress({
       }
     }
 
+    if (chapterId && parentArticle && root?.dataset.comicStream === "true") {
+      const block = root.querySelector<HTMLElement>(`[data-comic-chapter="${chapterId}"]`);
+      const title = block?.getAttribute("aria-label");
+      if (title) {
+        chapterTitle = title;
+      } else if (chapterId === currentArticle.id) {
+        chapterTitle = currentArticle.title;
+      }
+    }
+
     return {
       parentId,
       chapterId,
@@ -107,14 +148,11 @@ export function usePlaybackProgress({
       parentTitle,
       chapterTitle,
       cover,
-      mode: config.mode,
+      mode: progressMode,
       progress,
       updatedAt: Math.floor(Date.now() / 1000),
     };
   }, [
-    article?.id,
-    article?.image,
-    article?.title,
     channelId,
     config.history,
     config.managedBy,
@@ -122,12 +160,14 @@ export function usePlaybackProgress({
     config.progress,
     contentRef,
     parentArticle,
+    scrollRootRef,
     sessionId,
   ]);
 
   const flush = useCallback(async () => {
     const record = buildRecord();
-    if (!record || !article?.pluginId) return;
+    const pluginId = articleRef.current?.pluginId ?? parentArticle?.pluginId;
+    if (!record || !pluginId) return;
     if (config.progress && !hasMeaningfulProgress(record.progress)) return;
     if (
       config.progress
@@ -136,15 +176,21 @@ export function usePlaybackProgress({
     ) {
       return;
     }
-    const payload = JSON.stringify(record);
-    if (payload === lastPayloadRef.current) return;
-    lastPayloadRef.current = payload;
+    const progressKey = JSON.stringify({
+      parentId: record.parentId,
+      chapterId: record.chapterId,
+      channelId: record.channelId,
+      mode: record.mode,
+      progress: record.progress,
+    });
+    if (progressKey === lastProgressKeyRef.current) return;
+    lastProgressKeyRef.current = progressKey;
     try {
-      await putPlayback(article.pluginId, record);
+      await putPlayback(pluginId, record);
     } catch (err) {
       console.error("playback sync failed", err);
     }
-  }, [article?.pluginId, buildRecord, config.mode, config.progress]);
+  }, [buildRecord, config.mode, config.progress, parentArticle?.pluginId]);
 
   const captureProgressSnapshot = useCallback(() => {
     if (!config.progress || !sessionId) return;
@@ -191,26 +237,86 @@ export function usePlaybackProgress({
 
   useEffect(() => {
     if (!enabled || !config.progress || !config.history || config.managedBy !== "runtime") return;
-    if (config.mode !== "manga" && config.mode !== "article") return;
 
-    const root = contentRef.current;
-    if (!root) return;
+    const resolveScrollTargets = (): Array<HTMLElement | Window> => {
+      const targets: Array<HTMLElement | Window> = [];
+      const seen = new Set<EventTarget>();
+      const add = (target: HTMLElement | Window | null | undefined) => {
+        if (!target || seen.has(target)) return;
+        seen.add(target);
+        targets.push(target);
+      };
+
+      add(scrollRootRef?.current ?? null);
+      const contentRoot = contentRef.current;
+      add(contentRoot ? findArticleScrollParent(contentRoot) : null);
+      if (targets.length === 0) add(window);
+      return targets;
+    };
+
+    if (contentReady) {
+      if (!shouldTrackScrollProgress(config.mode, contentRef.current)) return;
+    } else if (config.mode !== "manga" && config.mode !== "article") {
+      return;
+    }
 
     let timer = 0;
     const onScroll = () => {
+      const contentRoot = contentRef.current;
+      if (!shouldTrackScrollProgress(config.mode, contentRoot)) return;
+
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
+        if (contentRoot && isComicContentRoot(contentRoot)) {
+          syncComicLazyImages(contentRoot, scrollRootRef?.current ?? null);
+        }
         void flush();
       }, 400);
     };
 
-    const scrollParent = findArticleScrollParent(root);
-    const target: HTMLElement | Window = scrollParent ?? window;
-    target.addEventListener("scroll", onScroll, { passive: true });
+    const targets = resolveScrollTargets();
+    for (const target of targets) {
+      target.addEventListener("scroll", onScroll, { passive: true });
+    }
 
     return () => {
-      target.removeEventListener("scroll", onScroll);
+      for (const target of targets) {
+        target.removeEventListener("scroll", onScroll);
+      }
       window.clearTimeout(timer);
     };
-  }, [enabled, config.progress, config.history, config.managedBy, config.mode, contentRef, flush, article?.id]);
+  }, [
+    enabled,
+    config.progress,
+    config.history,
+    config.managedBy,
+    config.mode,
+    contentRef,
+    scrollRootRef,
+    contentReady,
+    flush,
+    article?.id,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !config.history || config.managedBy !== "runtime") return;
+    if (!article?.id || !contentReady) return;
+
+    const root = contentRef.current;
+    if (!shouldTrackScrollProgress(config.mode, root)) return;
+
+    const raf = window.requestAnimationFrame(() => {
+      void flush();
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [
+    enabled,
+    config.history,
+    config.managedBy,
+    config.mode,
+    article?.id,
+    contentReady,
+    contentRef,
+    flush,
+  ]);
 }

@@ -84,6 +84,65 @@ function resolveArticleImageOriginal(img: HTMLImageElement): string {
   return img.getAttribute("src")?.trim() ?? "";
 }
 
+function decodeProxiedImageUrl(src: string): string | null {
+  if (!isProxiedImageUrl(src)) return null;
+  try {
+    const parsed = new URL(src);
+    const raw = parsed.searchParams.get("url")?.trim() ?? "";
+    return isHttpImageUrl(raw) ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveBoundImageOriginal(img: HTMLImageElement): string {
+  const fromAttr = resolveArticleImageOriginal(img);
+  if (fromAttr) return fromAttr;
+  return decodeProxiedImageUrl(img.src) ?? "";
+}
+
+/** Comic lazy images keep the real URL in data-src until activated — skip error hooks until then. */
+export function isComicLazyImagePending(img: HTMLImageElement): boolean {
+  if (!img.hasAttribute("data-comic-lazy")) return false;
+  const dataSrc = img.getAttribute("data-src")?.trim() ?? "";
+  if (!dataSrc) return false;
+  const src = img.getAttribute("src")?.trim() ?? "";
+  return src !== dataSrc;
+}
+
+function attachArticleImageErrorHandler(
+  img: HTMLImageElement,
+  runtimeBase: string,
+): void {
+  const original = resolveBoundImageOriginal(img);
+  if (!original) return;
+
+  img.onerror = () => {
+    const originalUrl = resolveBoundImageOriginal(img);
+    if (!originalUrl) return;
+
+    const retry = img.dataset.orbitImgRetry ?? "";
+    if (!retry && !isProxiedImageUrl(img.src)) {
+      img.dataset.orbitImgRetry = "proxy";
+      img.src = buildImageProxyUrl(runtimeBase, originalUrl);
+      return;
+    }
+    if (retry === "proxy" && isProxiedImageUrl(img.src)) {
+      img.dataset.orbitImgRetry = "direct";
+      img.referrerPolicy = "no-referrer";
+      img.src = originalUrl;
+    }
+  };
+}
+
+export function bindSingleArticleContentImage(
+  img: HTMLImageElement,
+  runtimeBase: string | null | undefined,
+): void {
+  if (!runtimeBase || isComicLazyImagePending(img)) return;
+  attachArticleImageErrorHandler(img, runtimeBase);
+}
+
 /** Retry article body images through the runtime proxy after a direct load fails. */
 export function bindArticleContentImages(
   root: HTMLElement | null,
@@ -92,12 +151,7 @@ export function bindArticleContentImages(
   if (!root || !runtimeBase) return;
 
   root.querySelectorAll("img").forEach(img => {
-    const original = resolveArticleImageOriginal(img);
-    if (!original) return;
-
-    img.onerror = () => {
-      if (isProxiedImageUrl(img.src)) return;
-      img.src = buildImageProxyUrl(runtimeBase, original);
-    };
+    if (isComicLazyImagePending(img)) return;
+    attachArticleImageErrorHandler(img, runtimeBase);
   });
 }

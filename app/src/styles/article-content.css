@@ -1,6 +1,44 @@
 /* Reader font scale — set --reader-scale on .article-reader (default 1) */
 .article-reader {
   --reader-scale: 1;
+  --comic-page-width: 100%;
+}
+
+/* Comic page width slider — native range input in reader toolbar */
+.comic-page-width-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border: 2px solid #6366f1;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  cursor: grab;
+}
+
+.comic-page-width-slider:active::-webkit-slider-thumb {
+  cursor: grabbing;
+}
+
+.comic-page-width-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  border: 2px solid #6366f1;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
+  cursor: grab;
+}
+
+.comic-page-width-slider:active::-moz-range-thumb {
+  cursor: grabbing;
+}
+
+.comic-page-width-slider::-webkit-slider-runnable-track,
+.comic-page-width-slider::-moz-range-track {
+  background: transparent;
+  height: 4px;
 }
 
 .article-reader-title {
@@ -449,4 +487,40 @@
   max-height: 100%;
   object-fit: contain;
   border-radius: 0 !important;
+}
+
+/* Seamless vertical comic stream — continuous page images, no chapter chrome */
+.comic-chapter-stream .comic-chapter-block + .comic-chapter-block {
+  margin-top: 0;
+}
+
+.comic-chapter-stream .comic-chapter-pages :where(img) {
+  border-radius: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.comic-chapter-stream .comic-chapter-pages :where(img + img) {
+  margin-top: 0;
+}
+
+.comic-chapter-stream .comic-chapter-pages :where(img.comic-page-lazy[src^="data:"]) {
+  display: block;
+  width: 100%;
+  min-height: 70vh;
+  background-color: #f0f0f0;
+}
+
+.comic-chapter-stream .comic-chapter-pages[data-theme="dark"] :where(img.comic-page-lazy[src^="data:"]) {
+  background-color: #1a1a1a;
+}
+
+/* Comic reader page width — set --comic-page-width on .article-reader (default 100%) */
+.article-content :where(
+  .comic-reader-pages img,
+  .comic-reader-page figure img,
+  .comic-chapter-pages img
+) {
+  width: var(--comic-page-width, 100%) !important;
+  max-width: none;
 }

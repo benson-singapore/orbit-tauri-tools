@@ -65,6 +65,9 @@ export async function putPlayback(pluginId: string, record: PlaybackRecord): Pro
     body: JSON.stringify({ pluginId, record }),
   });
   if (!res.ok) throw new Error(await parseError(res));
+  window.dispatchEvent(
+    new CustomEvent("orbit-playback-updated", { detail: { pluginId } }),
+  );
 }
 
 export async function deletePlayback(pluginId: string, parentId: string): Promise<void> {

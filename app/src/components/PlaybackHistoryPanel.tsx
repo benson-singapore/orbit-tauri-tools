@@ -54,7 +54,23 @@ export function PlaybackHistoryPanel({
   useEffect(() => {
     if (!open) return;
     void reload();
-  }, [open, reload]);
+
+    const onPlaybackUpdated = (event: Event) => {
+      const detail = (event as CustomEvent<{ pluginId?: string }>).detail;
+      if (detail?.pluginId && detail.pluginId !== plugin.id) return;
+      void reload();
+    };
+
+    window.addEventListener("orbit-playback-updated", onPlaybackUpdated);
+    const interval = window.setInterval(() => {
+      void reload();
+    }, 4000);
+
+    return () => {
+      window.removeEventListener("orbit-playback-updated", onPlaybackUpdated);
+      window.clearInterval(interval);
+    };
+  }, [open, reload, plugin.id]);
 
   const handleDelete = async (record: PlaybackRecord) => {
     try {

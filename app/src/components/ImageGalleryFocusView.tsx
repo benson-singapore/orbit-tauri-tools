@@ -213,7 +213,7 @@ export function ImageGalleryFocusView({
     }
   }, [hasMore, loadingMore, onLoadMore]);
 
-  if ((loading || searching) && galleryItems.length === 0) {
+  if (loading || searching) {
     return (
       <div className="flex items-center justify-center py-24">
         <div className="flex items-center gap-2 text-sm text-neutral-400">

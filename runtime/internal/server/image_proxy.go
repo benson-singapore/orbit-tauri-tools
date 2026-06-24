@@ -13,6 +13,9 @@ import (
 
 const maxImageProxyBytes int64 = 20 << 20 // 20 MiB
 
+// Browser-like UA helps pass CDN hotlink / bot checks (e.g. Cloudflare on manga CDNs).
+const imageProxyUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
 var imageProxyClient = &http.Client{
 	Timeout: 30 * time.Second,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -22,9 +25,16 @@ var imageProxyClient = &http.Client{
 		if err := validateImageProxyTarget(req.URL); err != nil {
 			return err
 		}
-		req.Header.Set("Referer", lbupupImageReferer(req.URL))
+		applyImageProxyHeaders(req, req.URL)
 		return nil
 	},
+}
+
+func applyImageProxyHeaders(req *http.Request, target *url.URL) {
+	req.Header.Set("Referer", lbupupImageReferer(target))
+	req.Header.Set("User-Agent", imageProxyUserAgent)
+	req.Header.Set("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 }
 
 func (s *Server) handleProxyImage(w http.ResponseWriter, r *http.Request) {
@@ -54,8 +64,7 @@ func (s *Server) handleProxyImage(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, errorBody("create request failed"))
 		return
 	}
-	req.Header.Set("Referer", lbupupImageReferer(target))
-	req.Header.Set("User-Agent", "OrbitReader/1.0")
+	applyImageProxyHeaders(req, target)
 
 	resp, err := imageProxyClient.Do(req)
 	if err != nil {

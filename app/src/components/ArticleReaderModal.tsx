@@ -18,6 +18,8 @@ import {
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
+import { syncComicReaderImages } from "@/lib/comicChapterContent";
+import { comicPageWidthCssValue } from "@/lib/comicPageWidth";
 import {
   bindArticleContentPlayers,
   destroyArticleContentPlayers,
@@ -26,6 +28,7 @@ import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
 import { ChaptersDrawer } from "@/components/ChaptersDrawer";
 import { ChaptersList } from "@/components/ChaptersList";
 import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
+import { ComicPageWidthSlider } from "@/components/ComicPageWidthSlider";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
 import { usePlaybackProgress } from "@/hooks/usePlaybackProgress";
@@ -52,6 +55,8 @@ interface ArticleReaderModalProps {
   runtimeBase: string | null;
   article: Article;
   readerFontScale: number;
+  comicPageWidth?: number;
+  onComicPageWidthChange?: (width: number) => void;
   hasDetail: boolean;
   activeChannel: string;
   pluginMeta?: Plugin;
@@ -78,6 +83,8 @@ export function ArticleReaderModal({
   runtimeBase,
   article: initialArticle,
   readerFontScale,
+  comicPageWidth = 100,
+  onComicPageWidthChange,
   hasDetail,
   activeChannel,
   pluginMeta,
@@ -182,17 +189,6 @@ export function ArticleReaderModal({
     },
   });
 
-  usePlaybackProgress({
-    pluginMeta,
-    channelId,
-    channelCapabilities,
-    parentArticle: chaptersParent,
-    article,
-    sessionId,
-    contentRef,
-    enabled: isExpanded,
-  });
-
   useEffect(() => {
     if (hasChaptersMode) return;
     setArticle(initialArticle);
@@ -275,10 +271,6 @@ export function ArticleReaderModal({
 
   const isRatingCoverLayout = isRatingPluginArticle(article, pluginMeta);
 
-  const showContentLoading = loading
-    || chapters.detailLoading
-    || (chapters.isActive && chapters.loading);
-
   const showArticleMedia = useMemo(() => {
     if (article.type === "text") {
       return Boolean(article.image?.trim()) && !coverImageFailed;
@@ -331,12 +323,33 @@ export function ArticleReaderModal({
     [displayContent],
   );
 
-  useEffect(() => {
-    if (!displayContent) return;
+  const showContentLoading = loading
+    || chapters.detailLoading
+    || (chapters.isActive && chapters.loading);
 
-    highlightArticleCode(contentRef.current);
-    bindArticleContentImages(contentRef.current, runtimeBase);
-    bindArticleContentPlayers(contentRef.current, { sessionId });
+  usePlaybackProgress({
+    pluginMeta,
+    channelId,
+    channelCapabilities,
+    parentArticle: chaptersParent,
+    article,
+    sessionId,
+    contentRef,
+    scrollRootRef,
+    contentReady: Boolean(displayContent) && !showContentLoading,
+    enabled: isExpanded,
+  });
+
+  useEffect(() => {
+    if (!displayContent || !contentRef.current) return;
+
+    const contentRoot = contentRef.current;
+    highlightArticleCode(contentRoot);
+    if (isComicReaderContent) {
+      syncComicReaderImages(contentRoot, scrollRootRef.current, { runtimeBase });
+    }
+    bindArticleContentImages(contentRoot, runtimeBase);
+    bindArticleContentPlayers(contentRoot, { sessionId });
 
     if (
       isExpanded
@@ -350,15 +363,18 @@ export function ArticleReaderModal({
       window.requestAnimationFrame(() => {
         applyPlaybackResume(mode, resolvedResumeIntent.progress, {
           sessionId,
-          contentRoot: contentRef.current,
+          contentRoot,
+          scrollRoot: scrollRootRef.current,
+          chapterId: resolvedResumeIntent.chapterId,
         });
         onResumeApplied?.();
       });
     }
 
-    return () => destroyArticleContentPlayers(contentRef.current);
+    return () => destroyArticleContentPlayers(contentRoot);
   }, [
     displayContent,
+    isComicReaderContent,
     runtimeBase,
     theme,
     sessionId,
@@ -537,6 +553,7 @@ export function ArticleReaderModal({
       itemLabel={channelCapabilities.chaptersItemLabel}
       onSelect={chapter => {
         setChaptersDrawerOpen(false);
+        scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
         void chapters.selectChapter(chapter);
       }}
       onLoadMore={chapters.loadMore}
@@ -592,6 +609,33 @@ export function ArticleReaderModal({
     );
   }, [chapters, isComicReaderContent]);
 
+  const introStartReading = useMemo(() => {
+    if (!chapters.isActive || pluginMeta?.mediaType !== "manga" || isComicReaderContent) return null;
+    const activeId = chapters.activeChapter?.id ?? null;
+    if (!activeId) return null;
+    const idx = chapters.items.findIndex(item => item.id === activeId);
+    if (idx < 0) return null;
+    const next = idx < chapters.items.length - 1 ? chapters.items[idx + 1] : null;
+    if (!next) return null;
+
+    return (
+      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800 flex justify-center">
+        <button
+          type="button"
+          onClick={() => {
+            scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+            void chapters.selectChapter(next);
+          }}
+          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 transition-colors"
+          title={`开始阅读：${next.title}`}
+        >
+          开始阅读
+          <Icon name="arrow-left" className="w-4 h-4 rotate-180" />
+        </button>
+      </div>
+    );
+  }, [chapters, isComicReaderContent, pluginMeta?.mediaType]);
+
   const modal = (
     <div
       className={
@@ -611,6 +655,15 @@ export function ArticleReaderModal({
       >
         {isExpanded ? (
           <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
+            {isComicReaderContent && onComicPageWidthChange ? (
+              <div className={`rounded-full px-2 py-1 ${isDark ? "bg-black/40" : "bg-black/10"}`}>
+                <ComicPageWidthSlider
+                  theme={theme}
+                  value={comicPageWidth}
+                  onChange={onComicPageWidthChange}
+                />
+              </div>
+            ) : null}
             {chaptersOpenButton}
             {pageDetailSwitchEnabled ? (
               <button
@@ -655,7 +708,10 @@ export function ArticleReaderModal({
         <div
           ref={scrollRootRef}
           className="flex-1 min-h-0 overflow-y-auto article-reader px-5 sm:px-8 py-6 sm:py-8"
-          style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
+          style={{
+            "--reader-scale": readerFontScale,
+            "--comic-page-width": comicPageWidthCssValue(comicPageWidth),
+          } as React.CSSProperties}
         >
           <div className="space-y-6">
             {showRatingHero ? (
@@ -732,6 +788,7 @@ export function ArticleReaderModal({
                   className="article-content mt-6"
                   dangerouslySetInnerHTML={{ __html: displayContent }}
                 />
+                {introStartReading}
                 {chapterPager}
                 {article.sourceUrl ? (
                   <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">

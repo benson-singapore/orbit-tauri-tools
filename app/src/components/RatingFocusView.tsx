@@ -64,7 +64,7 @@ export function RatingFocusView({
     return () => observer.disconnect();
   }, [hasMore, loadingMore, loading, searching, onLoadMore, articles.length, scrollRootRef]);
 
-  if ((loading || searching) && articles.length === 0) {
+  if (loading || searching) {
     return (
       <div className="flex items-center justify-center py-24">
         <div className="flex items-center gap-2 text-sm text-neutral-400">

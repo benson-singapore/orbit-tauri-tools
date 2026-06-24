@@ -17,6 +17,7 @@ import { YouTubeEmbed } from "@/components/YouTubeEmbed";
 import { ChaptersDrawer } from "@/components/ChaptersDrawer";
 import { ChaptersList } from "@/components/ChaptersList";
 import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
+import { ComicPageWidthSlider } from "@/components/ComicPageWidthSlider";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { PlaybackHistoryButton } from "@/components/PlaybackHistoryButton";
@@ -60,6 +61,7 @@ import {
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
 import { bindArticleContentImages } from "@/lib/imageProxy";
+import { syncComicReaderImages } from "@/lib/comicChapterContent";
 import {
   bindArticleContentPlayers,
   destroyArticleContentPlayers,
@@ -98,6 +100,12 @@ import {
   persistReaderFontScale,
   readStoredReaderFontScale,
 } from "@/lib/readerFontScale";
+import {
+  COMIC_PAGE_WIDTH_DEFAULT,
+  comicPageWidthCssValue,
+  persistComicPageWidth,
+  readStoredComicPageWidth,
+} from "@/lib/comicPageWidth";
 import {
   articleSessionKey,
   createReaderSession,
@@ -356,6 +364,7 @@ export default function App() {
   const [selectedItem, setSelectedItem] = useState<Article | null>(null);
   const selectedItemRef = useRef<Article | null>(null);
   selectedItemRef.current = selectedItem;
+  const itemSelectRequestRef = useRef(0);
   const [chaptersParent, setChaptersParent] = useState<Article | null>(null);
   const [chaptersOpenToken, setChaptersOpenToken] = useState(0);
   const chaptersParentRef = useRef<Article | null>(null);
@@ -399,9 +408,16 @@ export default function App() {
   const detailResumeAppliedRef = useRef(false);
   const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
+  const [comicPageWidth, setComicPageWidth] = useState(COMIC_PAGE_WIDTH_DEFAULT);
 
   useEffect(() => {
     setReaderFontScale(readStoredReaderFontScale());
+    setComicPageWidth(readStoredComicPageWidth());
+  }, []);
+
+  const handleComicPageWidthChange = useCallback((width: number) => {
+    setComicPageWidth(width);
+    persistComicPageWidth(width);
   }, []);
 
   const bumpReaderFontScale = useCallback((direction: -1 | 1) => {
@@ -663,32 +679,42 @@ export default function App() {
     },
   });
 
+  const chaptersDetailChannelId = useMemo(() => {
+    if (!chaptersParent) return activeChannel;
+    return resolveArticleDetailChannel(
+      chaptersParent,
+      chaptersPluginMeta,
+      activeChannel,
+      chaptersStoredChannel,
+    );
+  }, [chaptersParent, chaptersPluginMeta, activeChannel, chaptersStoredChannel]);
+
   const inlinePlaybackArticle = selectedItem ?? chaptersParent;
   const inlinePlaybackPluginMeta = chaptersParent
     ? chaptersPluginMeta
     : selectedPluginMeta ?? activePluginMeta;
   const isInlinePlaybackEnabled = Boolean(
     selectedItem
-    && !isPluginFocusMode
-    && (isReaderPreviewMode || isPageDetailView || isSplitDetailMode),
+    && (isPageDetailView || (isReaderPreviewMode && !isPluginFocusMode)),
   );
   const inlineSessionId = selectedItem
     ? `inline:${selectedItem.pluginId}:${chaptersParent?.id ?? selectedItem.id}`
     : undefined;
+  const showContentLoading = contentLoading
+    || chapters.detailLoading
+    || (chapters.isActive && chapters.loading);
   usePlaybackProgress({
     pluginMeta: inlinePlaybackPluginMeta,
-    channelId: activeChannel,
+    channelId: chaptersParent ? chaptersDetailChannelId : activeChannel,
     channelCapabilities,
     parentArticle: chaptersParent,
     article: selectedItem,
     sessionId: inlineSessionId,
     contentRef: articleContentRef,
+    scrollRootRef: readerPanelRef,
+    contentReady: Boolean(selectedItemDisplayContent) && !showContentLoading,
     enabled: isInlinePlaybackEnabled,
   });
-
-  const showContentLoading = contentLoading
-    || chapters.detailLoading
-    || (chapters.isActive && chapters.loading);
 
   const inlineDetailPluginMeta = inlinePlaybackArticle
     ? pluginById.get(inlinePlaybackArticle.pluginId)
@@ -699,11 +725,15 @@ export default function App() {
   }, [inlinePlaybackArticle?.id, detailResumeIntent]);
 
   useEffect(() => {
-    if (!selectedItemDisplayContent) return;
+    const contentRoot = articleContentRef.current;
+    if (!selectedItemDisplayContent || !contentRoot) return;
 
-    highlightArticleCode(articleContentRef.current);
-    bindArticleContentImages(articleContentRef.current, runtimeBase);
-    bindArticleContentPlayers(articleContentRef.current, { sessionId: inlineSessionId });
+    highlightArticleCode(contentRoot);
+    if (isComicReaderContent) {
+      syncComicReaderImages(contentRoot, readerPanelRef.current, { runtimeBase });
+    }
+    bindArticleContentImages(contentRoot, runtimeBase);
+    bindArticleContentPlayers(contentRoot, { sessionId: inlineSessionId });
 
     if (
       detailResumeIntent?.progress
@@ -721,8 +751,9 @@ export default function App() {
       const applyResume = () => {
         applyPlaybackResume(mode, detailResumeIntent.progress, {
           sessionId: inlineSessionId,
-          contentRoot: articleContentRef.current,
+          contentRoot,
           scrollRoot: readerPanelRef.current,
+          chapterId: detailResumeIntent.chapterId,
         });
       };
       window.requestAnimationFrame(applyResume);
@@ -732,9 +763,10 @@ export default function App() {
       }
     }
 
-    return () => destroyArticleContentPlayers(articleContentRef.current);
+    return () => destroyArticleContentPlayers(contentRoot);
   }, [
     selectedItemDisplayContent,
+    isComicReaderContent,
     runtimeBase,
     theme,
     inlineSessionId,
@@ -761,7 +793,9 @@ export default function App() {
     if (!chapters.isActive) {
       return { prev: null as Article | null, next: null as Article | null, activeIndex: null as number | null };
     }
-    const activeId = chapters.activeChapter?.id ?? selectedItem?.id ?? null;
+    const activeId = chapters.activeChapter?.id
+      ?? selectedItem?.id
+      ?? null;
     if (!activeId) {
       return { prev: null, next: null, activeIndex: null };
     }
@@ -888,10 +922,31 @@ export default function App() {
     );
   }, [chapters.isActive, chapterNeighbors, goToChapter, isComicReaderContent]);
 
+  const introStartReading = useMemo(() => {
+    if (!chapters.isActive || chaptersPluginMeta?.mediaType !== "manga" || isComicReaderContent) return null;
+    const { next } = chapterNeighbors;
+    if (!next) return null;
+
+    return (
+      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800 flex justify-center">
+        <button
+          type="button"
+          onClick={() => goToChapter(next)}
+          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 transition-colors"
+          title={`开始阅读：${next.title}`}
+        >
+          开始阅读
+          <Icon name="arrow-left" className="w-4 h-4 rotate-180" />
+        </button>
+      </div>
+    );
+  }, [chapters.isActive, chaptersPluginMeta?.mediaType, chapterNeighbors, goToChapter, isComicReaderContent]);
+
   const handleItemSelect = useCallback((
     item: Article,
     resumeIntent?: PlaybackResumeIntent,
   ) => {
+    const requestId = ++itemSelectRequestRef.current;
     void markArticleRead(item);
     setAiSummary(null);
     setIsPlayingAudio(false);
@@ -916,6 +971,8 @@ export default function App() {
           ? await fetchResumeIntentForArticle(item.pluginId, item.id, channelId)
           : undefined
       );
+
+      if (requestId !== itemSelectRequestRef.current) return;
 
       setDetailResumeIntent(intent);
 
@@ -962,21 +1019,36 @@ export default function App() {
 
     const prev = selectedItemRef.current;
     if (prev) {
-      const listItem = visibleArticles.find(a => a.id === prev.id);
-      if (listItem) {
-        const merged = mergeArticleListWithDetail(listItem, prev);
-        if (merged !== prev) {
-          setSelectedItem(merged);
+      const prevMatchesPlugin = activePlugin === "all" || prev.pluginId === activePlugin;
+      if (prevMatchesPlugin) {
+        const listItem = visibleArticles.find(a => a.id === prev.id);
+        if (listItem) {
+          const merged = mergeArticleListWithDetail(listItem, prev);
+          if (merged !== prev) {
+            setSelectedItem(merged);
+          }
+          return;
         }
-        return;
       }
     }
+
+    // Grid browse modes pick items explicitly (handleGridItemSelect / openReaderDetailModal).
+    // Auto-selecting the first item here races with that click when page detail opens.
+    if (isGridPreviewMode) return;
 
     const first = visibleArticles[0];
     if (first) {
       handleItemSelect(first);
     }
-  }, [visibleArticles, chaptersParent, handleItemSelect, isGridPageMode, gridPageDetailOpen]);
+  }, [
+    visibleArticles,
+    chaptersParent,
+    handleItemSelect,
+    isGridPageMode,
+    gridPageDetailOpen,
+    activePlugin,
+    isGridPreviewMode,
+  ]);
 
   useEffect(() => {
     if (readerPanelRef.current) {
@@ -987,6 +1059,11 @@ export default function App() {
   useEffect(() => {
     const itemId = selectedItem?.id;
     if (!itemId) {
+      setContentLoading(false);
+      return;
+    }
+
+    if (activePlugin !== "all" && selectedItem.pluginId !== activePlugin) {
       setContentLoading(false);
       return;
     }
@@ -1075,7 +1152,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [selectedItem?.id, pluginById, activeChannel, channelCapabilities, chapters.isActive]);
+  }, [selectedItem?.id, selectedItem?.pluginId, pluginById, activeChannel, channelCapabilities, chapters.isActive, activePlugin]);
 
   const handleBookmarkToggle = (id: string) => {
     setBookmarkedIds(prev => {
@@ -1267,8 +1344,17 @@ export default function App() {
   }, [activePlugin, activePluginMeta]);
 
   useEffect(() => {
+    itemSelectRequestRef.current += 1;
     setGridPageDetailOpen(false);
-  }, [activePlugin, activeChannel]);
+    if (activePlugin !== "all") {
+      setSelectedItem(prev => (prev && prev.pluginId !== activePlugin ? null : prev));
+      setContentLoading(false);
+    }
+  }, [activePlugin]);
+
+  useEffect(() => {
+    setGridPageDetailOpen(false);
+  }, [activeChannel]);
 
   useEffect(() => {
     if (gridDetailViewMode === "modal") {
@@ -1573,11 +1659,12 @@ export default function App() {
     const mode = resolveEffectivePlayback(pluginMeta, activeChannel, channelCapabilities).mode;
 
     let progress = detailResumeIntent?.progress;
-    if (articleContentRef.current) {
+    const progressRoot = articleContentRef.current;
+    if (progressRoot) {
       const collected = mode === "manga"
-        ? collectMangaPageProgress(articleContentRef.current)
+        ? collectMangaPageProgress(progressRoot)
         : mode === "article"
-          ? collectArticleScrollProgress(articleContentRef.current)
+          ? collectArticleScrollProgress(progressRoot)
           : undefined;
       if (hasMeaningfulProgress(collected)) {
         progress = collected;
@@ -1585,7 +1672,9 @@ export default function App() {
     }
 
     const resumeIntent: PlaybackResumeIntent = {
-      chapterId: chaptersParent ? selectedItem.id : detailResumeIntent?.chapterId,
+      chapterId: chaptersParent
+        ? selectedItem.id
+        : detailResumeIntent?.chapterId,
       progress,
       mode: detailResumeIntent?.mode ?? mode,
     };
@@ -2470,6 +2559,14 @@ export default function App() {
                       </div>
 
                       <div className="flex items-center justify-end gap-1 shrink-0 ml-auto">
+                        {isComicReaderContent ? (
+                          <ComicPageWidthSlider
+                            theme={theme}
+                            value={comicPageWidth}
+                            onChange={handleComicPageWidthChange}
+                            className="mx-1"
+                          />
+                        ) : null}
                         {isPageDetailView ? (
                           <>
                             {pageDetailBackButton}
@@ -2846,6 +2943,7 @@ export default function App() {
                       splitRatio={splitPaneRatio}
                       onSplitRatioChange={handleSplitPaneRatioChange}
                       readerFontScale={readerFontScale}
+                      comicPageWidth={comicPageWidth}
                       hasDetail={activeChannelHasDetail}
                       activeChannel={activeChannel}
                       pluginMeta={activePluginMeta}
@@ -2932,7 +3030,10 @@ export default function App() {
                 {selectedItem ? (
                 <div
                   className="article-reader space-y-6"
-                  style={{ "--reader-scale": readerFontScale } as React.CSSProperties}
+                  style={{
+                    "--reader-scale": readerFontScale,
+                    "--comic-page-width": comicPageWidthCssValue(comicPageWidth),
+                  } as React.CSSProperties}
                 >
                 {aiSummary && (
                   <div className="relative p-5 rounded-2xl bg-gradient-to-br from-indigo-500/10 via-purple-500/10 to-pink-500/10 border border-indigo-100 dark:border-indigo-900/30 text-sm leading-relaxed text-indigo-900 dark:text-indigo-300">
@@ -3120,6 +3221,7 @@ export default function App() {
                       className="article-content mt-6"
                       dangerouslySetInnerHTML={{ __html: selectedItemDisplayContent }}
                     />
+                    {introStartReading}
                     {chapterPager}
                     {selectedItem.sourceUrl ? (
                       <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
@@ -3244,6 +3346,8 @@ export default function App() {
           runtimeBase={runtimeBase}
           article={session.article}
           readerFontScale={readerFontScale}
+          comicPageWidth={comicPageWidth}
+          onComicPageWidthChange={handleComicPageWidthChange}
           hasDetail={session.hasDetail}
           activeChannel={session.activeChannel}
           pluginMeta={pluginById.get(session.article.pluginId)}

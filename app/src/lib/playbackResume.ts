@@ -9,6 +9,11 @@ import type {
   ProgressTime,
 } from "@/types";
 import { fetchFeedItem } from "@/lib/feed";
+import {
+  collectComicLazyImages,
+  resolveComicLazyPageIndex,
+  syncComicLazyImagesForChapterPage,
+} from "@/lib/comicChapterContent";
 import { getPlayback } from "@/lib/playback";
 import {
   dispatchPlaybackResume,
@@ -177,19 +182,108 @@ export function applyArticleResume(root: HTMLElement | null, progress: ProgressA
   }
 }
 
-export function collectMangaPageProgress(root: HTMLElement | null): ProgressManga {
+function resolveViewportMetrics(scrollRoot?: HTMLElement | null): {
+  focusLine: number;
+  isInViewport: (rect: DOMRect) => boolean;
+} {
+  if (scrollRoot) {
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const focusLine = rootRect.top + rootRect.height * 0.35;
+    return {
+      focusLine,
+      isInViewport: rect => rect.bottom > rootRect.top && rect.top < rootRect.bottom,
+    };
+  }
+  const focusLine = window.innerHeight * 0.35;
+  return {
+    focusLine,
+    isInViewport: rect => rect.bottom > 0 && rect.top < window.innerHeight,
+  };
+}
+
+function findVisibleComicChapterBlock(
+  streamRoot: HTMLElement,
+  scrollRoot?: HTMLElement | null,
+): HTMLElement | null {
+  const blocks = Array.from(
+    streamRoot.querySelectorAll<HTMLElement>("[data-comic-chapter]"),
+  );
+  if (blocks.length === 0) return null;
+
+  const { focusLine, isInViewport } = resolveViewportMetrics(scrollRoot);
+  let bestBlock: HTMLElement | null = null;
+  let bestDistance = Infinity;
+
+  for (const block of blocks) {
+    const rect = block.getBoundingClientRect();
+    if (!isInViewport(rect)) continue;
+    const mid = (rect.top + rect.bottom) / 2;
+    const distance = Math.abs(mid - focusLine);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestBlock = block;
+    }
+  }
+
+  return bestBlock ?? blocks[blocks.length - 1] ?? null;
+}
+
+export function resolveComicStreamChapterContentRoot(
+  streamRoot: HTMLElement | null,
+  chapterId?: string,
+  scrollRoot?: HTMLElement | null,
+): HTMLElement | null {
+  if (!streamRoot) return null;
+  if (chapterId) {
+    const block = streamRoot.querySelector<HTMLElement>(
+      `[data-comic-chapter="${chapterId}"]`,
+    );
+    return block?.querySelector<HTMLElement>(".article-content") ?? null;
+  }
+  const visibleBlock = findVisibleComicChapterBlock(streamRoot, scrollRoot);
+  return visibleBlock?.querySelector<HTMLElement>(".article-content") ?? null;
+}
+
+export function collectMangaStreamProgress(
+  streamRoot: HTMLElement | null,
+  scrollRoot?: HTMLElement | null,
+): {
+  progress: ProgressManga;
+  chapterId?: string;
+} {
+  if (!streamRoot) return { progress: {} };
+  const visibleBlock = findVisibleComicChapterBlock(streamRoot, scrollRoot);
+  const contentRoot = visibleBlock?.querySelector<HTMLElement>(".article-content") ?? null;
+  return {
+    progress: collectMangaPageProgress(contentRoot, scrollRoot),
+    chapterId: visibleBlock?.dataset.comicChapter,
+  };
+}
+
+export function collectMangaPageProgress(
+  root: HTMLElement | null,
+  scrollRoot?: HTMLElement | null,
+): ProgressManga {
   if (!root) return {};
+  if (root.dataset.comicStream === "true") {
+    return collectMangaStreamProgress(root, scrollRoot).progress;
+  }
   const images = getMangaImages(root);
   if (images.length === 0) return {};
+  const lazyImages = collectComicLazyImages(root);
+  if (lazyImages.length > 0) {
+    const pageIndex = resolveComicLazyPageIndex(images, scrollRoot ?? null);
+    return { page: pageIndex + 1, totalPages: images.length };
+  }
+  const { focusLine } = resolveViewportMetrics(scrollRoot);
   let page = 1;
-  const viewportMid = window.innerHeight * 0.35;
   for (let i = 0; i < images.length; i++) {
     const rect = images[i].getBoundingClientRect();
-    if (rect.top <= viewportMid && rect.bottom >= viewportMid) {
+    if (rect.top <= focusLine && rect.bottom >= focusLine) {
       page = i + 1;
       break;
     }
-    if (rect.top > viewportMid) {
+    if (rect.top > focusLine) {
       page = Math.max(1, i);
       break;
     }
@@ -273,8 +367,24 @@ export function collectTimeProgress(
   return {};
 }
 
+export function isComicContentRoot(root: HTMLElement | null | undefined): boolean {
+  if (!root) return false;
+  if (root.dataset.comicStream === "true") return true;
+  return Boolean(root.querySelector(".comic-reader, img[data-comic-lazy]"));
+}
+
 function getMangaImages(root: HTMLElement): HTMLImageElement[] {
-  return Array.from(root.querySelectorAll("img")).filter(img => img.offsetParent !== null);
+  const lazy = collectComicLazyImages(root);
+  if (lazy.length > 0) return lazy;
+
+  const comicImages = Array.from(
+    root.querySelectorAll<HTMLImageElement>(".comic-reader img, .comic-chapter-pages img"),
+  );
+  const images = comicImages.length > 0
+    ? comicImages
+    : Array.from(root.querySelectorAll<HTMLImageElement>("img"));
+  const visible = images.filter(img => img.offsetParent !== null);
+  return visible.length > 0 ? visible : images;
 }
 
 function findScrollParent(node: HTMLElement): HTMLElement | null {
@@ -324,6 +434,7 @@ export function applyPlaybackResume(
     sessionId?: string;
     contentRoot: HTMLElement | null;
     scrollRoot?: HTMLElement | null;
+    chapterId?: string;
   },
 ): void {
   if (!progress) return;
@@ -344,8 +455,31 @@ export function applyPlaybackResume(
     return;
   }
   if (mode === "manga" && isProgressManga(progress)) {
+    if (options.contentRoot?.dataset.comicStream === "true") {
+      applyMangaStreamResume(
+        options.contentRoot,
+        progress,
+        options.scrollRoot,
+        options.chapterId,
+      );
+      return;
+    }
     applyMangaResume(options.contentRoot, progress, options.scrollRoot);
   }
+}
+
+export function applyMangaStreamResume(
+  streamRoot: HTMLElement | null,
+  progress: ProgressManga,
+  scrollRoot?: HTMLElement | null,
+  chapterId?: string,
+): void {
+  if (!streamRoot || !progress.page) return;
+  const contentRoot = resolveComicStreamChapterContentRoot(streamRoot, chapterId, scrollRoot);
+  if (contentRoot) {
+    syncComicLazyImagesForChapterPage(streamRoot, contentRoot, progress.page);
+  }
+  applyMangaResume(contentRoot, progress, scrollRoot);
 }
 
 export async function resolveParentArticleForPlayback(

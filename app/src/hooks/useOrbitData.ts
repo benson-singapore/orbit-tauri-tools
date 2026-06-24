@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { INITIAL_PLUGINS } from "@/data/plugins";
 import {
   fetchFeed,
@@ -67,6 +67,16 @@ function resolveFeedChannelId(
 }
 
 const FEED_RELOAD_DELAYS_MS = [1500, 3000, 5000, 10000, 20000, 40000, 60000];
+
+function buildFeedKey(
+  pluginId: string,
+  channelId: string,
+  contentType: string | undefined,
+  search: string,
+  pluginGroupScopeId: string | null,
+): string {
+  return `${pluginId}|${channelId}|${contentType ?? ""}|${search}|${pluginGroupScopeId ?? ""}`;
+}
 
 function mergeArticlesPreservingReadState(prev: Article[], items: Article[]): Article[] {
   if (prev.length === 0) {
@@ -238,6 +248,7 @@ export function useOrbitData(
   const loadMoreInFlightRef = useRef(false);
   const loadMoreBlockedRef = useRef(false);
   const backgroundPollGenerationRef = useRef(0);
+  const settledFeedKeyRef = useRef<string | null>(null);
   const reorderPersistQueue = useRef(Promise.resolve());
   const pluginFilterRef = useRef(pluginFilter);
   const channelFilterRef = useRef(channelFilter);
@@ -256,6 +267,16 @@ export function useOrbitData(
   pluginsRef.current = plugins;
   articlesRef.current = articles;
   channelCapabilitiesRef.current = channelCapabilities;
+
+  const commitFeedSettled = useCallback(() => {
+    settledFeedKeyRef.current = buildFeedKey(
+      pluginFilterRef.current,
+      channelFilterRef.current,
+      contentTypeFilterRef.current,
+      searchFilterRef.current,
+      pluginGroupScopeIdRef.current,
+    );
+  }, []);
 
   const loadPlugins = useCallback(async () => {
     const remote = await fetchPlugins();
@@ -298,6 +319,10 @@ export function useOrbitData(
     const append = options?.append ?? false;
     const pluginId = pluginFilterRef.current;
     const channel = channelFilterRef.current;
+    const isStaleRequest = () =>
+      requestId !== feedRequestId.current
+      || pluginFilterRef.current !== pluginId
+      || channelFilterRef.current !== channel;
     const contentType = contentTypeFilterRef.current;
     const search = searchFilterRef.current.trim();
     const plugin = pluginsRef.current.find(p => p.id === pluginId);
@@ -308,6 +333,11 @@ export function useOrbitData(
     const feedChannel = resolveFeedChannelId(plugin, pluginChannels, channel, pluginId);
     const offset = options?.offset ?? 0;
     const activeChannel = pluginChannels.find(ch => ch.id === feedChannel);
+
+    const finishFeedPage = (itemCount: number) => {
+      commitFeedSettled();
+      return itemCount;
+    };
 
     if (shouldUseRuntimeV2(pluginId, plugin) && feedChannel !== "all") {
       const runtimeOptions = runtimeOptionsForPlugin(plugin);
@@ -334,7 +364,7 @@ export function useOrbitData(
           result = await runtimeSearch(pluginId, feedChannel, search, runtimeOptions);
         }
         feedNextParamsRef.current = result.next ?? null;
-        if (requestId !== feedRequestId.current) return -1;
+        if (isStaleRequest()) return -1;
         const items = result.items ?? [];
         if (append && paginated && items.length === 0) {
           feedPaginationExhaustedRef.current = true;
@@ -351,17 +381,17 @@ export function useOrbitData(
         if (!append) {
           setUnreadTotal(items.filter(item => !item.isRead).length);
         }
-        return items.length;
+        return finishFeedPage(items.length);
       }
 
       const cap = channelCapabilitiesRef.current;
       if (cap.canSearch && !search) {
-        if (requestId !== feedRequestId.current) return -1;
+        if (isStaleRequest()) return -1;
         setFeedTotal(0);
         setHasMore(false);
         setArticles(prev => (append ? prev : []));
         if (!append) setUnreadTotal(0);
-        return 0;
+        return finishFeedPage(0);
       }
 
       if (append) {
@@ -388,7 +418,7 @@ export function useOrbitData(
             offset,
           });
         }
-        if (requestId !== feedRequestId.current) return -1;
+        if (isStaleRequest()) return -1;
         const items = result.items ?? [];
         if (paginated && items.length === 0) {
           feedPaginationExhaustedRef.current = true;
@@ -402,7 +432,7 @@ export function useOrbitData(
           paginated,
           paginationExhausted: feedPaginationExhaustedRef.current,
         }));
-        return items.length;
+        return finishFeedPage(items.length);
       }
 
       feedNextParamsRef.current = null;
@@ -414,7 +444,7 @@ export function useOrbitData(
         limit: pageSize,
         offset,
       });
-      if (requestId !== feedRequestId.current) return -1;
+      if (isStaleRequest()) return -1;
       const items = result.items ?? [];
       const paginated = channelSupportsLoadMore(cap, activeChannel);
       setFeedTotal(offset + items.length);
@@ -429,7 +459,7 @@ export function useOrbitData(
       if (!append) {
         setUnreadTotal(items.filter(item => !item.isRead).length);
       }
-      return items.length;
+      return finishFeedPage(items.length);
     }
 
     let scopeIds: string[] = [];
@@ -447,12 +477,12 @@ export function useOrbitData(
           .map(p => p.id);
       }
       if (scopeIds.length === 0) {
-        if (requestId !== feedRequestId.current) return -1;
+        if (isStaleRequest()) return -1;
         setFeedTotal(0);
         setHasMore(false);
         setArticles(prev => (append ? prev : []));
         if (!append) setUnreadTotal(0);
-        return 0;
+        return finishFeedPage(0);
       }
     }
 
@@ -469,7 +499,7 @@ export function useOrbitData(
       limit: pageSize,
       offset,
     });
-    if (requestId !== feedRequestId.current) return -1;
+    if (isStaleRequest()) return -1;
     const items = data.items ?? [];
     const total = data.total ?? (offset + items.length);
     setFeedTotal(total);
@@ -487,8 +517,8 @@ export function useOrbitData(
     } else if (typeof data.unreadTotal === "number") {
       setUnreadTotal(data.unreadTotal);
     }
-    return items.length;
-  }, []);
+    return finishFeedPage(items.length);
+  }, [commitFeedSettled]);
 
   const cancelBackgroundFeedPolling = useCallback(() => {
     backgroundPollGenerationRef.current += 1;
@@ -665,6 +695,7 @@ export function useOrbitData(
         ) {
           return;
         }
+        commitFeedSettled();
         if (isSearchReload) {
           setSearching(false);
         } else {
@@ -678,7 +709,7 @@ export function useOrbitData(
         clearBusyState();
       }
     }
-  }, [loadFeedPage, loadChannelCapabilities, cancelBackgroundFeedPolling, pollFeedUntilData]);
+  }, [loadFeedPage, loadChannelCapabilities, cancelBackgroundFeedPolling, pollFeedUntilData, commitFeedSettled]);
 
   const refreshFromCache = useCallback(async () => {
     setError(null);
@@ -710,7 +741,7 @@ export function useOrbitData(
   }, []);
 
   const prevSearchFilterRef = useRef(searchFilter);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (initialMount.current) {
       initialMount.current = false;
       prevSearchFilterRef.current = searchFilter;
@@ -1002,12 +1033,21 @@ export function useOrbitData(
     plugins.find(p => p.id === pluginFilter),
   );
 
+  const currentFeedKey = buildFeedKey(
+    pluginFilter,
+    channelFilter,
+    contentTypeFilter,
+    searchFilter,
+    pluginGroupScopeId,
+  );
+  const isFeedSettled = settledFeedKeyRef.current === currentFeedKey;
+
   return {
     plugins,
-    articles,
+    articles: isFeedSettled ? articles : [],
     unreadTotal,
     feedTotal,
-    loading: loading || awaitingBackgroundRefresh,
+    loading: (loading || awaitingBackgroundRefresh || !isFeedSettled) && !searching,
     searching,
     loadingMore,
     hasMore,
