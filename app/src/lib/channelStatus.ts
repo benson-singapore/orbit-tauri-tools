@@ -20,4 +20,24 @@ export function isChannelDynamic(
   return channel?.dynamic === true;
 }
 
+export function channelHasDynamicSearch(
+  channel?: {
+    features?: { search?: unknown };
+    type?: string;
+  } | null,
+): boolean {
+  return Boolean(channel?.features?.search) || channel?.type === "search";
+}
+
+export function findDynamicSearchChannel<
+  T extends {
+    id: string;
+    features?: { search?: unknown };
+    type?: string;
+    status?: string;
+  },
+>(channels: T[]): T | undefined {
+  return channels.find(ch => isChannelEnabled(ch.status) && channelHasDynamicSearch(ch));
+}
+
 export const DYNAMIC_SEARCH_MAX_PAGES = 20;

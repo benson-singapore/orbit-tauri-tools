@@ -8,6 +8,7 @@ interface ComicChapterStreamProps {
   streamContainerRef: RefObject<HTMLDivElement | null>;
   theme: ThemeMode;
   reachedEnd: boolean;
+  className?: string;
 }
 
 export function ComicChapterStream({
@@ -15,11 +16,12 @@ export function ComicChapterStream({
   streamContainerRef,
   theme,
   reachedEnd,
+  className,
 }: ComicChapterStreamProps) {
   return (
     <div
       ref={streamContainerRef}
-      className="comic-chapter-stream mt-6"
+      className={className ? `comic-chapter-stream ${className}` : "comic-chapter-stream"}
       data-comic-stream="true"
     >
       {slots.map(slot => (

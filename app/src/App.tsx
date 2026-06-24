@@ -17,12 +17,14 @@ import { YouTubeEmbed } from "@/components/YouTubeEmbed";
 import { ChaptersDrawer } from "@/components/ChaptersDrawer";
 import { ChaptersList } from "@/components/ChaptersList";
 import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
+import { ComicChapterStream } from "@/components/ComicChapterStream";
 import { ComicPageWidthSlider } from "@/components/ComicPageWidthSlider";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { PlaybackHistoryButton } from "@/components/PlaybackHistoryButton";
 import { PlaybackHistoryPanel } from "@/components/PlaybackHistoryPanel";
 import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
+import { useComicChapterStream } from "@/hooks/useComicChapterStream";
 import { usePlaybackProgress } from "@/hooks/usePlaybackProgress";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
@@ -51,7 +53,12 @@ import {
 } from "@/lib/browseDynamicFeed";
 import { isImageGalleryPlugin } from "@/lib/imagePlugin";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
-import { isChannelDynamic, isChannelEnabled } from "@/lib/channelStatus";
+import {
+  channelHasDynamicSearch,
+  findDynamicSearchChannel,
+  isChannelDynamic,
+  isChannelEnabled,
+} from "@/lib/channelStatus";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
@@ -61,7 +68,12 @@ import {
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
 import { bindArticleContentImages } from "@/lib/imageProxy";
-import { syncComicReaderImages } from "@/lib/comicChapterContent";
+import {
+  formatComicChapterToolbarSubtitle,
+  prepareComicFlatPagesHtml,
+  prepareMangaIntroDisplayContent,
+  syncComicReaderImages,
+} from "@/lib/comicChapterContent";
 import {
   bindArticleContentPlayers,
   destroyArticleContentPlayers,
@@ -473,7 +485,7 @@ export default function App() {
     [selectedItem],
   );
 
-  const selectedItemDisplayContent = useMemo(() => {
+  const baseDisplayContent = useMemo(() => {
     if (!selectedItem?.content?.trim()) return "";
     let content = selectedItem.content;
     if (selectedItem.type === "text" && selectedItem.image) {
@@ -484,10 +496,21 @@ export default function App() {
     });
   }, [runtimeBase, selectedItem?.content, selectedItem?.image, selectedItem?.type, theme]);
 
-  const isComicReaderContent = useMemo(
-    () => selectedItemDisplayContent.includes("comic-reader"),
-    [selectedItemDisplayContent],
+  const selectedItemHasComicReader = useMemo(
+    () => baseDisplayContent.includes("comic-reader"),
+    [baseDisplayContent],
   );
+
+  const comicFlatPagesHtml = useMemo(
+    () => (
+      selectedItemHasComicReader && baseDisplayContent
+        ? prepareComicFlatPagesHtml(baseDisplayContent)
+        : null
+    ),
+    [selectedItemHasComicReader, baseDisplayContent],
+  );
+
+  const isComicReaderContent = Boolean(comicFlatPagesHtml);
 
   const filteredArticles = useMemo(() => {
     return visibleArticles.filter(item => {
@@ -539,7 +562,8 @@ export default function App() {
 
   void activeChannelMeta;
 
-  const isActiveDynamicChannel = channelCapabilities.canSearch;
+  const isActiveDynamicChannel = channelCapabilities.canSearch
+    || channelHasDynamicSearch(activeChannelMeta);
 
   const isBrowseDynamicPluginActive = useMemo(
     () => isBrowseDynamicPlugin(activePluginMeta, activePluginChannels),
@@ -662,6 +686,16 @@ export default function App() {
 
   chaptersParentRef.current = chaptersParent;
 
+  const chaptersDetailChannelId = useMemo(() => {
+    if (!chaptersParent) return activeChannel;
+    return resolveArticleDetailChannel(
+      chaptersParent,
+      chaptersPluginMeta,
+      activeChannel,
+      chaptersStoredChannel,
+    );
+  }, [chaptersParent, chaptersPluginMeta, activeChannel, chaptersStoredChannel]);
+
   const chapters = useArticleChapters({
     parent: chaptersParent,
     activeChannel,
@@ -679,15 +713,58 @@ export default function App() {
     },
   });
 
-  const chaptersDetailChannelId = useMemo(() => {
-    if (!chaptersParent) return activeChannel;
-    return resolveArticleDetailChannel(
-      chaptersParent,
-      chaptersPluginMeta,
-      activeChannel,
-      chaptersStoredChannel,
-    );
-  }, [chaptersParent, chaptersPluginMeta, activeChannel, chaptersStoredChannel]);
+  const isMangaIntroPage = Boolean(
+    chapters.isActive
+    && chaptersPluginMeta?.mediaType === "manga"
+    && !isComicReaderContent
+    && !selectedItemHasComicReader
+    && baseDisplayContent,
+  );
+
+  const selectedItemDisplayContent = useMemo(() => {
+    if (!baseDisplayContent) return "";
+    return isMangaIntroPage
+      ? prepareMangaIntroDisplayContent(baseDisplayContent)
+      : baseDisplayContent;
+  }, [baseDisplayContent, isMangaIntroPage]);
+
+  const canUseComicChapterStream = Boolean(
+    selectedItemHasComicReader
+    && comicFlatPagesHtml
+    && chapters.isActive
+    && chaptersParent
+    && chapters.activeChapter,
+  );
+
+  const useComicChapterStreamMode = canUseComicChapterStream;
+
+  const comicStream = useComicChapterStream({
+    enabled: useComicChapterStreamMode,
+    parent: chaptersParent,
+    chapterItems: chapters.items,
+    activeChapter: chapters.activeChapter,
+    activeChapterDetail: selectedItem,
+    detailLoading: chapters.detailLoading,
+    channelId: chaptersDetailChannelId,
+    runtimeBase,
+    theme,
+    scrollRootRef: readerPanelRef,
+  });
+
+  const comicChapterStreamActive = useComicChapterStreamMode && comicStream.slots.length > 0;
+
+  const comicToolbarChapter = comicStream.isActive
+    ? (comicStream.visibleChapter ?? chapters.activeChapter ?? selectedItem)
+    : (chapters.activeChapter ?? selectedItem);
+
+  const activeChapterId = comicToolbarChapter?.id
+    ?? chapters.activeChapter?.id
+    ?? selectedItem?.id
+    ?? null;
+
+  const playbackContentRef = comicChapterStreamActive
+    ? comicStream.streamContainerRef
+    : articleContentRef;
 
   const inlinePlaybackArticle = selectedItem ?? chaptersParent;
   const inlinePlaybackPluginMeta = chaptersParent
@@ -710,9 +787,13 @@ export default function App() {
     parentArticle: chaptersParent,
     article: selectedItem,
     sessionId: inlineSessionId,
-    contentRef: articleContentRef,
+    contentRef: playbackContentRef,
     scrollRootRef: readerPanelRef,
-    contentReady: Boolean(selectedItemDisplayContent) && !showContentLoading,
+    contentReady: (
+      comicChapterStreamActive
+        ? comicStream.slots.some(slot => slot.status === "ready")
+        : Boolean(comicFlatPagesHtml || selectedItemDisplayContent)
+    ) && !showContentLoading,
     enabled: isInlinePlaybackEnabled,
   });
 
@@ -725,15 +806,23 @@ export default function App() {
   }, [inlinePlaybackArticle?.id, detailResumeIntent]);
 
   useEffect(() => {
-    const contentRoot = articleContentRef.current;
-    if (!selectedItemDisplayContent || !contentRoot) return;
+    const contentRoot = comicChapterStreamActive
+      ? comicStream.streamContainerRef.current
+      : articleContentRef.current;
+    if (!contentRoot) return;
 
-    highlightArticleCode(contentRoot);
-    if (isComicReaderContent) {
+    const hasComicContent = comicChapterStreamActive
+      ? comicStream.slots.some(slot => slot.status === "ready")
+      : Boolean(comicFlatPagesHtml);
+    if (!hasComicContent && !selectedItemDisplayContent) return;
+
+    if (!isComicReaderContent) {
+      highlightArticleCode(contentRoot);
+      bindArticleContentImages(contentRoot, runtimeBase);
+      bindArticleContentPlayers(contentRoot, { sessionId: inlineSessionId });
+    } else {
       syncComicReaderImages(contentRoot, readerPanelRef.current, { runtimeBase });
     }
-    bindArticleContentImages(contentRoot, runtimeBase);
-    bindArticleContentPlayers(contentRoot, { sessionId: inlineSessionId });
 
     if (
       detailResumeIntent?.progress
@@ -748,25 +837,28 @@ export default function App() {
       );
       const mode = detailResumeIntent.mode
         ?? resolveEffectivePlayback(inlineDetailPluginMeta, activeChannel, channelCapabilities).mode;
-      const applyResume = () => {
-        applyPlaybackResume(mode, detailResumeIntent.progress, {
-          sessionId: inlineSessionId,
-          contentRoot,
-          scrollRoot: readerPanelRef.current,
-          chapterId: detailResumeIntent.chapterId,
-        });
-      };
-      window.requestAnimationFrame(applyResume);
-      if (mode === "manga") {
-        window.setTimeout(applyResume, 400);
-        window.setTimeout(applyResume, 1200);
-      }
+      applyPlaybackResume(mode, detailResumeIntent.progress, {
+        sessionId: inlineSessionId,
+        contentRoot,
+        scrollRoot: readerPanelRef.current,
+        chapterId: detailResumeIntent.chapterId,
+        runtimeBase,
+      });
     }
 
-    return () => destroyArticleContentPlayers(contentRoot);
+    return () => {
+      if (!isComicReaderContent) {
+        destroyArticleContentPlayers(contentRoot);
+      }
+    };
   }, [
     selectedItemDisplayContent,
+    comicFlatPagesHtml,
     isComicReaderContent,
+    comicChapterStreamActive,
+    useComicChapterStreamMode,
+    comicStream.slots,
+    comicStream.streamContainerRef,
     runtimeBase,
     theme,
     inlineSessionId,
@@ -793,13 +885,10 @@ export default function App() {
     if (!chapters.isActive) {
       return { prev: null as Article | null, next: null as Article | null, activeIndex: null as number | null };
     }
-    const activeId = chapters.activeChapter?.id
-      ?? selectedItem?.id
-      ?? null;
-    if (!activeId) {
+    if (!activeChapterId) {
       return { prev: null, next: null, activeIndex: null };
     }
-    const idx = chapters.items.findIndex(item => item.id === activeId);
+    const idx = chapters.items.findIndex(item => item.id === activeChapterId);
     if (idx < 0) {
       return { prev: null, next: null, activeIndex: null as number | null };
     }
@@ -808,7 +897,7 @@ export default function App() {
       next: idx < chapters.items.length - 1 ? chapters.items[idx + 1] : null,
       activeIndex: idx,
     };
-  }, [chapters.isActive, chapters.activeChapter?.id, chapters.items, selectedItem?.id]);
+  }, [chapters.isActive, chapters.items, activeChapterId]);
 
   const pageDetailSubtitle = useMemo(() => {
     if (!isPageDetailView && !(chapters.isActive && chaptersParent)) return null;
@@ -816,9 +905,19 @@ export default function App() {
     const comicName = chaptersParent?.title ?? selectedItem?.title;
     if (!comicName) return null;
 
-    if (chapters.isActive && chaptersParent && chapterNeighbors.activeIndex != null) {
-      const label = channelCapabilities.chaptersItemLabel ?? "话";
-      return `${comicName} · 第${chapterNeighbors.activeIndex + 1}${label}`;
+    if (chapters.isActive && chaptersParent) {
+      const activeId = activeChapterId;
+      const idx = activeId
+        ? chapters.items.findIndex(item => item.id === activeId)
+        : -1;
+      if (idx < 0 && chapterNeighbors.activeIndex == null) return comicName;
+
+      return formatComicChapterToolbarSubtitle({
+        seriesTitle: comicName,
+        chapterIndex: idx >= 0 ? idx : chapterNeighbors.activeIndex!,
+        chapterLabel: channelCapabilities.chaptersItemLabel ?? "话",
+        chapterTitle: comicToolbarChapter?.title ?? selectedItem?.title,
+      });
     }
 
     return comicName;
@@ -826,9 +925,12 @@ export default function App() {
     isPageDetailView,
     chapters.isActive,
     chaptersParent,
+    chapters.items,
     chapterNeighbors.activeIndex,
     channelCapabilities.chaptersItemLabel,
     selectedItem?.title,
+    comicToolbarChapter?.title,
+    activeChapterId,
   ]);
 
   const goToChapter = useCallback((chapter: Article) => {
@@ -1270,6 +1372,10 @@ export default function App() {
 
   const selectChannel = useCallback(
     (channelId: string) => {
+      if (channelId !== activeChannel) {
+        clearSearch();
+        setFocusSearchOpen(false);
+      }
       setActiveChannel(channelId);
       if (activePlugin === "all") return;
       const channel = (pluginById.get(activePlugin)?.channels ?? []).find(
@@ -1283,8 +1389,26 @@ export default function App() {
         persistPluginChannel(activePlugin, channelId);
       }
     },
-    [activePlugin, pluginById],
+    [activeChannel, activePlugin, pluginById],
   );
+
+  const openFocusSearch = useCallback(() => {
+    if (isActiveDynamicChannel) {
+      setFocusSearchOpen(true);
+      return;
+    }
+    const searchChannel = findDynamicSearchChannel(activePluginChannels);
+    if (searchChannel && searchChannel.id !== activeChannel) {
+      selectChannel(searchChannel.id);
+      return;
+    }
+    setFocusSearchOpen(true);
+  }, [
+    activeChannel,
+    activePluginChannels,
+    isActiveDynamicChannel,
+    selectChannel,
+  ]);
 
   const selectPlugin = (pluginId: string, groupId?: string) => {
     if (pluginId !== activePlugin) {
@@ -2764,7 +2888,7 @@ export default function App() {
                         {showFocusSearchButton ? (
                           <button
                             type="button"
-                            onClick={() => setFocusSearchOpen(true)}
+                            onClick={openFocusSearch}
                             className="p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500"
                             title="搜索"
                           >
@@ -3029,7 +3153,7 @@ export default function App() {
                 <div className="flex-1 min-h-0 w-full">
                 {selectedItem ? (
                 <div
-                  className="article-reader space-y-6"
+                  className={`article-reader space-y-6${isComicReaderContent ? " article-reader--comic" : ""}${isMangaIntroPage ? " article-reader--manga-intro" : ""}`}
                   style={{
                     "--reader-scale": readerFontScale,
                     "--comic-page-width": comicPageWidthCssValue(comicPageWidth),
@@ -3053,7 +3177,7 @@ export default function App() {
 
                 {/* Article Header (Title, Subinfo) */}
                 <div className="space-y-4">
-                  {!showRatingHero ? (
+                  {!showRatingHero && !isComicReaderContent ? (
                   <div className="flex items-start gap-3">
                     <h1 className="article-reader-title font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight flex-1 min-w-0">
                       {selectedItem.title}
@@ -3194,7 +3318,7 @@ export default function App() {
                 </div>
 
                 {/* Tags Section */}
-                {!showRatingHero ? (
+                {!showRatingHero && !isComicReaderContent ? (
                 <div className="flex flex-wrap gap-2">
                   {(selectedItem.tags ?? []).map((tag, idx) => (
                     <span 
@@ -3213,12 +3337,26 @@ export default function App() {
                     <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
                     加载正文中…
                   </div>
+                ) : useComicChapterStreamMode && comicStream.slots.length > 0 ? (
+                  <ComicChapterStream
+                    slots={comicStream.slots}
+                    streamContainerRef={comicStream.streamContainerRef}
+                    theme={theme}
+                    reachedEnd={comicStream.reachedEnd}
+                  />
+                ) : comicFlatPagesHtml ? (
+                  <div
+                    ref={articleContentRef}
+                    data-theme={articleContentTheme(theme)}
+                    className="article-content comic-chapter-pages"
+                    dangerouslySetInnerHTML={{ __html: comicFlatPagesHtml }}
+                  />
                 ) : selectedItemDisplayContent ? (
                   <>
                     <div
                       ref={articleContentRef}
                       data-theme={articleContentTheme(theme)}
-                      className="article-content mt-6"
+                      className={`article-content mt-6${isMangaIntroPage ? " article-content--manga-intro" : ""}`}
                       dangerouslySetInnerHTML={{ __html: selectedItemDisplayContent }}
                     />
                     {introStartReading}
@@ -3285,7 +3423,7 @@ export default function App() {
                       canLoadMore={channelCapabilities.canLoadMoreChapters}
                       canRefresh={channelCapabilities.canRefreshChapters || channelCapabilities.hasChapters}
                       parentItem={chaptersParent}
-                      activeItemId={chapters.activeChapter?.id ?? selectedItem?.id}
+                      activeItemId={activeChapterId}
                       itemLabel={channelCapabilities.chaptersItemLabel}
                       onSelect={chapter => {
                         setChaptersDrawerOpen(false);

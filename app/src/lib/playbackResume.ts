@@ -12,6 +12,7 @@ import { fetchFeedItem } from "@/lib/feed";
 import {
   collectComicLazyImages,
   resolveComicLazyPageIndex,
+  syncComicLazyImages,
   syncComicLazyImagesForChapterPage,
 } from "@/lib/comicChapterContent";
 import { getPlayback } from "@/lib/playback";
@@ -427,6 +428,46 @@ function scrollToCharOffset(root: HTMLElement, targetOffset: number): void {
   scrollParent.scrollTop = maxScroll * ratio;
 }
 
+function scheduleMangaResumeRetries(run: () => void): void {
+  run();
+  window.requestAnimationFrame(run);
+  window.setTimeout(run, 400);
+  window.setTimeout(run, 1200);
+}
+
+function bindMangaResumeRetries(
+  images: HTMLImageElement[],
+  pageIndex: number,
+  run: () => void,
+): void {
+  const target = images[pageIndex];
+  if (!target) return;
+  target.addEventListener("load", run, { once: true });
+  target.addEventListener("error", run, { once: true });
+}
+
+export function applyMangaFlatPagesResume(
+  root: HTMLElement | null,
+  progress: ProgressManga,
+  scrollRoot?: HTMLElement | null,
+  runtimeBase?: string | null,
+): void {
+  if (!root || !progress.page) return;
+
+  const lazyImages = collectComicLazyImages(root);
+  if (lazyImages.length > 0) {
+    syncComicLazyImages(root, scrollRoot ?? null, {
+      focusPageIndex: progress.page - 1,
+      runtimeBase,
+    });
+  }
+
+  applyMangaResume(root, progress, scrollRoot);
+  bindMangaResumeRetries(lazyImages, progress.page - 1, () => {
+    applyMangaResume(root, progress, scrollRoot);
+  });
+}
+
 export function applyPlaybackResume(
   mode: PlaybackMode,
   progress: PlaybackProgress | undefined,
@@ -435,6 +476,7 @@ export function applyPlaybackResume(
     contentRoot: HTMLElement | null;
     scrollRoot?: HTMLElement | null;
     chapterId?: string;
+    runtimeBase?: string | null;
   },
 ): void {
   if (!progress) return;
@@ -455,16 +497,25 @@ export function applyPlaybackResume(
     return;
   }
   if (mode === "manga" && isProgressManga(progress)) {
-    if (options.contentRoot?.dataset.comicStream === "true") {
-      applyMangaStreamResume(
+    const run = () => {
+      if (options.contentRoot?.dataset.comicStream === "true") {
+        applyMangaStreamResume(
+          options.contentRoot,
+          progress,
+          options.scrollRoot,
+          options.chapterId,
+          options.runtimeBase,
+        );
+        return;
+      }
+      applyMangaFlatPagesResume(
         options.contentRoot,
         progress,
         options.scrollRoot,
-        options.chapterId,
+        options.runtimeBase,
       );
-      return;
-    }
-    applyMangaResume(options.contentRoot, progress, options.scrollRoot);
+    };
+    scheduleMangaResumeRetries(run);
   }
 }
 
@@ -473,13 +524,20 @@ export function applyMangaStreamResume(
   progress: ProgressManga,
   scrollRoot?: HTMLElement | null,
   chapterId?: string,
+  runtimeBase?: string | null,
 ): void {
   if (!streamRoot || !progress.page) return;
   const contentRoot = resolveComicStreamChapterContentRoot(streamRoot, chapterId, scrollRoot);
   if (contentRoot) {
-    syncComicLazyImagesForChapterPage(streamRoot, contentRoot, progress.page);
+    syncComicLazyImagesForChapterPage(streamRoot, contentRoot, progress.page, runtimeBase);
   }
   applyMangaResume(contentRoot, progress, scrollRoot);
+  if (contentRoot) {
+    const lazyImages = collectComicLazyImages(contentRoot);
+    bindMangaResumeRetries(lazyImages, progress.page - 1, () => {
+      applyMangaResume(contentRoot, progress, scrollRoot);
+    });
+  }
 }
 
 export async function resolveParentArticleForPlayback(

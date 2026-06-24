@@ -14,10 +14,29 @@ export const COMIC_LAZY_PLACEHOLDER_SRC =
 
 /** How many comic page images to load before/after the current viewport page. */
 export const COMIC_LAZY_PRELOAD_BEFORE = 5;
-export const COMIC_LAZY_PRELOAD_AFTER = 5;
+export const COMIC_LAZY_PRELOAD_AFTER = 10;
 
 /** Limit parallel image fetches to reduce CDN 429 rate limits. */
-const COMIC_LAZY_MAX_CONCURRENT = 3;
+const COMIC_LAZY_MAX_CONCURRENT = 5;
+
+/** Viewport-first order: current page, then ahead (fast scroll), then behind. */
+function comicLazyLoadOrder(
+  currentIndex: number,
+  loadStart: number,
+  loadEnd: number,
+): number[] {
+  const indices: number[] = [];
+  if (currentIndex >= loadStart && currentIndex <= loadEnd) {
+    indices.push(currentIndex);
+  }
+  for (let i = currentIndex + 1; i <= loadEnd; i++) {
+    indices.push(i);
+  }
+  for (let i = currentIndex - 1; i >= loadStart; i--) {
+    indices.push(i);
+  }
+  return indices;
+}
 
 let comicLazyInflight = 0;
 const comicLazyWaiters: Array<() => void> = [];
@@ -130,14 +149,11 @@ export function syncComicLazyImages(
   const loadStart = Math.max(0, currentIndex - COMIC_LAZY_PRELOAD_BEFORE);
   const loadEnd = Math.min(images.length - 1, currentIndex + COMIC_LAZY_PRELOAD_AFTER);
 
-  for (let i = 0; i < images.length; i++) {
+  for (const i of comicLazyLoadOrder(currentIndex, loadStart, loadEnd)) {
     const img = images[i];
     const dataSrc = img.getAttribute("data-src") ?? "";
     if (!dataSrc) continue;
-
-    if (i >= loadStart && i <= loadEnd) {
-      startComicLazyImageLoad(img, dataSrc, options?.runtimeBase);
-    }
+    startComicLazyImageLoad(img, dataSrc, options?.runtimeBase);
   }
 }
 
@@ -158,6 +174,34 @@ export function syncComicLazyImagesForChapterPage(
 
 export function isComicReaderHtml(html: string): boolean {
   return html.includes("comic-reader");
+}
+
+export function formatComicChapterToolbarSubtitle(options: {
+  seriesTitle: string;
+  chapterIndex: number;
+  chapterLabel?: string;
+  chapterTitle?: string | null;
+}): string {
+  const { seriesTitle, chapterIndex, chapterLabel = "话", chapterTitle } = options;
+  const episodePart = `第${chapterIndex + 1}${chapterLabel}`;
+  const parts = [seriesTitle, episodePart];
+
+  const trimmedTitle = chapterTitle?.trim();
+  if (trimmedTitle && trimmedTitle !== seriesTitle) {
+    let shortTitle = trimmedTitle;
+    for (const sep of ["·", "・", " - ", " — ", ": ", "："]) {
+      const prefix = `${seriesTitle}${sep}`;
+      if (trimmedTitle.startsWith(prefix)) {
+        shortTitle = trimmedTitle.slice(prefix.length).trim();
+        break;
+      }
+    }
+    if (shortTitle && shortTitle !== seriesTitle) {
+      parts.push(shortTitle);
+    }
+  }
+
+  return parts.join(" · ");
 }
 
 const COMIC_PAGE_IMAGE_SELECTOR = [
@@ -252,8 +296,7 @@ export function syncComicReaderImages(
   const loadStart = Math.max(0, currentIndex - COMIC_LAZY_PRELOAD_BEFORE);
   const loadEnd = Math.min(pageImages.length - 1, currentIndex + COMIC_LAZY_PRELOAD_AFTER);
 
-  for (let i = 0; i < pageImages.length; i++) {
-    if (i < loadStart || i > loadEnd) continue;
+  for (const i of comicLazyLoadOrder(currentIndex, loadStart, loadEnd)) {
     const img = pageImages[i];
     const dataSrc = resolveComicImageUrl(img);
     if (dataSrc) {
@@ -304,6 +347,215 @@ export function flattenComicChapterImagesHtml(contentHtml: string): string {
       return img.outerHTML;
     })
     .join("");
+}
+
+/** Flatten plugin comic HTML to sequential page images; null when no pages found. */
+export function prepareComicFlatPagesHtml(contentHtml: string): string | null {
+  if (!contentHtml.trim() || !isComicReaderHtml(contentHtml)) return null;
+  const flat = flattenComicChapterImagesHtml(contentHtml);
+  if (!flat.trim()) return null;
+  if (typeof DOMParser === "undefined") return flat;
+
+  const doc = new DOMParser().parseFromString(flat, "text/html");
+  return collectComicPageImageElements(doc.body).length > 0 ? flat : null;
+}
+
+/** Flatten to page images when possible; otherwise keep the original HTML. */
+export function prepareComicStreamSlotHtml(contentHtml: string): string {
+  if (!contentHtml.trim()) return "";
+  const flat = prepareComicFlatPagesHtml(contentHtml);
+  return flat ?? contentHtml;
+}
+
+const MANGA_INTRO_NAV_RE = /^(简介|介绍|章节|目录|推荐|评论|相关|资讯|话|卷)/;
+const MANGA_INTRO_META_RE = /来源|打开原网页|原作者|更新时间|连载/;
+const MANGA_INTRO_TAG_RE = /#\S|标签|分类|类型|题材/;
+
+function isMangaIntroCandidate(html: string): boolean {
+  if (!html.trim() || html.includes("comic-reader") || html.includes("manga-intro")) {
+    return false;
+  }
+  return /<img[\s>]/i.test(html) && /简介|介绍|来源/.test(html);
+}
+
+function stripInlineStyles(el: HTMLElement): void {
+  el.removeAttribute("style");
+  el.removeAttribute("bgcolor");
+  el.removeAttribute("color");
+  if (el.tagName === "FONT") {
+    const span = el.ownerDocument.createElement("span");
+    span.innerHTML = el.innerHTML;
+    el.replaceWith(span);
+  }
+}
+
+function classifyMangaIntroBlock(el: HTMLElement): string {
+  const text = (el.textContent ?? "").trim();
+  if (!text) return "manga-intro__misc";
+
+  if (MANGA_INTRO_META_RE.test(text) && text.length < 140) {
+    return "manga-intro__meta";
+  }
+  if (el.tagName === "H1" || el.tagName === "H2" || el.tagName === "H3") {
+    return "manga-intro__title";
+  }
+  if (MANGA_INTRO_TAG_RE.test(text) && text.length < 240) {
+    return "manga-intro__tags";
+  }
+  if (el.tagName === "UL" || el.tagName === "OL") {
+    return "manga-intro__nav";
+  }
+
+  const shortChildren = Array.from(el.children).filter(
+    child => (child.textContent?.trim().length ?? 0) > 0
+      && (child.textContent?.trim().length ?? 0) < 24,
+  );
+  if (shortChildren.length >= 2 && text.length < 120) {
+    return "manga-intro__nav";
+  }
+  if (MANGA_INTRO_NAV_RE.test(text) && text.length < 80) {
+    return "manga-intro__nav";
+  }
+  if (text.length >= 36 || el.tagName === "P" || el.tagName === "BLOCKQUOTE") {
+    return "manga-intro__synopsis";
+  }
+  return "manga-intro__misc";
+}
+
+function collectMangaIntroRoots(body: HTMLElement): HTMLElement[] {
+  const children = Array.from(body.children).filter(
+    (node): node is HTMLElement => node instanceof HTMLElement,
+  );
+  if (children.length === 1) {
+    const only = children[0];
+    const nested = Array.from(only.children).filter(
+      (node): node is HTMLElement => node instanceof HTMLElement,
+    );
+    if (nested.length > 1 && !only.classList.contains("manga-intro")) {
+      return nested;
+    }
+  }
+  return children;
+}
+
+function extractMangaIntroCover(
+  roots: HTMLElement[],
+  doc: Document,
+): { hero: HTMLElement | null; remaining: HTMLElement[] } {
+  const remaining = [...roots];
+  let hero: HTMLElement | null = null;
+
+  for (let i = 0; i < remaining.length; i++) {
+    const root = remaining[i];
+    const img = root.tagName === "IMG"
+      ? root
+      : root.querySelector("img");
+    if (!(img instanceof HTMLImageElement)) continue;
+
+    const src = resolveComicImageUrl(img);
+    if (!src || src.startsWith("data:")) continue;
+
+    hero = doc.createElement("div");
+    hero.className = "manga-intro__hero-aside";
+    img.classList.add("manga-intro__cover");
+    stripInlineStyles(img);
+
+    if (root.tagName === "IMG") {
+      hero.appendChild(img);
+      remaining.splice(i, 1);
+    } else if (root.childElementCount === 1 && root.querySelector("img") === img) {
+      hero.appendChild(img);
+      remaining.splice(i, 1);
+    } else {
+      img.remove();
+      hero.appendChild(img);
+    }
+    break;
+  }
+
+  return { hero, remaining };
+}
+
+/** Restructure plugin manga synopsis HTML for reader styling. */
+export function normalizeMangaIntroHtml(html: string): string {
+  if (!isMangaIntroCandidate(html) || typeof DOMParser === "undefined") {
+    return html;
+  }
+
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const body = doc.body;
+  if (body.querySelector(".manga-intro")) return html;
+
+  const roots = collectMangaIntroRoots(body);
+  if (roots.length === 0) return html;
+
+  const { hero, remaining } = extractMangaIntroCover(roots, doc);
+  const headerBlocks: HTMLElement[] = [];
+  const navBlocks: HTMLElement[] = [];
+  const synopsisBlocks: HTMLElement[] = [];
+  const miscBlocks: HTMLElement[] = [];
+
+  for (const root of remaining) {
+    stripInlineStyles(root);
+    const kind = classifyMangaIntroBlock(root);
+    root.classList.add(kind);
+    if (kind === "manga-intro__title" || kind === "manga-intro__tags" || kind === "manga-intro__meta") {
+      headerBlocks.push(root);
+    } else if (kind === "manga-intro__nav") {
+      navBlocks.push(root);
+    } else if (kind === "manga-intro__synopsis") {
+      synopsisBlocks.push(root);
+    } else {
+      miscBlocks.push(root);
+    }
+  }
+
+  const wrapper = doc.createElement("div");
+  wrapper.className = "manga-intro";
+
+  if (hero || headerBlocks.length > 0) {
+    const header = doc.createElement("div");
+    header.className = "manga-intro__header";
+    if (hero) header.appendChild(hero);
+
+    if (headerBlocks.length > 0) {
+      const headerBody = doc.createElement("div");
+      headerBody.className = "manga-intro__header-body";
+      for (const block of headerBlocks) {
+        headerBody.appendChild(block);
+      }
+      header.appendChild(headerBody);
+    }
+    wrapper.appendChild(header);
+  }
+
+  for (const block of navBlocks) {
+    wrapper.appendChild(block);
+  }
+
+  if (synopsisBlocks.length > 0) {
+    const card = doc.createElement("div");
+    card.className = "manga-intro__synopsis-card";
+    const label = doc.createElement("h3");
+    label.className = "manga-intro__section-label";
+    label.textContent = "简介";
+    card.appendChild(label);
+    for (const block of synopsisBlocks) {
+      card.appendChild(block);
+    }
+    wrapper.appendChild(card);
+  }
+
+  for (const block of miscBlocks) {
+    wrapper.appendChild(block);
+  }
+
+  body.replaceChildren(wrapper);
+  return body.innerHTML;
+}
+
+export function prepareMangaIntroDisplayContent(html: string): string {
+  return normalizeMangaIntroHtml(html);
 }
 
 export function countMangaRemainingPages(

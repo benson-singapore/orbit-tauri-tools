@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { Icon } from "@/components/Icon";
 import { isDarkTheme } from "@/lib/themeMode";
 import type { Article, ThemeMode } from "@/types";
@@ -41,6 +42,12 @@ export function ChaptersList({
   onRefresh,
   onClearAndRefresh,
 }: ChaptersListProps) {
+  const activeItemRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    activeItemRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeItemId]);
+
   const heading = title || "目录";
   const busy = loading || refreshing;
   const isDark = isDarkTheme(theme);
@@ -100,6 +107,7 @@ export function ChaptersList({
         return (
           <button
             key={item.id}
+            ref={isActive ? activeItemRef : undefined}
             type="button"
             onClick={() => onSelect(item)}
             className={`group relative w-full p-3.5 rounded-2xl text-left transition-all duration-300 border-[0.5px] orbit-feed-card ${

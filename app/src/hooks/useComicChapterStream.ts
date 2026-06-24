@@ -10,8 +10,8 @@ import {
   COMIC_PRELOAD_REMAINING_PAGES,
   comicChapterStreamSignature,
   countMangaRemainingPages,
-  flattenComicChapterImagesHtml,
   prepareChapterDisplayContent,
+  prepareComicStreamSlotHtml,
   syncComicLazyImages,
 } from "@/lib/comicChapterContent";
 import { runtimeOpenChapterDetail } from "@/lib/runtimeV2";
@@ -101,7 +101,7 @@ export function useComicChapterStream({
   const prepareStreamHtml = useCallback(
     (detail: Article): string => {
       const html = prepareChapterDisplayContent(detail, runtimeBase, theme);
-      return html ? flattenComicChapterImagesHtml(html) : "";
+      return html ? prepareComicStreamSlotHtml(html) : "";
     },
     [runtimeBase, theme],
   );
@@ -391,24 +391,69 @@ export function useComicChapterStream({
 
     const generation = ++seedGenerationRef.current;
     const items = chapterItems;
-    const idx = items.findIndex(item => item.id === activeChapter.id);
+    let resolvedChapter = activeChapter;
+    let idx = items.findIndex(item => item.id === resolvedChapter.id);
+    if (
+      idx < 0
+      && activeChapterDetail?.id
+      && activeChapterDetail.id !== activeChapter.id
+    ) {
+      const detailIdx = items.findIndex(item => item.id === activeChapterDetail.id);
+      if (detailIdx >= 0) {
+        idx = detailIdx;
+        resolvedChapter = items[detailIdx];
+      }
+    }
     if (idx < 0) {
+      if (activeChapterDetail?.id === activeChapter.id && activeChapterDetail.content?.trim()) {
+        const soloHtml = prepareComicStreamSlotHtml(
+          prepareChapterDisplayContent(activeChapterDetail, runtimeBase, theme),
+        );
+        setSlots([
+          {
+            chapter: activeChapterDetail,
+            contentHtml: soloHtml,
+            status: soloHtml ? "ready" : "loading",
+          },
+        ]);
+        setReachedEnd(true);
+        notifyVisibleChapter(activeChapterDetail);
+        if (!soloHtml) {
+          void fetchChapterDetail(resolvedChapter)
+            .then(detail => {
+              if (seedGenerationRef.current !== generation) return;
+              const html = prepareStreamHtml(detail);
+              updateChapterSlot(resolvedChapter.id, detail, html);
+            })
+            .catch(() => {
+              if (seedGenerationRef.current !== generation) return;
+              setSlots(prev =>
+                prev.map(slot =>
+                  slot.chapter.id === resolvedChapter.id
+                    ? { ...slot, status: "error" }
+                    : slot,
+                ),
+              );
+            });
+        }
+        return;
+      }
       setSlots([]);
       setReachedEnd(false);
       return;
     }
 
     const prevChapter = idx > 0 ? items[idx - 1] : null;
-    pendingScrollToChapterRef.current = activeChapter.id;
+    pendingScrollToChapterRef.current = resolvedChapter.id;
     setReachedEnd(idx >= items.length - 1);
     appendLockRef.current = false;
     prefetchLockRef.current = false;
     prefetchRef.current = null;
 
     const activeDetail =
-      activeChapterDetail?.id === activeChapter.id ? activeChapterDetail : activeChapter;
+      activeChapterDetail?.id === resolvedChapter.id ? activeChapterDetail : resolvedChapter;
     const activeHtml = activeDetail.content?.trim()
-      ? flattenComicChapterImagesHtml(
+      ? prepareComicStreamSlotHtml(
           prepareChapterDisplayContent(activeDetail, runtimeBase, theme),
         )
       : "";
@@ -442,17 +487,17 @@ export function useComicChapterStream({
     }
 
     if (!activeHtml) {
-      void fetchChapterDetail(activeChapter)
+      void fetchChapterDetail(resolvedChapter)
         .then(detail => {
           if (seedGenerationRef.current !== generation) return;
           const html = prepareStreamHtml(detail);
-          updateChapterSlot(activeChapter.id, detail, html);
+          updateChapterSlot(resolvedChapter.id, detail, html);
         })
         .catch(() => {
           if (seedGenerationRef.current !== generation) return;
           setSlots(prev =>
             prev.map(slot =>
-              slot.chapter.id === activeChapter.id
+              slot.chapter.id === resolvedChapter.id
                 ? { ...slot, status: "error" }
                 : slot,
             ),
@@ -464,6 +509,8 @@ export function useComicChapterStream({
     parent?.id,
     parent?.pluginId,
     activeChapter?.id,
+    activeChapterDetail?.id,
+    activeChapterDetail?.content,
     chapterItems,
     fetchChapterDetail,
     prepareStreamHtml,
@@ -476,7 +523,7 @@ export function useComicChapterStream({
   useEffect(() => {
     if (!enabled || !activeChapter || !activeChapterDetail) return;
     if (activeChapterDetail.id !== activeChapter.id) return;
-    const html = flattenComicChapterImagesHtml(
+    const html = prepareComicStreamSlotHtml(
       prepareChapterDisplayContent(activeChapterDetail, runtimeBase, theme),
     );
     if (!html) return;
@@ -510,29 +557,31 @@ export function useComicChapterStream({
 
   useEffect(() => {
     if (!enabled || detailLoading || !activeChapter) return;
-    setSlots(prev =>
-      prev.map(slot => {
+    setSlots(prev => {
+      if (prev.length === 0) return prev;
+      return prev.map(slot => {
         if (slot.status !== "loading" || slot.chapter.id !== activeChapter.id) {
           return slot;
         }
-        if (
-          activeChapterDetail?.id === activeChapter.id
-          && activeChapterDetail.content?.trim()
-        ) {
-          const html = flattenComicChapterImagesHtml(
-            prepareChapterDisplayContent(activeChapterDetail, runtimeBase, theme),
-          );
-          if (html) {
-            return {
-              chapter: activeChapterDetail,
-              contentHtml: html,
-              status: "ready" as const,
-            };
-          }
+        if (activeChapterDetail?.id !== activeChapter.id) {
+          return slot;
+        }
+        if (!activeChapterDetail.content?.trim()) {
+          return slot;
+        }
+        const html = prepareComicStreamSlotHtml(
+          prepareChapterDisplayContent(activeChapterDetail, runtimeBase, theme),
+        );
+        if (html) {
+          return {
+            chapter: activeChapterDetail,
+            contentHtml: html,
+            status: "ready" as const,
+          };
         }
         return { ...slot, status: "error" as const };
-      }),
-    );
+      });
+    });
   }, [
     enabled,
     detailLoading,
