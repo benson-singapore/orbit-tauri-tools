@@ -23,3 +23,6 @@ runtime/**/*.test
 
 # Logs
 *.log
+
+# macOS signing secrets (copy from scripts/signing.env.example)
+scripts/signing.env

@@ -12,7 +12,7 @@ export const GRID_COVER_ASPECT_OPTIONS = [
 
 export type GridCoverAspectRatio = (typeof GRID_COVER_ASPECT_OPTIONS)[number];
 
-export const DEFAULT_GRID_COVER_ASPECT_RATIO: GridCoverAspectRatio = "16:9";
+export const DEFAULT_GRID_COVER_ASPECT_RATIO: GridCoverAspectRatio = "1:1";
 
 const VALID_RATIOS = new Set<string>(GRID_COVER_ASPECT_OPTIONS);
 

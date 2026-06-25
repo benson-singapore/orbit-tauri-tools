@@ -1,5 +1,4 @@
 import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { isDarkTheme } from "@/lib/themeMode";
 import { ArticleDetailPanel } from "@/components/ArticleDetailPanel";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import { useSplitPaneAutoGridColumns } from "@/hooks/useSplitPaneAutoGridColumns";
@@ -65,7 +64,6 @@ export function SplitGridDetailView({
 }: SplitGridDetailViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPaneRef = useRef<HTMLDivElement>(null);
-  const isDark = isDarkTheme(theme);
   const leftPercent = clampSplitPaneRatio(splitRatio) * 100;
 
   useSplitPaneAutoGridColumns(leftPaneRef, onGridColumnCountChange);
@@ -129,24 +127,12 @@ export function SplitGridDetailView({
         aria-orientation="vertical"
         aria-label="调整左右分屏宽度"
         onPointerDown={handleDividerPointerDown}
-        className={`group relative z-10 w-2 shrink-0 cursor-col-resize touch-none ${
-          isDark ? "bg-neutral-800" : "bg-neutral-200"
-        }`}
+        className="orbit-split-divider group relative z-10 w-2 shrink-0 cursor-col-resize touch-none"
       >
-        <div
-          className={`absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors ${
-            isDark
-              ? "bg-neutral-600 group-hover:bg-indigo-400"
-              : "bg-neutral-300 group-hover:bg-indigo-500"
-          }`}
-        />
+        <div className="orbit-split-divider-handle absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2" />
       </div>
 
-      <div
-        className={`min-h-0 min-w-0 flex-1 overflow-hidden border-l ${
-          isDark ? "border-neutral-800 bg-[#111113]" : "border-neutral-200 bg-neutral-50/80"
-        }`}
-      >
+      <div className="orbit-detail-panel orbit-reader-chrome min-h-0 min-w-0 flex-1 overflow-hidden border-l">
         {selectedArticle ? (
           <ArticleDetailPanel
             key={splitDetailSessionId(selectedArticle)}
@@ -164,7 +150,7 @@ export function SplitGridDetailView({
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center">
-            <p className={`text-sm ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+            <p className="text-sm orbit-detail-meta">
               点击左侧条目，详情将在此展示
             </p>
           </div>

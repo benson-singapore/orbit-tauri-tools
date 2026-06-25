@@ -18,9 +18,9 @@ export async function loadAppInfo(): Promise<AppInfo> {
 
   if (!isTauriRuntime()) {
     return {
-      name: "Orbit Reader",
+      name: "orbit",
       version: fallbackVersion,
-      identifier: "com.orbit.reader",
+      identifier: "com.orbit.app",
       tauriVersion: "—",
       isTauri: false,
     };
@@ -39,9 +39,9 @@ export async function loadAppInfo(): Promise<AppInfo> {
     return { name, version, identifier, tauriVersion, isTauri: true };
   } catch {
     return {
-      name: "Orbit Reader",
+      name: "orbit",
       version: fallbackVersion,
-      identifier: "com.orbit.reader",
+      identifier: "com.orbit.app",
       tauriVersion: "—",
       isTauri: true,
     };

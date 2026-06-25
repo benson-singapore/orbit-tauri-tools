@@ -52,6 +52,12 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
   const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
   const inputBorder = isDark ? "border-neutral-800" : "border-neutral-200";
   const inputText = isDark ? "text-neutral-100 placeholder:text-neutral-500" : "text-neutral-900 placeholder:text-neutral-400";
+  const navActive = "bg-[#5856D6]/10 text-[#5856D6] font-medium";
+  const navIdle = isDark
+    ? "text-neutral-400 hover:text-neutral-200 hover:bg-neutral-800/50"
+    : "text-neutral-600 hover:text-neutral-800 hover:bg-neutral-100";
+  const insetPanelBg = isDark ? "bg-neutral-900/30" : "bg-neutral-50/60";
+  const insetPanelBorder = isDark ? "border-neutral-800" : "border-neutral-200";
 
   const [pane, setPane] = useState<LLMSettingsPane>("providers");
 
@@ -457,9 +463,11 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
 
   return (
     <div className="flex-1 min-h-0 flex overflow-hidden">
-      <aside className={`w-52 shrink-0 h-full border-r ${subtleBorder} px-4 py-5 overflow-y-auto flex flex-col bg-white`}>
+      <aside className={`w-52 shrink-0 h-full border-r ${subtleBorder} px-4 py-5 overflow-y-auto flex flex-col`}>
         <div className="flex items-center justify-between px-3 mb-3">
-          <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">LLM设置</p>
+          <p className={`text-[10px] font-semibold uppercase tracking-wider ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+            LLM设置
+          </p>
         </div>
         <nav className="space-y-0.5 flex-1 min-h-0">
           <div className="space-y-0.5">
@@ -467,7 +475,7 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
             type="button"
             onClick={() => setPane("providers")}
             className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
-              pane === "providers" ? "bg-[#5856D6]/10 text-[#5856D6]" : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+              pane === "providers" ? navActive : navIdle
             }`}
           >
             <Icon name="brain" className="w-4 h-4" />
@@ -477,7 +485,7 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
             type="button"
             onClick={() => setPane("prompts")}
             className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
-              pane === "prompts" ? "bg-[#5856D6]/10 text-[#5856D6]" : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+              pane === "prompts" ? navActive : navIdle
             }`}
           >
             <Icon name="text" className="w-4 h-4" />
@@ -487,7 +495,7 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
             type="button"
             onClick={() => setPane("chat")}
             className={`w-full flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
-              pane === "chat" ? "bg-[#5856D6]/10 text-[#5856D6]" : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+              pane === "chat" ? navActive : navIdle
             }`}
           >
             <Icon name="terminal" className="w-4 h-4" />
@@ -497,15 +505,15 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
         </nav>
 
         <div className={`mt-5 rounded-2xl border p-4 ${cardBg} ${subtleBorder}`}>
-          <p className="text-[12px] font-semibold text-neutral-700 dark:text-neutral-200">当前状态</p>
+          <p className={`text-[12px] font-semibold ${isDark ? "text-neutral-200" : "text-neutral-700"}`}>当前状态</p>
           {loadingCfg ? (
-            <p className="text-[12px] text-neutral-500 mt-2">加载配置中…</p>
+            <p className={`text-[12px] mt-2 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>加载配置中…</p>
           ) : cfgError ? (
             <p className="text-[12px] text-rose-500 mt-2">{cfgError}</p>
           ) : providers.length === 0 ? (
-            <p className="text-[12px] text-neutral-500 mt-2">暂无提供商配置</p>
+            <p className={`text-[12px] mt-2 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>暂无提供商配置</p>
           ) : (
-            <p className="text-[12px] text-neutral-500 mt-2">提供商数：{providers.length}</p>
+            <p className={`text-[12px] mt-2 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>提供商数：{providers.length}</p>
           )}
         </div>
       </aside>
@@ -558,7 +566,7 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
                         </p>
                       </div>
                       {addingProviderInline && (
-                        <div className="mt-4 rounded-2xl border border-neutral-200 p-4 bg-neutral-50/60 space-y-3">
+                        <div className={`mt-4 rounded-2xl border p-4 space-y-3 ${insetPanelBg} ${insetPanelBorder}`}>
                           <label className="block">
                             <span className="text-[11px] text-neutral-500">providerId</span>
                             <input
@@ -664,9 +672,7 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
                               type="button"
                               onClick={() => setSelectedProviderId(p.id)}
                               className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
-                                selectedProviderId === p.id
-                                  ? "bg-[#5856D6]/10 text-[#5856D6]"
-                                  : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+                                selectedProviderId === p.id ? navActive : navIdle
                               }`}
                             >
                               <span className="truncate">{p.name || p.id}</span>
@@ -677,7 +683,7 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
                           ))}
                         </div>
                         {addingProviderInline && (
-                          <div className="mt-3 rounded-2xl border border-neutral-200 p-3 bg-neutral-50/60 space-y-2">
+                          <div className={`mt-3 rounded-2xl border p-3 space-y-2 ${insetPanelBg} ${insetPanelBorder}`}>
                             <input
                               className={`w-full px-3 py-2 rounded-xl text-xs border outline-none ${inputBg} ${inputBorder} ${inputText}`}
                               value={providerIdInput}
@@ -1047,9 +1053,9 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
 
               {pane === "prompts" && (
                 <div className={`rounded-2xl border p-4 ${subtleBorder} ${cardBg}`}>
-                  <div className="rounded-2xl bg-white/70 p-[5px]">
+                  <div className={`rounded-2xl p-[5px] ${isDark ? "bg-neutral-900/30" : "bg-white/70"}`}>
                     <div className="grid grid-cols-12 gap-5 min-h-[420px]">
-                      <div className="col-span-4 border-r border-neutral-200/80 pr-4">
+                      <div className={`col-span-4 border-r pr-4 ${subtleBorder}`}>
                         <div className="flex items-center justify-between mb-3">
                           <p className="text-[12px] font-semibold text-neutral-500 uppercase tracking-wider">
                             Prompt 列表
@@ -1081,9 +1087,7 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
                               type="button"
                               onClick={() => setActivePromptProfileId(item.id)}
                               className={`w-full text-left flex items-center justify-between px-3 py-2 rounded-xl text-xs font-semibold transition-colors ${
-                                activePromptProfileId === item.id
-                                  ? "bg-[#5856D6]/10 text-[#5856D6]"
-                                  : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+                                activePromptProfileId === item.id ? navActive : navIdle
                               }`}
                             >
                               <span className="truncate">{item.name || "未命名 Prompt"}</span>
@@ -1189,7 +1193,7 @@ export function LLMSettingsPanel({ theme }: { theme: ThemeMode }) {
                         )}
                       </div>
                     </div>
-                    <div className="mt-4 pt-4 border-t border-neutral-200/70 dark:border-neutral-800 text-[11px] text-neutral-500">
+                    <div className={`mt-4 pt-4 border-t text-[11px] ${subtleBorder} ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
                       发送测试消息时，将自动使用当前选中的 Prompt。
                     </div>
                     <div className="flex items-center justify-end mt-2">

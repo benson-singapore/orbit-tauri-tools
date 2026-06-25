@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/orbit-tauri-tools/runtime/internal/orbitdir"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -20,7 +22,7 @@ func Open() (*Store, error) {
 		return nil, fmt.Errorf("user config dir: %w", err)
 	}
 
-	dir := filepath.Join(configDir, "Orbit Reader")
+	dir := filepath.Join(configDir, orbitdir.Name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir data dir: %w", err)
 	}

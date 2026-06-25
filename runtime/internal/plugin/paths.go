@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/orbit-tauri-tools/runtime/internal/orbitdir"
 )
 
 // UserPluginsDir returns the per-user plugin directory for imported feeds.
@@ -12,7 +14,7 @@ func UserPluginsDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(configDir, "Orbit Reader", "plugins"), nil
+	return filepath.Join(configDir, orbitdir.Name, "plugins"), nil
 }
 
 // DiscoverDirs returns plugin scan directories in priority order.

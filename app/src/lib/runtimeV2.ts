@@ -1,4 +1,5 @@
 import type { Article, ChannelCapabilities, VariableDefinition } from "@/types";
+import { runtimeFetch } from "@/lib/runtimeFetch";
 import { waitForRuntimeReady } from "@/lib/runtime";
 
 export interface RuntimeDispatchResult {
@@ -38,7 +39,7 @@ export async function fetchChannelCapabilities(
 ): Promise<ChannelCapabilities> {
   const base = await apiBase();
   const params = new URLSearchParams({ plugin_id: pluginId, channel_id: channelId });
-  const res = await fetch(`${base}/v2/runtime/capabilities?${params}`);
+  const res = await runtimeFetch(`${base}/v2/runtime/capabilities?${params}`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -58,7 +59,7 @@ export async function fetchRuntimeItems(options: {
     limit: String(options.limit ?? 20),
     offset: String(options.offset ?? 0),
   });
-  const res = await fetch(`${base}/v2/runtime/items?${params}`);
+  const res = await runtimeFetch(`${base}/v2/runtime/items?${params}`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -81,7 +82,7 @@ export async function fetchRuntimeChapters(options: {
     channel_id: options.channelId,
     parent_id: options.parentId,
   });
-  const res = await fetch(`${base}/v2/runtime/chapters?${params}`);
+  const res = await runtimeFetch(`${base}/v2/runtime/chapters?${params}`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -188,7 +189,7 @@ async function runtimePost(
     );
   }
   const base = await apiBase();
-  const res = await fetch(`${base}/v2/runtime/${path}`, {
+  const res = await runtimeFetch(`${base}/v2/runtime/${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -326,7 +327,7 @@ export async function fetchVariablesSchema(
   pluginId: string,
 ): Promise<Record<string, VariableDefinition>> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v2/plugins/${encodeURIComponent(pluginId)}/variables/schema`);
+  const res = await runtimeFetch(`${base}/v2/plugins/${encodeURIComponent(pluginId)}/variables/schema`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -338,7 +339,7 @@ export async function fetchPluginVariables(
   pluginId: string,
 ): Promise<Record<string, string>> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v2/plugins/${encodeURIComponent(pluginId)}/variables`);
+  const res = await runtimeFetch(`${base}/v2/plugins/${encodeURIComponent(pluginId)}/variables`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -373,7 +374,7 @@ export async function savePluginVariables(
   values: Record<string, string>,
 ): Promise<void> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v2/plugins/${encodeURIComponent(pluginId)}/variables`, {
+  const res = await runtimeFetch(`${base}/v2/plugins/${encodeURIComponent(pluginId)}/variables`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ values }),

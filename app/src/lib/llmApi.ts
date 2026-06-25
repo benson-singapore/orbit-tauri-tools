@@ -1,3 +1,4 @@
+import { runtimeFetch } from "@/lib/runtimeFetch";
 import { waitForRuntimeReady } from "@/lib/runtime";
 
 export type LLMChatRole = "system" | "user" | "assistant";
@@ -59,7 +60,7 @@ export async function fetchLLMProvidersConfig(): Promise<LLMProvidersConfig> {
   const baseUrl = await waitForRuntimeReady();
   const dictType = encodeURIComponent(LLM_CONFIG_DICT_TYPE);
 
-  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/dicts?type=${dictType}`);
+  const res = await runtimeFetch(`${baseUrl.replace(/\/$/, "")}/v1/dicts?type=${dictType}`);
   if (!res.ok) {
     // If dict type doesn't exist yet, treat as empty.
     return defaultLLMProvidersConfig();
@@ -94,7 +95,7 @@ export async function saveLLMProvidersConfig(cfg: LLMProvidersConfig): Promise<v
 
   const value = JSON.stringify(cfg);
 
-  const res = await fetch(
+  const res = await runtimeFetch(
     `${baseUrl.replace(/\/$/, "")}/v1/dicts/${type}/${label}`,
     {
       method: "PUT",
@@ -122,7 +123,7 @@ export async function streamLLMChat(params: {
   const baseUrl = await waitForRuntimeReady();
   const url = `${baseUrl.replace(/\/$/, "")}/v1/llm/chat/stream`;
 
-  const res = await fetch(url, {
+  const res = await runtimeFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({

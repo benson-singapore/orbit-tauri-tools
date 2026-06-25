@@ -4,7 +4,7 @@ const LEGACY_STORAGE_KEY = "orbit.gridColumnCount";
 export const GRID_COLUMN_OPTIONS = [1, 2, 3, 4, 5, 6, 7, 8] as const;
 export type GridColumnCount = (typeof GRID_COLUMN_OPTIONS)[number];
 
-export const DEFAULT_GRID_COLUMN_COUNT: GridColumnCount = 4;
+export const DEFAULT_GRID_COLUMN_COUNT: GridColumnCount = 6;
 
 type PluginGridColumnMemory = Record<string, GridColumnCount>;
 

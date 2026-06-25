@@ -1,4 +1,5 @@
 import type { PlaybackRecord } from "@/types";
+import { runtimeFetch } from "@/lib/runtimeFetch";
 import { getRuntimeBaseUrl, waitForRuntimeReady } from "@/lib/runtime";
 
 async function apiBase(): Promise<string> {
@@ -35,7 +36,7 @@ export async function listPlayback(
   if (options?.limit != null) params.set("limit", String(options.limit));
   if (options?.offset != null) params.set("offset", String(options.offset));
   if (options?.channelId) params.set("channel_id", options.channelId);
-  const res = await fetch(`${base}/v1/playback?${params.toString()}`);
+  const res = await runtimeFetch(`${base}/v1/playback?${params.toString()}`);
   if (!res.ok) throw new Error(await parseError(res));
   return (await res.json()) as PlaybackListResponse;
 }
@@ -49,7 +50,7 @@ export async function getPlayback(
   const params = new URLSearchParams();
   if (channelId) params.set("channel_id", channelId);
   const qs = params.toString();
-  const res = await fetch(
+  const res = await runtimeFetch(
     `${base}/v1/playback/${encodeURIComponent(pluginId)}/${encodeURIComponent(parentId)}${qs ? `?${qs}` : ""}`,
   );
   if (!res.ok) throw new Error(await parseError(res));
@@ -59,7 +60,7 @@ export async function getPlayback(
 
 export async function putPlayback(pluginId: string, record: PlaybackRecord): Promise<void> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/playback`, {
+  const res = await runtimeFetch(`${base}/v1/playback`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ pluginId, record }),
@@ -72,7 +73,7 @@ export async function putPlayback(pluginId: string, record: PlaybackRecord): Pro
 
 export async function deletePlayback(pluginId: string, parentId: string): Promise<void> {
   const base = await apiBase();
-  const res = await fetch(
+  const res = await runtimeFetch(
     `${base}/v1/playback/${encodeURIComponent(pluginId)}/${encodeURIComponent(parentId)}`,
     { method: "DELETE" },
   );
@@ -86,7 +87,7 @@ export async function deleteAllPlayback(
   const base = await apiBase();
   const params = new URLSearchParams({ plugin_id: pluginId });
   if (channelId) params.set("channel_id", channelId);
-  const res = await fetch(`${base}/v1/playback?${params.toString()}`, {
+  const res = await runtimeFetch(`${base}/v1/playback?${params.toString()}`, {
     method: "DELETE",
   });
   if (!res.ok) throw new Error(await parseError(res));

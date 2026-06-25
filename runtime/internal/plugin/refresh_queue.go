@@ -140,6 +140,11 @@ func (q *RefreshQueue) EnqueueStale(pluginID, channelID string, delay time.Durat
 }
 
 func (q *RefreshQueue) runWorker(ctx context.Context) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("refresh queue worker panic: %v", rec)
+		}
+	}()
 	for {
 		job, ok := q.popNextReady()
 		if !ok {
@@ -195,6 +200,11 @@ func (q *RefreshQueue) popNextReady() (refreshJob, bool) {
 }
 
 func (q *RefreshQueue) runJob(ctx context.Context, job refreshJob) error {
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("refresh queue %s/%s panic: %v", job.pluginID, job.channelID, rec)
+		}
+	}()
 	rec, ok := q.registry.Get(job.pluginID)
 	if !ok || !rec.Active {
 		return nil

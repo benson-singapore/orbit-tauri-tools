@@ -48,3 +48,11 @@ elif [ -d "$ROOT/plugins" ]; then
 fi
 
 echo "built $OUT_DIR/orbit-runtime-$SUFFIX"
+
+ENTITLEMENTS="$ROOT/app/src-tauri/entitlements.plist"
+if [[ -f "$ENTITLEMENTS" ]]; then
+  codesign --force --sign - --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    "$OUT_DIR/orbit-runtime-$SUFFIX"
+  echo "signed orbit-runtime with JIT entitlements"
+fi

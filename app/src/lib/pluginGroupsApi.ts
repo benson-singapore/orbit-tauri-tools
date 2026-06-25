@@ -1,3 +1,4 @@
+import { runtimeFetch } from "@/lib/runtimeFetch";
 import { waitForRuntimeReady } from "@/lib/runtime";
 import { DEFAULT_PLUGIN_GROUP_ID, type PluginGroupsState } from "@/lib/pluginGroups";
 
@@ -17,7 +18,7 @@ async function parseError(res: Response): Promise<string> {
 
 export async function fetchPluginGroupsState(): Promise<PluginGroupsState> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugin-groups`);
+  const res = await runtimeFetch(`${base}/v1/plugin-groups`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -27,7 +28,7 @@ export async function fetchPluginGroupsState(): Promise<PluginGroupsState> {
 
 export async function savePluginGroupsState(state: PluginGroupsState): Promise<void> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugin-groups`, {
+  const res = await runtimeFetch(`${base}/v1/plugin-groups`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(state),

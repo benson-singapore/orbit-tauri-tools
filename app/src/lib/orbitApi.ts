@@ -8,6 +8,7 @@ import type {
   Plugin,
   PluginCategoryCountsResponse,
 } from "@/types";
+import { runtimeFetch } from "@/lib/runtimeFetch";
 
 function orbitApiBaseUrl(): string {
   const url = import.meta.env.VITE_ORBIT_API_URL;
@@ -28,7 +29,7 @@ async function parseError(res: Response): Promise<string> {
 
 export async function fetchPluginTypeDicts(): Promise<DictItem[]> {
   const base = orbitApiBaseUrl();
-  const res = await fetch(`${base}/v1/dicts/plugins_type`);
+  const res = await runtimeFetch(`${base}/v1/dicts/plugins_type`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -113,7 +114,7 @@ export async function fetchMarketPlugins(options?: {
     params.set("page", String(options.page));
   }
   const qs = params.toString();
-  const res = await fetch(`${base}/v1/plugins${qs ? `?${qs}` : ""}`);
+  const res = await runtimeFetch(`${base}/v1/plugins${qs ? `?${qs}` : ""}`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -132,7 +133,7 @@ export async function fetchPluginCategoryCounts(): Promise<{
   counts: Record<string, number>;
 }> {
   const base = orbitApiBaseUrl();
-  const res = await fetch(`${base}/v1/plugins/category-counts`);
+  const res = await runtimeFetch(`${base}/v1/plugins/category-counts`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }

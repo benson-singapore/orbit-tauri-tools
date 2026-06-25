@@ -1,6 +1,15 @@
 export type ContentType = "text" | "video" | "audio" | "image";
 
-export type ThemeMode = "light" | "purple" | "midnight" | "forest" | "rose" | "ocean";
+export type ThemeMode =
+  | "light"
+  | "midnight"
+  | "forest"
+  | "rose"
+  | "ocean"
+  | "amber"
+  | "slate"
+  | "crimson"
+  | "sand";
 
 /** Article reader uses a simplified light/dark split */
 export type ArticleContentTheme = "light" | "dark";

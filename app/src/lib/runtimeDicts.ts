@@ -1,3 +1,4 @@
+import { runtimeFetch } from "@/lib/runtimeFetch";
 import { waitForRuntimeReady } from "@/lib/runtime";
 
 export type RuntimeSettingConfigDictItem = {
@@ -13,7 +14,7 @@ type RuntimeSettingConfigDictResponse = {
 
 export async function fetchSettingConfigDicts(): Promise<RuntimeSettingConfigDictItem[]> {
   const baseUrl = await waitForRuntimeReady();
-  const res = await fetch(`${baseUrl.replace(/\/$/, "")}/v1/dicts?type=setting_config`);
+  const res = await runtimeFetch(`${baseUrl.replace(/\/$/, "")}/v1/dicts?type=setting_config`);
   if (!res.ok) {
     throw new Error(`fetch setting_config dicts failed: HTTP ${res.status}`);
   }

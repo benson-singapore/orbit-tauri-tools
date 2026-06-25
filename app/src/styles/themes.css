@@ -25,38 +25,6 @@
   --orbit-filter-active-text: #ffffff;
 }
 
-/* 暗紫 — black-violet gradient */
-[data-theme="purple"] {
-  --orbit-bg: #110d1a;
-  --orbit-bg-soft: #15102a;
-  --orbit-bg-muted: #1a1428;
-  --orbit-text: #e8e4f0;
-  --orbit-surface: #1a1428;
-  --orbit-surface-elevated: #211830;
-  --orbit-border: rgba(139, 92, 246, 0.18);
-  --orbit-border-strong: rgba(139, 92, 246, 0.32);
-  --orbit-shell-gradient: linear-gradient(
-    165deg,
-    #0a0612 0%,
-    #120d22 38%,
-    #18102e 72%,
-    #1a0f32 100%
-  );
-  --orbit-card: rgba(33, 24, 48, 0.72);
-  --orbit-card-hover: rgba(38, 28, 56, 0.88);
-  --orbit-card-selected: rgba(139, 92, 246, 0.16);
-  --orbit-card-border: rgba(139, 92, 246, 0.14);
-  --orbit-card-border-selected: rgba(167, 139, 250, 0.42);
-  --orbit-accent: #a78bfa;
-  --orbit-text-muted: rgba(232, 228, 240, 0.62);
-  --orbit-text-subtle: rgba(232, 228, 240, 0.42);
-  --orbit-filter-idle: rgba(33, 24, 48, 0.55);
-  --orbit-filter-idle-hover: rgba(38, 28, 56, 0.75);
-  --orbit-filter-idle-text: rgba(232, 228, 240, 0.72);
-  --orbit-filter-active-bg: rgba(167, 139, 250, 0.22);
-  --orbit-filter-active-text: #ede9fe;
-}
-
 /* 午夜蓝 — deep blue gradient */
 [data-theme="midnight"] {
   --orbit-bg: #080c16;
@@ -183,6 +151,134 @@
   --orbit-filter-idle-text: rgba(228, 242, 240, 0.72);
   --orbit-filter-active-bg: rgba(45, 212, 191, 0.2);
   --orbit-filter-active-text: #ccfbf1;
+}
+
+/* 琥珀 — warm amber gradient */
+[data-theme="amber"] {
+  --orbit-bg: #141008;
+  --orbit-bg-soft: #1a140c;
+  --orbit-bg-muted: #221a10;
+  --orbit-text: #f5efe4;
+  --orbit-surface: #221a10;
+  --orbit-surface-elevated: #2e2414;
+  --orbit-border: rgba(245, 158, 11, 0.18);
+  --orbit-border-strong: rgba(251, 191, 36, 0.32);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #100c06 0%,
+    #1a1408 38%,
+    #241c0c 72%,
+    #2a1e0c 100%
+  );
+  --orbit-card: rgba(46, 36, 20, 0.72);
+  --orbit-card-hover: rgba(56, 44, 24, 0.88);
+  --orbit-card-selected: rgba(245, 158, 11, 0.14);
+  --orbit-card-border: rgba(245, 158, 11, 0.14);
+  --orbit-card-border-selected: rgba(251, 191, 36, 0.4);
+  --orbit-accent: #fcd34d;
+  --orbit-text-muted: rgba(245, 239, 228, 0.62);
+  --orbit-text-subtle: rgba(245, 239, 228, 0.42);
+  --orbit-filter-idle: rgba(46, 36, 20, 0.55);
+  --orbit-filter-idle-hover: rgba(56, 44, 24, 0.75);
+  --orbit-filter-idle-text: rgba(245, 239, 228, 0.72);
+  --orbit-filter-active-bg: rgba(251, 191, 36, 0.22);
+  --orbit-filter-active-text: #fef3c7;
+}
+
+/* 石墨 — cool neutral slate gradient */
+[data-theme="slate"] {
+  --orbit-bg: #0e1114;
+  --orbit-bg-soft: #12161c;
+  --orbit-bg-muted: #181e26;
+  --orbit-text: #e8ecf0;
+  --orbit-surface: #181e26;
+  --orbit-surface-elevated: #222a34;
+  --orbit-border: rgba(148, 163, 184, 0.18);
+  --orbit-border-strong: rgba(203, 213, 225, 0.28);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #0a0c10 0%,
+    #10141a 38%,
+    #161c24 72%,
+    #1a1e26 100%
+  );
+  --orbit-card: rgba(34, 42, 52, 0.72);
+  --orbit-card-hover: rgba(42, 52, 64, 0.88);
+  --orbit-card-selected: rgba(148, 163, 184, 0.14);
+  --orbit-card-border: rgba(148, 163, 184, 0.14);
+  --orbit-card-border-selected: rgba(203, 213, 225, 0.36);
+  --orbit-accent: #cbd5e1;
+  --orbit-text-muted: rgba(232, 236, 240, 0.62);
+  --orbit-text-subtle: rgba(232, 236, 240, 0.42);
+  --orbit-filter-idle: rgba(34, 42, 52, 0.55);
+  --orbit-filter-idle-hover: rgba(42, 52, 64, 0.75);
+  --orbit-filter-idle-text: rgba(232, 236, 240, 0.72);
+  --orbit-filter-active-bg: rgba(203, 213, 225, 0.18);
+  --orbit-filter-active-text: #f1f5f9;
+}
+
+/* 赤焰 — fiery crimson gradient */
+[data-theme="crimson"] {
+  --orbit-bg: #140606;
+  --orbit-bg-soft: #1a0808;
+  --orbit-bg-muted: #220c0c;
+  --orbit-text: #f5e8e8;
+  --orbit-surface: #220c0c;
+  --orbit-surface-elevated: #2e1010;
+  --orbit-border: rgba(239, 68, 68, 0.18);
+  --orbit-border-strong: rgba(248, 113, 113, 0.32);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #100404 0%,
+    #1a0606 38%,
+    #240a0a 72%,
+    #2a1010 100%
+  );
+  --orbit-card: rgba(46, 16, 16, 0.72);
+  --orbit-card-hover: rgba(56, 20, 20, 0.88);
+  --orbit-card-selected: rgba(239, 68, 68, 0.14);
+  --orbit-card-border: rgba(239, 68, 68, 0.14);
+  --orbit-card-border-selected: rgba(248, 113, 113, 0.4);
+  --orbit-accent: #fca5a5;
+  --orbit-text-muted: rgba(245, 232, 232, 0.62);
+  --orbit-text-subtle: rgba(245, 232, 232, 0.42);
+  --orbit-filter-idle: rgba(46, 16, 16, 0.55);
+  --orbit-filter-idle-hover: rgba(56, 20, 20, 0.75);
+  --orbit-filter-idle-text: rgba(245, 232, 232, 0.72);
+  --orbit-filter-active-bg: rgba(248, 113, 113, 0.22);
+  --orbit-filter-active-text: #fee2e2;
+}
+
+/* 暖沙 — warm sand gradient */
+[data-theme="sand"] {
+  --orbit-bg: #12100c;
+  --orbit-bg-soft: #181410;
+  --orbit-bg-muted: #201c14;
+  --orbit-text: #f0ebe2;
+  --orbit-surface: #201c14;
+  --orbit-surface-elevated: #2a2418;
+  --orbit-border: rgba(201, 166, 107, 0.18);
+  --orbit-border-strong: rgba(217, 184, 130, 0.32);
+  --orbit-shell-gradient: linear-gradient(
+    165deg,
+    #0e0c08 0%,
+    #16120c 38%,
+    #201a12 72%,
+    #2a2218 100%
+  );
+  --orbit-card: rgba(42, 36, 24, 0.72);
+  --orbit-card-hover: rgba(52, 44, 30, 0.88);
+  --orbit-card-selected: rgba(201, 166, 107, 0.14);
+  --orbit-card-border: rgba(201, 166, 107, 0.14);
+  --orbit-card-border-selected: rgba(217, 184, 130, 0.4);
+  --orbit-accent: #e8c9a0;
+  --orbit-text-muted: rgba(240, 235, 226, 0.62);
+  --orbit-text-subtle: rgba(240, 235, 226, 0.42);
+  --orbit-filter-idle: rgba(42, 36, 24, 0.55);
+  --orbit-filter-idle-hover: rgba(52, 44, 30, 0.75);
+  --orbit-filter-idle-text: rgba(240, 235, 226, 0.72);
+  --orbit-filter-active-bg: rgba(217, 184, 130, 0.22);
+  --orbit-filter-active-text: #faf0e0;
 }
 
 html.dark .orbit-shell {

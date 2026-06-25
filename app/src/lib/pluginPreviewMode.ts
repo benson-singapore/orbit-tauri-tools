@@ -1,6 +1,35 @@
+import type { Plugin } from "@/types";
+
 const STORAGE_KEY = "orbit.pluginPreviewMode";
 
 export type PluginPreviewMode = "reader" | "waterfall" | "grid" | "split" | "splitDetail" | "videoWall";
+
+export function defaultPluginPreviewMode(
+  plugin?: Pick<Plugin, "mediaType"> | null,
+): PluginPreviewMode {
+  switch (plugin?.mediaType) {
+    case "article":
+      return "reader";
+    case "image":
+      return "waterfall";
+    default:
+      return "grid";
+  }
+}
+
+export function resolvePluginPreviewMode(
+  plugin: Pick<Plugin, "mediaType"> | undefined | null,
+  stored: PluginPreviewMode | null | undefined,
+): PluginPreviewMode {
+  const mode = stored ?? defaultPluginPreviewMode(plugin);
+  if (mode === "waterfall" && plugin?.mediaType !== "image") {
+    return defaultPluginPreviewMode(plugin);
+  }
+  if (mode === "videoWall") {
+    return "grid";
+  }
+  return mode;
+}
 
 type PluginPreviewModeMemory = Record<string, PluginPreviewMode>;
 

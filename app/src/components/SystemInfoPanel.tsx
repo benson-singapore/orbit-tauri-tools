@@ -311,9 +311,9 @@ export function SystemInfoPanel({
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#5856D6]">
-              ORBIT Reader
+              ORBIT
             </p>
-            <h3 className="text-2xl font-bold mt-1">{appInfo?.name ?? "Orbit Reader"}</h3>
+            <h3 className="text-2xl font-bold mt-1">{appInfo?.name ?? "orbit"}</h3>
             <p className={`text-sm mt-2 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
               版本 {appInfo?.version ?? "—"} · {detectPlatformLabel()} · {detectBuildModeLabel()}
             </p>

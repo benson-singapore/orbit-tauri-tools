@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
-import { articleContentTheme, isDarkTheme } from "@/lib/themeMode";
+import { articleContentTheme } from "@/lib/themeMode";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
@@ -104,8 +104,6 @@ export function ArticleReaderModal({
   onSwitchToPageDetail,
 }: ArticleReaderModalProps) {
   const isExpanded = mode === "expanded";
-  const isDark = isDarkTheme(theme);
-  const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
   const [article, setArticle] = useState(initialArticle);
   const [loading, setLoading] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
@@ -557,9 +555,7 @@ export function ArticleReaderModal({
     onClose();
   };
 
-  const headerButtonClass = isDark
-    ? "bg-black/40 hover:bg-black/60 text-white/80"
-    : "bg-black/20 hover:bg-black/30 text-neutral-600";
+  const headerButtonClass = "orbit-reader-modal-header-btn";
 
   const showRatingHero = shouldShowArticleRatingHero(article, {
     isRatingLayout: isRatingCoverLayout,
@@ -665,7 +661,7 @@ export function ArticleReaderModal({
     if (!prev && !next) return null;
 
     return (
-      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
+      <div className="mt-8 pt-6 border-t orbit-detail-divider">
         <div className="flex items-center justify-between gap-3">
           {prev ? (
             <button
@@ -674,7 +670,7 @@ export function ArticleReaderModal({
                 scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
                 void chapters.selectChapter(prev);
               }}
-              className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              className="px-4 py-2 rounded-xl text-sm font-semibold border orbit-detail-divider hover:bg-[color-mix(in_srgb,var(--orbit-accent)_8%,transparent)] transition-colors"
               title={`上一话：${prev.title}`}
             >
               上一话
@@ -690,7 +686,7 @@ export function ArticleReaderModal({
                 scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
                 void chapters.selectChapter(next);
               }}
-              className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              className="px-4 py-2 rounded-xl text-sm font-semibold border orbit-detail-divider hover:bg-[color-mix(in_srgb,var(--orbit-accent)_8%,transparent)] transition-colors"
               title={`下一话：${next.title}`}
             >
               下一话
@@ -711,14 +707,14 @@ export function ArticleReaderModal({
     if (!next) return null;
 
     return (
-      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800 flex justify-center">
+      <div className="mt-8 pt-6 border-t orbit-detail-divider flex justify-center">
         <button
           type="button"
           onClick={() => {
             scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
             void chapters.selectChapter(next);
           }}
-          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 transition-colors"
+          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold text-neutral-950 bg-[var(--orbit-accent)] hover:opacity-90 transition-opacity"
           title={`开始阅读：${next.title}`}
         >
           开始阅读
@@ -739,7 +735,7 @@ export function ArticleReaderModal({
       aria-hidden={!isExpanded}
     >
       <div
-        className={`relative w-full max-w-4xl h-[90vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden ${panelBg}`}
+        className="relative w-full max-w-4xl h-[90vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden orbit-reader-modal orbit-reader-chrome"
         onClick={event => event.stopPropagation()}
         role={isExpanded ? "dialog" : undefined}
         aria-modal={isExpanded ? true : undefined}
@@ -748,7 +744,7 @@ export function ArticleReaderModal({
         {isExpanded ? (
           <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
             {isComicReaderContent && onComicPageWidthChange ? (
-              <div className={`rounded-full px-2 py-1 ${isDark ? "bg-black/40" : "bg-black/10"}`}>
+              <div className="rounded-full px-2 py-1 bg-[color-mix(in_srgb,var(--orbit-bg)_55%,transparent)]">
                 <ComicPageWidthSlider
                   theme={theme}
                   value={comicPageWidth}
@@ -859,7 +855,7 @@ export function ArticleReaderModal({
                 {(article.tags ?? []).map((tag, index) => (
                   <span
                     key={index}
-                    className="px-3 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+                    className="px-3 py-1 rounded-full text-xs font-medium orbit-detail-tag"
                   >
                     #{tag}
                   </span>
@@ -868,8 +864,8 @@ export function ArticleReaderModal({
             ) : null}
 
             {showContentLoading ? (
-              <div className="mt-6 flex items-center gap-2 text-sm text-neutral-400">
-                <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
+              <div className="mt-6 flex items-center gap-2 text-sm orbit-detail-meta">
+                <span className="inline-block w-4 h-4 border-2 border-[color-mix(in_srgb,var(--orbit-accent)_35%,transparent)] border-t-[var(--orbit-accent)] rounded-full animate-spin" />
                 加载正文中…
               </div>
             ) : useComicChapterStreamMode && comicStream.slots.length > 0 ? (
@@ -899,12 +895,12 @@ export function ArticleReaderModal({
                 {introStartReading}
                 {chapterPager}
                 {article.sourceUrl ? (
-                  <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
+                  <div className="mt-8 pt-6 border-t orbit-detail-divider">
                     <a
                       href={article.sourceUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 text-sm text-indigo-500 hover:underline dark:text-indigo-400"
+                      className="inline-flex items-center gap-1.5 text-sm orbit-detail-link hover:underline"
                     >
                       阅读原文 →
                     </a>
@@ -912,9 +908,9 @@ export function ArticleReaderModal({
                 ) : null}
               </>
             ) : (
-              <div className="mt-6 border-t border-dashed dark:border-neutral-800 pt-6 space-y-4">
+              <div className="mt-6 border-t border-dashed orbit-detail-divider pt-6 space-y-4">
                 {article.summary?.trim() ? (
-                  <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed italic">
+                  <p className="text-base orbit-detail-meta leading-relaxed italic">
                     “ {article.summary} ”
                   </p>
                 ) : null}
@@ -923,12 +919,12 @@ export function ArticleReaderModal({
                     href={article.sourceUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex text-sm text-indigo-500 hover:underline"
+                    className="inline-flex text-sm orbit-detail-link hover:underline"
                   >
                     阅读原文 →
                   </a>
                 ) : (
-                  <p className="text-sm text-neutral-400">
+                  <p className="text-sm orbit-detail-subtle">
                     （这是一个带有交互式卡片的媒体项目资源，详情请在正文中直接点击交互并体验。）
                   </p>
                 )}

@@ -50,6 +50,7 @@ import { slugifyChannelId } from "@/lib/channelId";
 import { normalizeChannelStatus } from "@/lib/channelStatus";
 import { resolveColorToHex } from "@/lib/pluginColor";
 import { waitForRuntimeReady } from "@/lib/runtime";
+import { runtimeFetch } from "@/lib/runtimeFetch";
 import { fetchSettingConfigDicts } from "@/lib/runtimeDicts";
 import {
   fetchPluginVariables,
@@ -348,7 +349,6 @@ function MarketPluginTagsRow({
 function MarketPluginCard({
   plugin,
   categoryLabel,
-  subtleBorder,
   installedPlugin,
   needsUpdate,
   installing,
@@ -357,7 +357,6 @@ function MarketPluginCard({
 }: {
   plugin: MarketPluginItem;
   categoryLabel?: string;
-  subtleBorder: string;
   installedPlugin?: Plugin;
   needsUpdate: boolean;
   installing: boolean;
@@ -379,9 +378,7 @@ function MarketPluginCard({
     ?? MARKET_TAG_COLOR_CLASS.blue;
 
   return (
-    <article
-      className={`flex flex-col p-4 rounded-2xl border ${subtleBorder} bg-white dark:bg-neutral-900 shadow-sm hover:shadow-md hover:border-[#5856D6]/30 transition-colors`}
-    >
+    <article className="orbit-market-card flex flex-col p-4 rounded-2xl border shadow-sm transition-colors">
       <div className="flex items-start gap-3 mb-3">
         {plugin.logoUrl ? (
           <img
@@ -401,14 +398,14 @@ function MarketPluginCard({
           </div>
         )}
         <div className="min-w-0 flex-1">
-          <h3 className="text-xs font-bold leading-snug text-neutral-900 dark:text-white flex items-center gap-1.5 min-w-0">
+          <h3 className="orbit-feed-card-title text-xs font-bold leading-snug flex items-center gap-1.5 min-w-0">
             <span className="truncate">{plugin.name}</span>
             {plugin.version?.trim() ? (
               <span
                 className={`shrink-0 text-[10px] font-medium ${
                   needsUpdate
                     ? "text-amber-600 dark:text-amber-400"
-                    : "text-neutral-400 dark:text-neutral-500"
+                    : "orbit-feed-card-meta"
                 }`}
               >
                 v{plugin.version.trim()}
@@ -432,12 +429,12 @@ function MarketPluginCard({
         </div>
       </div>
 
-      <p className="text-[11px] text-neutral-500 leading-relaxed line-clamp-2 mb-3">{plugin.desc}</p>
+      <p className="orbit-feed-card-summary text-[11px] leading-relaxed line-clamp-2 mb-3">{plugin.desc}</p>
 
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] mb-3">
-        {plugin.size ? <span className="text-neutral-400">{plugin.size}</span> : null}
+        {plugin.size ? <span className="orbit-feed-card-meta">{plugin.size}</span> : null}
         <MarketStarRating stars={plugin.stars} />
-        <span className="inline-flex items-center gap-1 text-neutral-400">
+        <span className="inline-flex items-center gap-1 orbit-feed-card-meta">
           <Icon name="download" className="w-3 h-3" />
           {plugin.downloads ?? 0}
         </span>
@@ -451,9 +448,9 @@ function MarketPluginCard({
         </span>
       </div>
 
-      <div className="mt-auto flex items-center justify-between gap-2 !-mt-[5px] -mb-[5px] border-t border-dashed border-neutral-100 dark:border-neutral-800">
+      <div className="mt-auto flex items-center justify-between gap-2 !-mt-[5px] -mb-[5px] border-t border-dashed orbit-feed-card-divider">
         {plugin.author ? (
-          <div className="flex items-center gap-1.5 min-w-0 text-[10px] text-neutral-400">
+          <div className="flex items-center gap-1.5 min-w-0 text-[10px] orbit-feed-card-meta">
             {plugin.authorAvatarUrl ? (
               <img
                 src={plugin.authorAvatarUrl}
@@ -501,7 +498,7 @@ function MarketPluginCard({
             onClick={() => {
               void onInstall(plugin.id, plugin.contentRating).catch(console.error);
             }}
-            className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold text-white px-3 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-100 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className="shrink-0 inline-flex items-center gap-1 text-[11px] font-semibold px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed bg-[var(--orbit-accent)] text-neutral-950 hover:opacity-90"
           >
             <Icon name={installing ? "refresh" : "download"} className={`w-3 h-3 ${installing ? "animate-spin" : ""}`} />
             {installing ? "安装中…" : "插件安装"}
@@ -2556,7 +2553,7 @@ function ImportPluginModal({
       const base = (await waitForRuntimeReady()).replace(/\/$/, "");
       const fd = new FormData();
       fd.append("file", file, file.name);
-      const res = await fetch(`${base}/v1/images/upload`, { method: "POST", body: fd });
+      const res = await runtimeFetch(`${base}/v1/images/upload`, { method: "POST", body: fd });
       const body = (await res.json()) as any;
       if (!res.ok || !body?.ok) {
         throw new Error(body?.error || `HTTP ${res.status}`);
@@ -2583,7 +2580,7 @@ function ImportPluginModal({
     setError(null);
     try {
       const base = (await waitForRuntimeReady()).replace(/\/$/, "");
-      const res = await fetch(`${base}/v1/images/upload-url`, {
+      const res = await runtimeFetch(`${base}/v1/images/upload-url`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: sourceURL }),
@@ -3605,7 +3602,7 @@ function PluginGroupManagerModal({
 
 export function PluginManagerModal({
   theme,
-  experienceMode = "full",
+  experienceMode = "safe",
   onExperienceModeChange,
   myPlugins,
   pluginGroups,
@@ -4095,7 +4092,6 @@ export function PluginManagerModal({
                             key={plugin.id}
                             plugin={plugin}
                             categoryLabel={marketCategoryLabels.get(String(plugin.categoryId))}
-                            subtleBorder={subtleBorder}
                             installedPlugin={installed}
                             needsUpdate={needsUpdate}
                             installing={installingMarketId === plugin.id}

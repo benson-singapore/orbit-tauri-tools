@@ -222,6 +222,82 @@ html.dark .orbit-surface-elevated {
   background: var(--orbit-card-hover);
 }
 
+.orbit-market-card {
+  background: var(--orbit-card);
+  border-color: var(--orbit-card-border);
+  transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+.orbit-market-card:hover {
+  background: var(--orbit-card-hover);
+  border-color: color-mix(in srgb, var(--orbit-accent) 38%, var(--orbit-card-border));
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--orbit-accent) 10%, transparent);
+}
+
+.orbit-detail-panel {
+  background: color-mix(in srgb, var(--orbit-bg-muted) 90%, var(--orbit-surface));
+  border-color: var(--orbit-border);
+}
+
+.orbit-reader-modal {
+  background: var(--orbit-surface-elevated);
+  color: var(--orbit-text);
+  border: 1px solid var(--orbit-border);
+}
+
+html:not(.dark) .orbit-reader-modal {
+  background: var(--orbit-surface);
+}
+
+.orbit-reader-chrome .article-reader-title {
+  color: var(--orbit-text);
+}
+
+.orbit-reader-chrome .orbit-detail-meta {
+  color: var(--orbit-text-muted);
+}
+
+.orbit-reader-chrome .orbit-detail-subtle {
+  color: var(--orbit-text-subtle);
+}
+
+.orbit-reader-chrome .orbit-detail-divider {
+  border-color: var(--orbit-border);
+}
+
+.orbit-reader-chrome .orbit-detail-link {
+  color: var(--orbit-accent);
+}
+
+.orbit-reader-chrome .orbit-detail-tag {
+  background: color-mix(in srgb, var(--orbit-accent) 10%, var(--orbit-surface));
+  color: var(--orbit-text-muted);
+}
+
+.orbit-reader-modal-header-btn {
+  background: color-mix(in srgb, var(--orbit-bg) 55%, transparent);
+  color: var(--orbit-text-muted);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.orbit-reader-modal-header-btn:hover {
+  background: color-mix(in srgb, var(--orbit-accent) 14%, transparent);
+  color: var(--orbit-text);
+}
+
+.orbit-split-divider {
+  background: var(--orbit-border);
+}
+
+.orbit-split-divider-handle {
+  background: var(--orbit-border-strong);
+  transition: background-color 0.15s;
+}
+
+.orbit-split-divider:hover .orbit-split-divider-handle {
+  background: var(--orbit-accent);
+}
+
 .orbit-filter-chip {
   background: var(--orbit-filter-idle);
   color: var(--orbit-filter-idle-text);

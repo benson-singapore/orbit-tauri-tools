@@ -8,7 +8,7 @@ WEB_URL           ?= http://127.0.0.1:5173
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev dev-go dev-tauri dev-web open-web dev-sidecar \
-        build-runtime build check-go swagger swagger-check
+        build-runtime build build-macos icons check-go swagger swagger-check
 
 help: ## 显示命令列表
 	@echo "Orbit Reader — make targets (ORBIT_PORT=$(ORBIT_PORT))"
@@ -46,6 +46,13 @@ build-runtime: ## 编译 macOS sidecar 到 app/src-tauri/binaries/
 
 build: build-runtime ## 打正式安装包 (sidecar + 前端 + tauri build)
 	cd app && npm run tauri build
+
+icons: ## 从 docs/html/logo_black.png 重新生成应用图标
+	bash scripts/prepare-app-icon.sh docs/html/logo_black.png app/src-tauri/app-icon.png
+	cd app && npx tauri icon src-tauri/app-icon.png -o src-tauri/icons
+
+build-macos: ## 打包并签名 macOS 应用（含 sidecar JIT 补签，产出 .app + .dmg）
+	bash scripts/build-macos-app.sh
 
 check-go: ## 检查 Go 能否通过编译（不启动服务）
 	cd runtime && go build -o /dev/null ./cmd/orbit-runtime

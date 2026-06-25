@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { runtimeFetch } from "@/lib/runtimeFetch";
 import type { HealthResponse, RuntimeStatusResponse } from "@/types";
 
 let cachedBaseUrl: string | null = null;
@@ -23,9 +24,6 @@ export async function getRuntimeBaseUrl(): Promise<string | null> {
     cachedBaseUrl = viteUrl;
     return viteUrl;
   }
-  if (cachedBaseUrl) {
-    return cachedBaseUrl;
-  }
   const url = await invoke<string | null>("get_runtime_url");
   if (url) {
     cachedBaseUrl = url;
@@ -33,7 +31,21 @@ export async function getRuntimeBaseUrl(): Promise<string | null> {
   return url;
 }
 
+let runtimeReadyListener: Promise<void> | null = null;
+
+function ensureRuntimeReadyListener(): void {
+  if (runtimeReadyListener) {
+    return;
+  }
+  runtimeReadyListener = (async () => {
+    await listen<string>("runtime-ready", (event) => {
+      cachedBaseUrl = event.payload;
+    });
+  })();
+}
+
 export function waitForRuntimeReady(): Promise<string> {
+  ensureRuntimeReadyListener();
   return new Promise((resolve) => {
     void (async () => {
       const existing = await getRuntimeBaseUrl();
@@ -62,17 +74,36 @@ export function waitForRuntimeReady(): Promise<string> {
 }
 
 export async function fetchHealth(baseUrl: string): Promise<HealthResponse> {
-  const res = await fetch(`${baseUrl}/health`);
+  const res = await fetchHealthWithRetry(baseUrl);
   if (!res.ok) {
     throw new Error(`health failed: ${res.status}`);
   }
   return res.json() as Promise<HealthResponse>;
 }
 
+async function fetchHealthWithRetry(
+  baseUrl: string,
+  attempts = 8,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i += 1) {
+    try {
+      const res = await runtimeFetch(`${baseUrl}/health`);
+      if (res.ok || i === attempts - 1) {
+        return res;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 250));
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 export async function fetchStatus(
   baseUrl: string,
 ): Promise<RuntimeStatusResponse> {
-  const res = await fetch(`${baseUrl}/v1/status`);
+  const res = await runtimeFetch(`${baseUrl}/v1/status`);
   if (!res.ok) {
     throw new Error(`status failed: ${res.status}`);
   }

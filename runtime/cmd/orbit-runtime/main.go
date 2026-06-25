@@ -27,8 +27,6 @@ func main() {
 	}
 
 	port := ln.Addr().(*net.TCPAddr).Port
-	fmt.Println(server.ReadyLine(port))
-	_ = os.Stdout.Sync()
 
 	st, err := store.Open()
 	if err != nil {
@@ -40,6 +38,9 @@ func main() {
 	if err := reg.Sync(context.Background()); err != nil {
 		log.Fatalf("plugin sync: %v", err)
 	}
+
+	fmt.Println(server.ReadyLine(port))
+	_ = os.Stdout.Sync()
 
 	schedulerCtx, stopScheduler := context.WithCancel(context.Background())
 	defer stopScheduler()

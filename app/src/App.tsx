@@ -98,6 +98,7 @@ import { pluginNeedsVariablesConfiguration } from "@/lib/pluginVariablesReady";
 import {
   getStoredPluginPreviewMode,
   persistPluginPreviewMode,
+  resolvePluginPreviewMode,
 } from "@/lib/pluginPreviewMode";
 import {
   READER_FONT_SCALE_DEFAULT,
@@ -202,20 +203,6 @@ const PREVIEW_MODE_LABELS: Record<PluginPreviewMode, string> = {
 
 function previewModeLabel(mode: PluginPreviewMode): string {
   return PREVIEW_MODE_LABELS[mode] ?? "阅读模式";
-}
-
-function resolvePreviewModeForPlugin(
-  plugin: Plugin | undefined,
-  stored: PluginPreviewMode | null | undefined,
-): PluginPreviewMode {
-  const mode = stored ?? "reader";
-  if (mode === "waterfall" && !isImageGalleryPlugin(plugin)) {
-    return "reader";
-  }
-  if (mode === "videoWall") {
-    return "grid";
-  }
-  return mode;
 }
 
 function previewModeOptionsForPlugin(plugin: Plugin | undefined, showVideoWall: boolean) {
@@ -1449,7 +1436,7 @@ export default function App() {
     setShowPluginStore(false);
     if (isSwitchingPlugin) {
       const saved = getStoredPluginPreviewMode(pluginId);
-      setPluginPreviewMode(resolvePreviewModeForPlugin(pluginById.get(pluginId), saved));
+      setPluginPreviewMode(resolvePluginPreviewMode(pluginById.get(pluginId), saved));
     }
   };
 
@@ -1461,7 +1448,7 @@ export default function App() {
       return;
     }
     const saved = getStoredPluginPreviewMode(activePlugin);
-    setPluginPreviewMode(resolvePreviewModeForPlugin(activePluginMeta, saved));
+    setPluginPreviewMode(resolvePluginPreviewMode(activePluginMeta, saved));
     setGridColumnCount(getStoredGridColumnCount(activePlugin));
     setGridCoverAspectRatio(getStoredGridCoverAspectRatio(activePlugin));
     setGridDetailViewMode(getStoredGridDetailViewMode(activePlugin) ?? "modal");

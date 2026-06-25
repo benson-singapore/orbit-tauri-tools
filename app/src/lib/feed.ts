@@ -8,6 +8,7 @@ import type {
   Plugin,
   PluginsResponse,
 } from "@/types";
+import { runtimeFetch } from "@/lib/runtimeFetch";
 import { getRuntimeBaseUrl, waitForRuntimeReady } from "@/lib/runtime";
 
 const inFlightGetRequests = new Map<string, Promise<Response>>();
@@ -22,7 +23,7 @@ function fetchGetWithDedupe(url: string): Promise<Response> {
   if (existing) {
     return existing.then((res) => res.clone());
   }
-  const req = fetch(url)
+  const req = runtimeFetch(url)
     .then((res) => res.clone())
     .finally(() => {
       inFlightGetRequests.delete(url);
@@ -175,7 +176,7 @@ export async function fetchMarketPlugins(): Promise<Plugin[]> {
 
 export async function installBundledPlugin(id: string): Promise<Plugin> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/install`, {
+  const res = await runtimeFetch(`${base}/v1/plugins/${encodeURIComponent(id)}/install`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -190,7 +191,7 @@ export async function installMarketPlugin(
   contentRating?: MarketPluginContentRating,
 ): Promise<Plugin> {
   const base = await apiBase();
-  const res = await fetch(
+  const res = await runtimeFetch(
     `${base}/v1/plugins/market/${encodeURIComponent(marketId)}/install`,
     {
       method: "POST",
@@ -213,7 +214,7 @@ export async function updateMarketPlugin(
   contentRating?: MarketPluginContentRating,
 ): Promise<Plugin> {
   const base = await apiBase();
-  const res = await fetch(
+  const res = await runtimeFetch(
     `${base}/v1/plugins/market/${encodeURIComponent(marketId)}/update`,
     {
       method: "POST",
@@ -234,7 +235,7 @@ export async function updateMarketPlugin(
 export async function installOrbitPackage(data: ArrayBuffer | Blob): Promise<Plugin> {
   const base = await apiBase();
   const body = data instanceof Blob ? data : new Blob([data], { type: "application/zip" });
-  const res = await fetch(`${base}/v1/plugins/install-orbit`, {
+  const res = await runtimeFetch(`${base}/v1/plugins/install-orbit`, {
     method: "POST",
     headers: { "Content-Type": "application/zip" },
     body,
@@ -248,7 +249,7 @@ export async function installOrbitPackage(data: ArrayBuffer | Blob): Promise<Plu
 
 export async function fetchPluginManifest(id: string): Promise<string> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/manifest`);
+  const res = await runtimeFetch(`${base}/v1/plugins/${encodeURIComponent(id)}/manifest`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -257,7 +258,7 @@ export async function fetchPluginManifest(id: string): Promise<string> {
 
 export async function fetchPluginDefaultManifest(id: string): Promise<string> {
   const base = await apiBase();
-  const res = await fetch(
+  const res = await runtimeFetch(
     `${base}/v1/plugins/${encodeURIComponent(id)}/manifest/restore-default`,
     { method: "POST" },
   );
@@ -269,7 +270,7 @@ export async function fetchPluginDefaultManifest(id: string): Promise<string> {
 
 export async function fetchPluginReadme(id: string): Promise<string> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/readme`);
+  const res = await runtimeFetch(`${base}/v1/plugins/${encodeURIComponent(id)}/readme`);
   if (!res.ok) {
     throw new Error(await parseError(res));
   }
@@ -282,7 +283,7 @@ export async function updatePluginManifest(
   manifestText: string,
 ): Promise<Plugin> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}/manifest`, {
+  const res = await runtimeFetch(`${base}/v1/plugins/${encodeURIComponent(id)}/manifest`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: manifestText,
@@ -298,7 +299,7 @@ export async function installRSSPlugin(
   body: InstallRSSPluginRequest,
 ): Promise<Plugin> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins`, {
+  const res = await runtimeFetch(`${base}/v1/plugins`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source: "rss", ...body }),
@@ -312,7 +313,7 @@ export async function installRSSPlugin(
 
 export async function reorderPlugins(orderedIds: string[]): Promise<void> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins/order`, {
+  const res = await runtimeFetch(`${base}/v1/plugins/order`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ orderedIds }),
@@ -327,7 +328,7 @@ export async function setPluginActive(
   active: boolean,
 ): Promise<void> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
+  const res = await runtimeFetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ active }),
@@ -342,7 +343,7 @@ export async function setPluginIncludeInAll(
   includeInAll: boolean,
 ): Promise<void> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
+  const res = await runtimeFetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ includeInAll }),
@@ -354,7 +355,7 @@ export async function setPluginIncludeInAll(
 
 export async function uninstallPlugin(id: string): Promise<void> {
   const base = await apiBase();
-  const res = await fetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
+  const res = await runtimeFetch(`${base}/v1/plugins/${encodeURIComponent(id)}`, {
     method: "DELETE",
   });
   if (!res.ok) {
@@ -375,7 +376,7 @@ export async function refreshPluginFeed(
   if (options?.force) {
     params.set("force", "1");
   }
-  const res = await fetch(`${base}/v1/feed/refresh?${params}`, {
+  const res = await runtimeFetch(`${base}/v1/feed/refresh?${params}`, {
     method: "POST",
   });
   if (!res.ok) {
@@ -395,7 +396,7 @@ export async function markFeedItemRead(
   if (options.channelId) {
     body.channelId = options.channelId;
   }
-  const res = await fetch(`${base}/v1/feed/read`, {
+  const res = await runtimeFetch(`${base}/v1/feed/read`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),

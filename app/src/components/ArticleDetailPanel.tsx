@@ -434,7 +434,7 @@ export function ArticleDetailPanel({
     if (!prev && !next) return null;
 
     return (
-      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
+      <div className="mt-8 pt-6 border-t orbit-detail-divider">
         <div className="flex items-center justify-between gap-3">
           {prev ? (
             <button
@@ -443,7 +443,7 @@ export function ArticleDetailPanel({
                 scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
                 void chapters.selectChapter(prev);
               }}
-              className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              className="px-4 py-2 rounded-xl text-sm font-semibold border orbit-detail-divider hover:bg-[color-mix(in_srgb,var(--orbit-accent)_8%,transparent)] transition-colors"
               title={`上一话：${prev.title}`}
             >
               上一话
@@ -459,7 +459,7 @@ export function ArticleDetailPanel({
                 scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
                 void chapters.selectChapter(next);
               }}
-              className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
+              className="px-4 py-2 rounded-xl text-sm font-semibold border orbit-detail-divider hover:bg-[color-mix(in_srgb,var(--orbit-accent)_8%,transparent)] transition-colors"
               title={`下一话：${next.title}`}
             >
               下一话
@@ -480,14 +480,14 @@ export function ArticleDetailPanel({
     if (!next) return null;
 
     return (
-      <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800 flex justify-center">
+      <div className="mt-8 pt-6 border-t orbit-detail-divider flex justify-center">
         <button
           type="button"
           onClick={() => {
             scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
             void chapters.selectChapter(next);
           }}
-          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 transition-colors"
+          className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold text-neutral-950 bg-[var(--orbit-accent)] hover:opacity-90 transition-opacity"
           title={`开始阅读：${next.title}`}
         >
           开始阅读
@@ -525,7 +525,7 @@ export function ArticleDetailPanel({
               ) : null}
               {!showRatingHero && !isComicReaderContent ? (
               <div className="flex items-start gap-3">
-                <h1 className="article-reader-title font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight flex-1 min-w-0">
+                <h1 className="article-reader-title font-extrabold tracking-tight leading-tight flex-1 min-w-0">
                   {article.title}
                 </h1>
                 {chaptersOpenButton}
@@ -568,7 +568,7 @@ export function ArticleDetailPanel({
                 {(article.tags ?? []).map((tag, index) => (
                   <span
                     key={index}
-                    className="px-3 py-1 rounded-full text-xs font-medium bg-neutral-100 text-neutral-600 dark:bg-neutral-800 dark:text-neutral-400"
+                    className="px-3 py-1 rounded-full text-xs font-medium orbit-detail-tag"
                   >
                     #{tag}
                   </span>
@@ -577,8 +577,8 @@ export function ArticleDetailPanel({
             ) : null}
 
             {showContentLoading ? (
-              <div className="mt-6 flex items-center gap-2 text-sm text-neutral-400">
-                <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
+              <div className="mt-6 flex items-center gap-2 text-sm orbit-detail-meta">
+                <span className="inline-block w-4 h-4 border-2 border-[color-mix(in_srgb,var(--orbit-accent)_35%,transparent)] border-t-[var(--orbit-accent)] rounded-full animate-spin" />
                 加载正文中…
               </div>
             ) : useComicChapterStreamMode && comicStream.slots.length > 0 ? (
@@ -607,12 +607,12 @@ export function ArticleDetailPanel({
                 {introStartReading}
                 {chapterPager}
                 {article.sourceUrl ? (
-                  <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
+                  <div className="mt-8 pt-6 border-t orbit-detail-divider">
                     <a
                       href={article.sourceUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1.5 text-sm text-indigo-500 hover:underline dark:text-indigo-400"
+                      className="inline-flex items-center gap-1.5 text-sm orbit-detail-link hover:underline"
                     >
                       阅读原文 →
                     </a>
@@ -620,9 +620,9 @@ export function ArticleDetailPanel({
                 ) : null}
               </>
             ) : (
-              <div className="mt-6 border-t border-dashed dark:border-neutral-800 pt-6 space-y-4">
+              <div className="mt-6 border-t border-dashed orbit-detail-divider pt-6 space-y-4">
                 {article.summary?.trim() ? (
-                  <p className="text-base text-neutral-600 dark:text-neutral-400 leading-relaxed italic">
+                  <p className="text-base orbit-detail-meta leading-relaxed italic">
                     “ {article.summary} ”
                   </p>
                 ) : null}
@@ -631,12 +631,12 @@ export function ArticleDetailPanel({
                     href={article.sourceUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex text-sm text-indigo-500 hover:underline"
+                    className="inline-flex text-sm orbit-detail-link hover:underline"
                   >
                     阅读原文 →
                   </a>
                 ) : (
-                  <p className="text-sm text-neutral-400">
+                  <p className="text-sm orbit-detail-subtle">
                     （这是一个带有交互式卡片的媒体项目资源，详情请在正文中直接点击交互并体验。）
                   </p>
                 )}

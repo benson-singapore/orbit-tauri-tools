@@ -1,5 +1,4 @@
 import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from "react";
-import { isDarkTheme } from "@/lib/themeMode";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import { VideoWallFocusView } from "@/components/VideoWallFocusView";
 import { useSplitPaneAutoGridColumns } from "@/hooks/useSplitPaneAutoGridColumns";
@@ -56,7 +55,6 @@ export function SplitGridVideoView({
 }: SplitGridVideoViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPaneRef = useRef<HTMLDivElement>(null);
-  const isDark = isDarkTheme(theme);
   const leftPercent = clampSplitPaneRatio(splitRatio) * 100;
 
   useSplitPaneAutoGridColumns(leftPaneRef, onGridColumnCountChange);
@@ -119,24 +117,12 @@ export function SplitGridVideoView({
         aria-orientation="vertical"
         aria-label="调整左右分屏宽度"
         onPointerDown={handleDividerPointerDown}
-        className={`group relative z-10 w-2 shrink-0 cursor-col-resize touch-none ${
-          isDark ? "bg-neutral-800" : "bg-neutral-200"
-        }`}
+        className="orbit-split-divider group relative z-10 w-2 shrink-0 cursor-col-resize touch-none"
       >
-        <div
-          className={`absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors ${
-            isDark
-              ? "bg-neutral-600 group-hover:bg-indigo-400"
-              : "bg-neutral-300 group-hover:bg-indigo-500"
-          }`}
-        />
+        <div className="orbit-split-divider-handle absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2" />
       </div>
 
-      <div
-        className={`min-h-0 min-w-0 flex-1 overflow-y-auto border-l px-2 sm:px-3 pb-2 ${
-          isDark ? "border-neutral-800 bg-[#111113]" : "border-neutral-200 bg-neutral-50/80"
-        }`}
-      >
+      <div className="orbit-detail-panel min-h-0 min-w-0 flex-1 overflow-y-auto border-l px-2 sm:px-3 pb-2">
         <VideoWallFocusView
           theme={theme}
           runtimeBase={runtimeBase}
