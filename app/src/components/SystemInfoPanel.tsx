@@ -493,13 +493,13 @@ export function SystemInfoPanel({
         <div className="py-3 space-y-4">
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold">v0.1.0</span>
+              <span className="text-xs font-semibold">v1.0.0</span>
               <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${mutedBg} text-neutral-500`}>
                 当前
               </span>
             </div>
             <p className={`text-xs mt-1.5 leading-relaxed ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-              首个公开测试版本，包含插件市场、RSS/WASM 插件支持与本地 Runtime 服务。
+              首个正式公开版本，包含插件市场、RSS/WASM 插件支持与本地 Runtime 服务。
             </p>
           </div>
         </div>

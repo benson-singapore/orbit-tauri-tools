@@ -10,7 +10,7 @@ import (
 	"github.com/orbit-tauri-tools/runtime/internal/store"
 )
 
-const Version = "0.1.0"
+const Version = "1.0.0"
 
 type Server struct {
 	store    *store.Store

@@ -2,7 +2,7 @@
   "info": {
     "description": "Runtime HTTP API (served by orbit-tauri-tools runtime).",
     "title": "Orbit Runtime API",
-    "version": "0.1.0"
+    "version": "1.0.0"
   },
   "openapi": "3.0.3",
   "paths": {
@@ -14,7 +14,7 @@
               "application/json": {
                 "example": {
                   "ok": true,
-                  "version": "0.1.0"
+                  "version": "1.0.0"
                 },
                 "schema": {
                   "type": "object"
@@ -1229,7 +1229,7 @@
                 "example": {
                   "db": "ready",
                   "ok": true,
-                  "runtime": "0.1.0",
+                  "runtime": "1.0.0",
                   "sqlite_path": "/path/to/db.sqlite"
                 },
                 "schema": {

@@ -1,101 +1,84 @@
-# Orbit Reader (Sprint 0)
+# Orbit
 
-macOS 桌面阅读器框架：**Tauri 2 + React + Go Sidecar (HTTP) + SQLite**。
+Orbit 是一个面向多内容形态的桌面阅读器，支持在同一应用中浏览文章、漫画、视频与图集。项目基于 **Tauri 2 + React + Go Runtime + SQLite** 构建，当前首发平台为 **macOS**。
 
-## 前置要求
+这个仓库用于公开发布 Orbit 的安装包、版本说明与相关文档。
 
-- macOS（Apple Silicon 或 Intel）
-- [Node.js](https://nodejs.org/) 18+
-- [Rust](https://www.rust-lang.org/tools/install)
-- [Go](https://go.dev/) 1.22+
+## 项目定位
 
-## 开发模式（推荐：不必每次 build Go）
+Orbit 希望把分散在不同来源、不同格式的内容，统一到一个本地优先的阅读体验中：
 
-日常改 Go 接口时，用 **`go run`** 即可，**不用**每次跑 `build-runtime-macos.sh`。
+- 用插件接入不同内容源
+- 用统一界面管理订阅、阅读、播放与历史记录
+- 用本地 Runtime 提供更稳定的解析、缓存与数据存储能力
 
-根目录已提供 **Makefile**，可先执行 `make help` 查看全部命令。
+## 核心特性
 
-**两个终端（推荐）：**
+### 插件与内容
 
-```bash
-make dev-go      # 终端 1，默认端口 17890
-make dev-tauri   # 终端 2
-```
+- 插件市场：浏览、安装、更新官方插件
+- 支持 RSS 自定义导入
+- 支持 WASM / `.orbit` 插件包
+- 插件分组管理：侧栏折叠、排序、自定义分组
+- 体验模式：安全级 / 完整级，控制成人向内容展示
 
-**单终端一键：**
+### 阅读与播放
 
-```bash
-make dev         # 后台 Go + 前台 Tauri，Ctrl+C 同时退出
-```
+- 六种浏览布局：阅读模式、瀑布流、卡片视图、阅览分屏、联播分屏、视频预览
+- 文章阅读器：字体调节、代码高亮、图片代理加载
+- 漫画阅读：章节目录、连续翻页、页宽调节
+- 视频播放：HLS 播放、YouTube 嵌入、视频墙同播
+- 播放历史与断点续看（视频 / 音频 / 文章 / 漫画）
+- 多窗口 Dock：同时挂起多篇文章或视频
 
-自定义端口：`make dev-go ORBIT_PORT=18000` / `make dev-tauri ORBIT_PORT=18000`
+### 日常使用
 
-等价脚本：
+- 收藏与已读 / 未读标记
+- Feed 搜索、分页加载、频道筛选
+- AI 速读概括（需自行配置 LLM 提供商）
+- 9 套主题色系与界面缩放
+- 系统信息面板：查看应用、Runtime 与数据库状态
 
-```bash
-bash scripts/dev-go.sh
-cd app && ORBIT_RUNTIME_URL=http://127.0.0.1:17890 npm run tauri:dev
-```
+## 当前版本
 
-改 Go 代码后：在终端 1 `Ctrl+C` 再执行一次 `dev-go.sh` 即可（仍无需 `go build` 成二进制）。
+### v1.0.0
 
-| 场景 | 是否需要 `build-runtime-macos.sh` |
-|------|-----------------------------------|
-| 日常开发（`go run` + `ORBIT_RUNTIME_URL`） | **否** |
-| `npm run tauri dev`（自动 spawn 已编译的 sidecar） | 仅**首次**或 Go 有变更且要用 sidecar 时 |
-| `npm run tauri build` 打安装包 | **是**（`beforeBuildCommand` 会自动执行） |
+Orbit 首个正式版本，整合插件市场、多形态阅读与本地 Runtime，提供完整的本地桌面阅读体验。
 
-### 一键集成模式（适合验收 / 不跑 Go 终端）
+- 发布渠道：稳定版
+- 支持平台：macOS 10.13+
+- 应用版本：1.0.0
+- Runtime 版本：1.0.0
 
-先编译 sidecar 一次，之后 Tauri 自己拉起 Go，**不必**设 `ORBIT_RUNTIME_URL`：
+完整更新内容见：`docs/更新说明/v1.0.0.md`
 
-```bash
-bash scripts/build-runtime-macos.sh
-cd app && npm run tauri:dev
-```
+## 已知问题
 
-只有 **Go 代码变更** 且仍用此模式时，才需要再执行一次 `build-runtime-macos.sh`。
+- 自动检测更新与一键升级暂未开放，当前需手动下载安装包
+- 书签数据保存在本地，暂不支持云同步
+- 当前仅提供 macOS 版本，Windows / Linux 版本后续推出
 
-## 快速开始（首次）
+## 下载与发布
 
-```bash
-cd app && npm install
-bash scripts/build-runtime-macos.sh   # 仅集成模式 / 打包需要
-cd app && npm run tauri:dev
-```
+本仓库用于托管 Orbit 的公开版本发布内容。你可以在 GitHub Releases 页面获取：
 
-顶栏应显示 **Runtime 0.1.0 · DB ready**。
+- 最新安装包
+- 历史版本
+- 对应版本更新说明
 
-## 环境变量
+## 文档索引
 
-| 变量 | 作用 |
-|------|------|
-| `ORBIT_PORT` | Go 监听端口（默认随机；`dev-go.sh` 默认 `17890`） |
-| `ORBIT_RUNTIME_URL` | Tauri 不 spawn sidecar，直连该 URL（开发推荐） |
-| `ORBIT_PLUGINS_DIR` | RSS 插件 manifest 目录（`dev-go.sh` 默认仓库 `plugins/`） |
-| `VITE_ORBIT_RUNTIME_URL` | 仅 `npm run dev` 在浏览器里调试前端时用 |
+- `docs/更新说明/v1.0.0.md`：v1.0.0 发布说明
+- `docs/方案/rss-plugin.md`：RSS 插件设计与 API 说明
 
-## 单独调试 Go
+## 技术栈
 
-```bash
-ORBIT_PORT=17890 go run ./runtime/cmd/orbit-runtime
-curl http://127.0.0.1:17890/health
-curl http://127.0.0.1:17890/v1/status
-curl http://127.0.0.1:17890/v1/plugins
-curl "http://127.0.0.1:17890/v1/feed?refresh=1"
-```
+- `app/`：Tauri + React 桌面应用界面
+- `runtime/`：Go Runtime、本地服务与数据处理
+- `plugins/`：内置插件与相关资源
 
-## 目录结构
+## 数据存储
 
-| 路径 | 说明 |
-|------|------|
-| `app/` | Tauri + React UI |
-| `runtime/` | Go HTTP 服务、SQLite、RSS 插件 Host |
-| `plugins/` | 内置 RSS 插件 manifest |
-| `docs/方案/rss-plugin.md` | RSS 插件设计与 API 说明 |
-| `scripts/build-runtime-macos.sh` | 编译 sidecar（打包 / 集成模式） |
-| `scripts/dev-go.sh` | 开发用 `go run` |
+Orbit 使用本地 SQLite 保存应用数据，默认数据库路径为：
 
-## 数据文件
-
-SQLite：`~/Library/Application Support/Orbit Reader/orbit.db`
+`~/Library/Application Support/Orbit Reader/orbit.db`

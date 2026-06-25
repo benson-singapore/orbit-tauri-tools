@@ -1,6 +1,6 @@
 [package]
 name = "orbit-reader"
-version = "0.1.0"
+version = "1.0.0"
 description = "Orbit Reader desktop shell"
 authors = ["Orbit"]
 edition = "2021"
