@@ -11,7 +11,7 @@
     "dev:go": "bash ../scripts/dev-go.sh",
     "tauri:dev": "tauri dev",
     "tauri:dev:external": "ORBIT_RUNTIME_URL=http://127.0.0.1:17890 tauri dev",
-    "build:runtime": "bash ../scripts/build-runtime-macos.sh",
+    "build:runtime": "bash ../scripts/build-runtime.sh",
     "icons": "bash ../scripts/prepare-app-icon.sh ../docs/html/logo_black.png src-tauri/app-icon.png && tauri icon src-tauri/app-icon.png -o src-tauri/icons && cargo build --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {

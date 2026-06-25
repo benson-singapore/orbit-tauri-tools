@@ -2,31 +2,21 @@
 # 构建并签名 macOS 应用（.app + .dmg）
 #
 # 用法:
-#   bash scripts/build-macos-app.sh              # 默认 .app + DMG（含 sidecar JIT 补签）
+#   bash scripts/build-macos-app.sh              # 默认本机架构 .app + DMG
+#   MACOS_ARCH=x86_64 bash scripts/build-macos-app.sh  # 在 M 系列 Mac 上打 Intel 包
 #   BUNDLES=app bash scripts/build-macos-app.sh  # 仅 .app，不生成 DMG
 #   SKIP_ICONS=1 bash scripts/build-macos-app.sh # 跳过图标重新生成
 #
 # 签名配置: 复制 scripts/signing.env.example -> scripts/signing.env
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_DIR="$ROOT/app"
-TAURI_DIR="$APP_DIR/src-tauri"
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/lib/build-common.sh"
+
 LOGO="${LOGO:-$ROOT/docs/html/logo_black.png}"
 BUNDLES="${BUNDLES:-dmg,app}"
 SKIP_ICONS="${SKIP_ICONS:-0}"
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
-
-info()  { echo -e "${CYAN}▸${NC} $*"; }
-ok()    { echo -e "${GREEN}✓${NC} $*"; }
-warn()  { echo -e "${YELLOW}!${NC} $*"; }
-die()   { echo -e "${RED}✗${NC} $*" >&2; exit 1; }
 
 # ── 加载签名配置 ─────────────────────────────────────────────────────
 if [[ -f "$SCRIPT_DIR/signing.env" ]]; then
@@ -43,19 +33,41 @@ fi
 # ── 前置检查 ─────────────────────────────────────────────────────────
 [[ "$(uname -s)" == "Darwin" ]] || die "此脚本仅支持 macOS"
 
-command -v node   >/dev/null || die "未找到 node，请先安装 Node.js 18+"
-command -v cargo  >/dev/null || die "未找到 cargo，请先安装 Rust"
-command -v go     >/dev/null || die "未找到 go，请先安装 Go 1.22+"
+ensure_app_deps
 command -v magick >/dev/null || die "未找到 magick (ImageMagick)，请先安装: brew install imagemagick"
 
-if [[ ! -d "$APP_DIR/node_modules" ]]; then
-  info "安装前端依赖..."
-  (cd "$APP_DIR" && npm install)
-fi
+resolve_macos_arch() {
+  local arch="${MACOS_ARCH:-$(uname -m)}"
+  case "$arch" in
+    arm64|aarch64) echo "arm64" ;;
+    x86_64|x64|amd64) echo "x86_64" ;;
+    *) die "不支持的 MACOS_ARCH: $arch（可用 arm64 / x86_64）" ;;
+  esac
+}
+
+macos_runtime_target() {
+  case "$(resolve_macos_arch)" in
+    arm64)  echo "macos-arm64" ;;
+    x86_64) echo "macos-x64" ;;
+  esac
+}
+
+tauri_rust_target() {
+  case "$(resolve_macos_arch)" in
+    arm64)  echo "aarch64-apple-darwin" ;;
+    x86_64) echo "x86_64-apple-darwin" ;;
+  esac
+}
+
+arch_tag() {
+  case "$(resolve_macos_arch)" in
+    arm64)  echo "aarch64" ;;
+    x86_64) echo "x86_64" ;;
+  esac
+}
 
 # ── 签名身份检查 ─────────────────────────────────────────────────────
 if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
-  # 尝试自动选取本机唯一的 Developer ID Application 证书
   AUTO_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null \
     | grep 'Developer ID Application' \
     | head -1 \
@@ -70,7 +82,7 @@ if [[ -z "${APPLE_SIGNING_IDENTITY:-}" ]]; then
   fi
 elif [[ "$APPLE_SIGNING_IDENTITY" != "-" ]]; then
   if ! security find-identity -v -p codesigning 2>/dev/null | grep -Fq "$APPLE_SIGNING_IDENTITY"; then
-    die "钥匙串中未找到证书: $APPLE_SIGNING_IDENTITY\n运行 security find-identity -v -p codesigning 查看可用证书"
+    die "钥匙串中未找到证书: $APPLE_SIGNING_IDENTITY"
   fi
   ok "签名证书: $APPLE_SIGNING_IDENTITY"
 else
@@ -99,8 +111,19 @@ else
 fi
 
 # ── 2. 编译 Go sidecar ───────────────────────────────────────────────
-info "编译 Go runtime sidecar..."
-bash "$SCRIPT_DIR/build-runtime-macos.sh"
+RUNTIME_TARGET="$(macos_runtime_target)"
+RUST_TARGET="$(tauri_rust_target)"
+HOST_ARCH="$(uname -m)"
+
+info "目标架构: $RUNTIME_TARGET (Rust: $RUST_TARGET)"
+bash "$SCRIPT_DIR/build-runtime.sh" "$RUNTIME_TARGET"
+
+if [[ "$(resolve_macos_arch)" != "$HOST_ARCH" && "$HOST_ARCH" == "arm64" ]]; then
+  if ! rustup target list --installed 2>/dev/null | grep -q "^${RUST_TARGET}$"; then
+    info "安装 Rust 交叉编译目标: $RUST_TARGET"
+    rustup target add "$RUST_TARGET"
+  fi
+fi
 
 # ── 3. Tauri 打包（先只打 .app，sidecar 补签后再生成 DMG）────────────
 WANT_DMG=0
@@ -109,6 +132,7 @@ WANT_DMG=0
 info "Tauri 打包 (.app)..."
 (
   cd "$APP_DIR"
+  export SKIP_RUNTIME_BUILD=1
   export APPLE_SIGNING_IDENTITY
   [[ -n "${APPLE_PROVIDER_SHORT_NAME:-}" ]] && export APPLE_PROVIDER_SHORT_NAME
   [[ -n "${APPLE_ID:-}" ]]              && export APPLE_ID
@@ -117,11 +141,22 @@ info "Tauri 打包 (.app)..."
   [[ -n "${APPLE_API_ISSUER:-}" ]]      && export APPLE_API_ISSUER
   [[ -n "${APPLE_API_KEY:-}" ]]         && export APPLE_API_KEY
   [[ -n "${APPLE_API_KEY_PATH:-}" ]]    && export APPLE_API_KEY_PATH
-  npm run tauri build -- --bundles app
+
+  if [[ "$(resolve_macos_arch)" == "$HOST_ARCH" ]]; then
+    npm run tauri build -- --bundles app
+  else
+    npm run tauri build -- --target "$RUST_TARGET" --bundles app
+  fi
 )
 
 # ── 4. sidecar JIT 补签 + 重签 .app（WASM / wazero 必需）──────────────
-BUNDLE_DIR="$TAURI_DIR/target/release/bundle"
+BUNDLE_DIR="$TAURI_DIR/target"
+if [[ "$(resolve_macos_arch)" != "$HOST_ARCH" ]]; then
+  BUNDLE_DIR="$BUNDLE_DIR/$RUST_TARGET/release/bundle"
+else
+  BUNDLE_DIR="$BUNDLE_DIR/release/bundle"
+fi
+
 APP_BUNDLE="$BUNDLE_DIR/macos/orbit.app"
 MACOS_DIR="$APP_BUNDLE/Contents/MacOS"
 ENTITLEMENTS="$TAURI_DIR/entitlements.plist"
@@ -153,15 +188,9 @@ sign_macos_sidecar_and_app
 # ── 5. 根据已签名的 .app 生成 DMG ────────────────────────────────────
 recreate_dmg() {
   local dmg_dir="$BUNDLE_DIR/dmg"
-  local arch_tag version dmg_path
-  case "$(uname -m)" in
-    arm64) arch_tag="aarch64" ;;
-    x86_64) arch_tag="x86_64" ;;
-    *) die "不支持的架构: $(uname -m)" ;;
-  esac
-  version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$TAURI_DIR/tauri.conf.json" | head -1)"
-  [[ -n "$version" ]] || version="0.0.0"
-  dmg_path="$dmg_dir/orbit_${version}_${arch_tag}.dmg"
+  local version dmg_path
+  version="$(app_version)"
+  dmg_path="$dmg_dir/orbit_${version}_$(arch_tag).dmg"
 
   mkdir -p "$dmg_dir"
   rm -f "$dmg_path"

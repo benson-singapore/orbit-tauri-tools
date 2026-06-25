@@ -4,16 +4,30 @@
 ORBIT_PORT        ?= 17890
 ORBIT_RUNTIME_URL ?= http://127.0.0.1:$(ORBIT_PORT)
 WEB_URL           ?= http://127.0.0.1:5173
+MACOS_ARCH        ?=
+LINUX_ARCH        ?=
+BUNDLES           ?=
 
 .DEFAULT_GOAL := help
 
 .PHONY: help install dev dev-go dev-tauri dev-web open-web dev-sidecar \
-        build-runtime build build-macos icons check-go swagger swagger-check
+        build-runtime build-runtime-all \
+        build-runtime-macos-arm64 build-runtime-macos-x64 \
+        build-runtime-windows build-runtime-linux build-runtime-linux-arm64 \
+        build build-macos build-macos-x64 build-windows build-linux \
+        icons check-go swagger swagger-check
 
 help: ## 显示命令列表
 	@echo "Orbit Reader — make targets (ORBIT_PORT=$(ORBIT_PORT))"
 	@echo ""
-	@grep -hE '^[a-zA-Z0-9_.-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}'
+	@grep -hE '^[a-zA-Z0-9_.-]+:.*##' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-26s\033[0m %s\n", $$1, $$2}'
+	@echo ""
+	@echo "打包示例:"
+	@echo "  make build-macos              # macOS 本机架构 (.app + .dmg)"
+	@echo "  make build-macos-x64          # M 系列 Mac 上打 Intel 包"
+	@echo "  make build-runtime-all        # 预编译全部平台 runtime (Zig)"
+	@echo "  make build-windows            # Windows 安装包 (须在 Windows 运行)"
+	@echo "  make build-linux              # Linux 安装包 (须在 Linux 运行)"
 	@echo ""
 	@echo "推荐日常开发（两个终端）:"
 	@echo "  make dev-go      # 终端 1"
@@ -41,18 +55,51 @@ dev: ## 单终端：后台 Go + Tauri（Ctrl+C 结束两者）
 dev-sidecar: ## Tauri 自动拉起已编译的 sidecar（需先 make build-runtime）
 	cd app && npm run tauri:dev
 
-build-runtime: ## 编译 macOS sidecar 到 app/src-tauri/binaries/
-	bash scripts/build-runtime-macos.sh
+# ── Runtime 交叉编译 ─────────────────────────────────────────────────
 
-build: build-runtime ## 打正式安装包 (sidecar + 前端 + tauri build)
+build-runtime: ## 编译当前平台 runtime sidecar
+	bash scripts/build-runtime.sh
+
+build-runtime-all: ## Zig 交叉编译全部平台 runtime
+	bash scripts/build-runtime.sh all
+
+build-runtime-macos-arm64: ## 编译 macOS Apple Silicon runtime
+	bash scripts/build-runtime.sh macos-arm64
+
+build-runtime-macos-x64: ## 编译 macOS Intel runtime
+	bash scripts/build-runtime.sh macos-x64
+
+build-runtime-windows: ## 编译 Windows runtime (可用 Zig 在 Mac 上交叉编译)
+	bash scripts/build-runtime.sh windows
+
+build-runtime-linux: ## 编译 Linux x64 runtime
+	bash scripts/build-runtime.sh linux
+
+build-runtime-linux-arm64: ## 编译 Linux ARM64 runtime
+	bash scripts/build-runtime.sh linux-arm64
+
+# ── 应用打包 ─────────────────────────────────────────────────────────
+
+build: build-runtime ## 打当前平台正式安装包 (sidecar + 前端 + tauri build)
 	cd app && npm run tauri build
+
+build-macos: ## 打包并签名 macOS 应用（含 sidecar JIT 补签，产出 .app + .dmg）
+	bash scripts/build-macos-app.sh
+
+build-macos-x64: ## 在 M 系列 Mac 上打包 Intel 版 macOS 应用
+	MACOS_ARCH=x86_64 bash scripts/build-macos-app.sh
+
+build-windows: ## 打包 Windows 应用（须在 Windows 上运行）
+	bash scripts/build-windows-app.sh
+
+build-linux: ## 打包 Linux 应用（须在 Linux 上运行）
+	bash scripts/build-linux-app.sh
+
+# ── 其他 ─────────────────────────────────────────────────────────────
 
 icons: ## 从 docs/html/logo_black.png 重新生成应用图标
 	bash scripts/prepare-app-icon.sh docs/html/logo_black.png app/src-tauri/app-icon.png
 	cd app && npx tauri icon src-tauri/app-icon.png -o src-tauri/icons
-
-build-macos: ## 打包并签名 macOS 应用（含 sidecar JIT 补签，产出 .app + .dmg）
-	bash scripts/build-macos-app.sh
 
 check-go: ## 检查 Go 能否通过编译（不启动服务）
 	cd runtime && go build -o /dev/null ./cmd/orbit-runtime
