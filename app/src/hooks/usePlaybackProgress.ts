@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import { putPlayback } from "@/lib/playback";
 import { resolveEffectivePlayback } from "@/lib/playbackConfig";
-import { syncComicLazyImages } from "@/lib/comicChapterContent";
+import { syncComicLazyImages, syncComicStreamVisibleChapterImages } from "@/lib/comicChapterContent";
 import {
   collectArticleScrollProgress,
   collectMangaPageProgress,
@@ -25,6 +25,7 @@ export interface UsePlaybackProgressOptions {
   sessionId?: string;
   contentRef: RefObject<HTMLElement | null>;
   scrollRootRef?: RefObject<HTMLElement | null>;
+  runtimeBase?: string | null;
   /** True once article HTML is mounted (not loading). Re-binds scroll tracking. */
   contentReady?: boolean;
   enabled?: boolean;
@@ -47,6 +48,7 @@ export function usePlaybackProgress({
   sessionId,
   contentRef,
   scrollRootRef,
+  runtimeBase,
   contentReady = true,
   enabled = true,
 }: UsePlaybackProgressOptions): void {
@@ -268,7 +270,15 @@ export function usePlaybackProgress({
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
         if (contentRoot && isComicContentRoot(contentRoot)) {
-          syncComicLazyImages(contentRoot, scrollRootRef?.current ?? null);
+          if (contentRoot.dataset.comicStream === "true") {
+            syncComicStreamVisibleChapterImages(
+              contentRoot,
+              scrollRootRef?.current ?? null,
+              { runtimeBase },
+            );
+          } else {
+            syncComicLazyImages(contentRoot, scrollRootRef?.current ?? null, { runtimeBase });
+          }
         }
         void flush();
       }, 400);
@@ -293,6 +303,7 @@ export function usePlaybackProgress({
     config.mode,
     contentRef,
     scrollRootRef,
+    runtimeBase,
     contentReady,
     flush,
     article?.id,

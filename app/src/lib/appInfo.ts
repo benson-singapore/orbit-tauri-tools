@@ -11,6 +11,8 @@ function isTauriRuntime(): boolean {
   return "__TAURI_INTERNALS__" in window || "__TAURI__" in window;
 }
 
+export { isTauriRuntime };
+
 export async function loadAppInfo(): Promise<AppInfo> {
   const fallbackVersion = import.meta.env.VITE_APP_VERSION ?? "0.1.0";
 

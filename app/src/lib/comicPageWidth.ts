@@ -1,8 +1,8 @@
 const STORAGE_KEY = "orbit.comicPageWidth";
 
-export const COMIC_PAGE_WIDTH_DEFAULT = 100;
-export const COMIC_PAGE_WIDTH_MIN = 50;
-export const COMIC_PAGE_WIDTH_MAX = 150;
+export const COMIC_PAGE_WIDTH_DEFAULT = 70;
+export const COMIC_PAGE_WIDTH_MIN = 0;
+export const COMIC_PAGE_WIDTH_MAX = 140;
 export const COMIC_PAGE_WIDTH_STEP = 5;
 
 export function clampComicPageWidth(value: number): number {

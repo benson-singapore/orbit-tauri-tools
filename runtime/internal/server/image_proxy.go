@@ -113,6 +113,7 @@ func (s *Server) handleProxyImage(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age=86400")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
 	_, _ = w.Write(plain)
 }
 

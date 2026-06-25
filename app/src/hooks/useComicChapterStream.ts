@@ -7,28 +7,39 @@ import {
   type RefObject,
 } from "react";
 import {
-  COMIC_PRELOAD_REMAINING_PAGES,
   comicChapterStreamSignature,
-  countMangaRemainingPages,
-  prepareChapterDisplayContent,
-  prepareComicStreamSlotHtml,
+  isComicStreamSlotReady,
+  isNearComicChapterEnd,
+  resolveComicStreamSlotContent,
   syncComicLazyImages,
+  syncComicLazyImagesLeading,
 } from "@/lib/comicChapterContent";
 import { runtimeOpenChapterDetail } from "@/lib/runtimeV2";
 import type { Article, ThemeMode } from "@/types";
 
 export type ComicStreamSlotStatus = "loading" | "ready" | "error";
 
+type ComicStreamSlotContent = {
+  pageUrls: string[] | null;
+  html: string;
+};
+
+function slotContentSignature(content: ComicStreamSlotContent): string {
+  if (content.pageUrls?.length) return content.pageUrls.join("\n");
+  return comicChapterStreamSignature(content.html);
+}
+
 export interface ComicStreamSlot {
   chapter: Article;
   contentHtml: string;
+  pageUrls: string[] | null;
   status: ComicStreamSlotStatus;
 }
 
 interface PrefetchEntry {
   chapterId: string;
   detail: Article | null;
-  html: string | null;
+  content: ComicStreamSlotContent | null;
   failed: boolean;
 }
 
@@ -68,9 +79,14 @@ export function useComicChapterStream({
   const chapterItemsRef = useRef(chapterItems);
   const pendingScrollAdjustRef = useRef(0);
   const pendingScrollToChapterRef = useRef<string | null>(null);
+  const pendingScrollGenerationRef = useRef(0);
+  const lastSeedChapterIdRef = useRef<string | null>(null);
+  const lastSeedParentIdRef = useRef<string | null>(null);
+  const streamInteractedRef = useRef(false);
   const appendLockRef = useRef(false);
   const prefetchLockRef = useRef(false);
   const prefetchRef = useRef<PrefetchEntry | null>(null);
+  const prefetchCooldownUntilRef = useRef(0);
   const appendedChapterIdsRef = useRef<Set<string>>(new Set());
   const seedGenerationRef = useRef(0);
   const visibleChapterRef = useRef<Article | null>(null);
@@ -98,32 +114,35 @@ export function useComicChapterStream({
     [parent, channelId],
   );
 
-  const prepareStreamHtml = useCallback(
-    (detail: Article): string => {
-      const html = prepareChapterDisplayContent(detail, runtimeBase, theme);
-      return html ? prepareComicStreamSlotHtml(html) : "";
+  const prepareStreamContent = useCallback(
+    (detail: Article): ComicStreamSlotContent => {
+      return resolveComicStreamSlotContent(detail, runtimeBase, theme);
     },
     [runtimeBase, theme],
   );
 
   const updateChapterSlot = useCallback(
-    (chapterId: string, detail: Article, html: string) => {
-      const signature = html ? comicChapterStreamSignature(html) : "";
+    (chapterId: string, detail: Article, content: ComicStreamSlotContent) => {
+      const signature = slotContentSignature(content);
       setSlots(prev =>
         prev.map(slot => {
           if (slot.chapter.id !== chapterId) return slot;
+          const existingSignature = slot.pageUrls?.length
+            ? slot.pageUrls.join("\n")
+            : comicChapterStreamSignature(slot.contentHtml);
           if (
-            html
-            && slot.contentHtml
+            isComicStreamSlotReady(content)
             && slot.status === "ready"
-            && comicChapterStreamSignature(slot.contentHtml) === signature
+            && isComicStreamSlotReady({ pageUrls: slot.pageUrls, html: slot.contentHtml })
+            && existingSignature === signature
           ) {
             return { ...slot, chapter: detail };
           }
           return {
             chapter: detail,
-            contentHtml: html,
-            status: html ? "ready" : "error",
+            pageUrls: content.pageUrls,
+            contentHtml: content.html,
+            status: isComicStreamSlotReady(content) ? "ready" : "error",
           };
         }),
       );
@@ -141,6 +160,21 @@ export function useComicChapterStream({
     setVisibleChapter(enriched);
     onVisibleChapterChangeRef.current?.(enriched);
   }, []);
+
+  const fetchChapterDetailRef = useRef(fetchChapterDetail);
+  fetchChapterDetailRef.current = fetchChapterDetail;
+  const prepareStreamContentRef = useRef(prepareStreamContent);
+  prepareStreamContentRef.current = prepareStreamContent;
+  const notifyVisibleChapterRef = useRef(notifyVisibleChapter);
+  notifyVisibleChapterRef.current = notifyVisibleChapter;
+  const updateChapterSlotRef = useRef(updateChapterSlot);
+  updateChapterSlotRef.current = updateChapterSlot;
+  const activeChapterRef = useRef(activeChapter);
+  activeChapterRef.current = activeChapter;
+  const activeChapterDetailRef = useRef(activeChapterDetail);
+  activeChapterDetailRef.current = activeChapterDetail;
+  const detailLoadingRef = useRef(detailLoading);
+  detailLoadingRef.current = detailLoading;
 
   const resolveNextChapter = useCallback((): Article | null => {
     const currentSlots = slotsRef.current;
@@ -171,13 +205,13 @@ export function useComicChapterStream({
   }, [scrollRootRef]);
 
   const tryAppendReadyChapter = useCallback(
-    (detail: Article, html: string) => {
-      if (!enabled || !parent || !html) return false;
+    (detail: Article, content: ComicStreamSlotContent) => {
+      if (!enabled || !parent || !isComicStreamSlotReady(content)) return false;
       if (appendLockRef.current) return false;
 
       const currentSlots = slotsRef.current;
       const existing = currentSlots.find(slot => slot.chapter.id === detail.id);
-      if (existing?.status === "ready" && existing.contentHtml) {
+      if (existing?.status === "ready" && (existing.contentHtml || existing.pageUrls?.length)) {
         appendedChapterIdsRef.current.add(detail.id);
         return true;
       }
@@ -186,11 +220,16 @@ export function useComicChapterStream({
       appendedChapterIdsRef.current.add(detail.id);
 
       if (existing) {
-        updateChapterSlot(detail.id, detail, html);
+        updateChapterSlot(detail.id, detail, content);
       } else {
         setSlots(prev => [
           ...prev,
-          { chapter: detail, contentHtml: html, status: "ready" },
+          {
+            chapter: detail,
+            pageUrls: content.pageUrls,
+            contentHtml: content.html,
+            status: "ready",
+          },
         ]);
       }
 
@@ -201,6 +240,7 @@ export function useComicChapterStream({
       }
 
       appendLockRef.current = false;
+      prefetchCooldownUntilRef.current = Date.now() + 800;
       tryTrimLeadingSlot();
       return true;
     },
@@ -215,12 +255,13 @@ export function useComicChapterStream({
         || prefetch.chapterId !== chapterId
         || prefetch.failed
         || !prefetch.detail
-        || !prefetch.html
+        || !prefetch.content
+        || !isComicStreamSlotReady(prefetch.content)
       ) {
         return;
       }
 
-      if (tryAppendReadyChapter(prefetch.detail, prefetch.html)) {
+      if (tryAppendReadyChapter(prefetch.detail, prefetch.content)) {
         prefetchRef.current = null;
       }
     },
@@ -228,53 +269,66 @@ export function useComicChapterStream({
   );
 
   const tryPrefetchNextChapter = useCallback(async () => {
-    if (!enabled || !parent || prefetchLockRef.current || appendLockRef.current) return;
-
-    const nextChapter = resolveNextChapter();
-    if (!nextChapter) {
-      setReachedEnd(true);
-      return;
-    }
+    if (!enabled || !parent) return;
+    if (prefetchLockRef.current || appendLockRef.current) return;
+    if (Date.now() < prefetchCooldownUntilRef.current) return;
 
     const currentSlots = slotsRef.current;
-    const existingSlot = currentSlots.find(slot => slot.chapter.id === nextChapter.id);
-    if (existingSlot?.status === "ready") return;
-    if (prefetchRef.current?.chapterId === nextChapter.id) {
-      if (prefetchRef.current.detail && prefetchRef.current.html) {
-        tryAppendPrefetchedChapter(nextChapter.id);
-        return;
-      }
-      if (!prefetchRef.current.failed) {
-        return;
-      }
-      prefetchRef.current = null;
-    }
+    const visibleId = visibleChapterRef.current?.id;
+    if (!visibleId) return;
+
+    const visibleIdx = currentSlots.findIndex(slot => slot.chapter.id === visibleId);
+    if (visibleIdx < 0 || visibleIdx !== currentSlots.length - 1) return;
+
+    const lastSlot = currentSlots[currentSlots.length - 1];
+    if (lastSlot.status !== "ready") return;
 
     prefetchLockRef.current = true;
-    const entry: PrefetchEntry = {
-      chapterId: nextChapter.id,
-      detail: null,
-      html: null,
-      failed: false,
-    };
-    prefetchRef.current = entry;
-
-    setSlots(prev => {
-      if (prev.some(slot => slot.chapter.id === nextChapter.id)) return prev;
-      return [
-        ...prev,
-        { chapter: nextChapter, contentHtml: "", status: "loading" },
-      ];
-    });
-
+    let targetChapterId: string | null = null;
     try {
+      const nextChapter = resolveNextChapter();
+      if (!nextChapter) {
+        setReachedEnd(true);
+        return;
+      }
+      targetChapterId = nextChapter.id;
+
+      const existingSlot = currentSlots.find(slot => slot.chapter.id === nextChapter.id);
+      if (existingSlot?.status === "ready") return;
+      if (prefetchRef.current?.chapterId === nextChapter.id) {
+        if (prefetchRef.current.detail && prefetchRef.current.content) {
+          tryAppendPrefetchedChapter(nextChapter.id);
+          return;
+        }
+        if (!prefetchRef.current.failed) {
+          return;
+        }
+        prefetchRef.current = null;
+      }
+
+      const entry: PrefetchEntry = {
+        chapterId: nextChapter.id,
+        detail: null,
+        content: null,
+        failed: false,
+      };
+      prefetchRef.current = entry;
+
+      setSlots(prev => {
+        if (prev.some(slot => slot.chapter.id === nextChapter.id)) return prev;
+        return [
+          ...prev,
+          { chapter: nextChapter, contentHtml: "", pageUrls: null, status: "loading" },
+        ];
+      });
+
       const detail = await fetchChapterDetail(nextChapter);
-      const html = prepareStreamHtml(detail);
+      const content = prepareStreamContent(detail);
       if (prefetchRef.current?.chapterId !== nextChapter.id) return;
 
       entry.detail = detail;
-      entry.html = html;
-      if (html) {
+      entry.content = content;
+      if (isComicStreamSlotReady(content)) {
         tryAppendPrefetchedChapter(nextChapter.id);
       } else {
         entry.failed = true;
@@ -288,10 +342,12 @@ export function useComicChapterStream({
       }
     } catch (err) {
       console.error("prefetch comic chapter failed", err);
-      if (prefetchRef.current?.chapterId === nextChapter.id) {
+      if (targetChapterId && prefetchRef.current?.chapterId === targetChapterId) {
         prefetchRef.current.failed = true;
       }
-      setSlots(prev => prev.filter(slot => slot.chapter.id !== nextChapter.id));
+      if (targetChapterId) {
+        setSlots(prev => prev.filter(slot => slot.chapter.id !== targetChapterId));
+      }
     } finally {
       prefetchLockRef.current = false;
     }
@@ -300,7 +356,7 @@ export function useComicChapterStream({
     parent,
     resolveNextChapter,
     fetchChapterDetail,
-    prepareStreamHtml,
+    prepareStreamContent,
     tryAppendPrefetchedChapter,
   ]);
 
@@ -325,6 +381,8 @@ export function useComicChapterStream({
       if (rect.bottom <= rootRect.top || rect.top >= rootRect.bottom) continue;
       const id = block.dataset.comicChapter;
       if (!id) continue;
+      const slot = slotsRef.current.find(item => item.chapter.id === id);
+      if (slot?.status !== "ready") continue;
       if (rect.top <= focusLine && rect.top > bestTop) {
         bestTop = rect.top;
         bestId = id;
@@ -335,7 +393,11 @@ export function useComicChapterStream({
       for (const block of blocks) {
         const rect = block.getBoundingClientRect();
         if (rect.bottom <= rootRect.top || rect.top >= rootRect.bottom) continue;
-        bestId = block.dataset.comicChapter ?? null;
+        const id = block.dataset.comicChapter ?? null;
+        if (!id) continue;
+        const slot = slotsRef.current.find(item => item.chapter.id === id);
+        if (slot?.status !== "ready") continue;
+        bestId = id;
         if (bestId) break;
       }
     }
@@ -353,24 +415,45 @@ export function useComicChapterStream({
     const scrollRoot = scrollRootRef.current;
     const streamContainer = streamContainerRef.current;
     const currentSlots = slotsRef.current;
-    if (streamContainer) {
-      syncComicLazyImages(streamContainer, scrollRoot, { runtimeBase });
-    }
     if (!scrollRoot || !streamContainer || currentSlots.length === 0) return;
 
-    const lastSlot = currentSlots[currentSlots.length - 1];
-    if (lastSlot.status !== "ready") return;
+    const visibleId = visibleChapterRef.current?.id;
+    if (!visibleId) return;
 
-    const block = streamContainer.querySelector(
-      `[data-comic-chapter="${lastSlot.chapter.id}"]`,
+    const visibleIdx = currentSlots.findIndex(slot => slot.chapter.id === visibleId);
+    if (visibleIdx < 0) return;
+
+    const visibleBlock = streamContainer.querySelector(
+      `[data-comic-chapter="${visibleId}"]`,
     );
-    const content = block?.querySelector(".article-content");
-    if (!(content instanceof HTMLElement)) return;
+    if (!(visibleBlock instanceof HTMLElement)) return;
 
-    const remaining = countMangaRemainingPages(content, scrollRoot);
-    if (remaining === null) return;
+    const visibleContent = visibleBlock.querySelector(".article-content");
+    if (visibleContent instanceof HTMLElement) {
+      syncComicLazyImages(visibleContent, scrollRoot, { runtimeBase });
+    }
 
-    if (remaining <= COMIC_PRELOAD_REMAINING_PAGES) {
+    const nextSlot = visibleIdx < currentSlots.length - 1
+      ? currentSlots[visibleIdx + 1]
+      : null;
+    if (nextSlot?.status === "ready") {
+      const nextBlock = streamContainer.querySelector(
+        `[data-comic-chapter="${nextSlot.chapter.id}"]`,
+      );
+      if (nextBlock instanceof HTMLElement) {
+        const nextContent = nextBlock.querySelector(".article-content");
+        if (nextContent instanceof HTMLElement) {
+          syncComicLazyImagesLeading(nextContent, 6, runtimeBase);
+        }
+      }
+    }
+
+    const visibleSlot = currentSlots[visibleIdx];
+    if (
+      visibleSlot.status === "ready"
+      && visibleIdx === currentSlots.length - 1
+      && isNearComicChapterEnd(visibleBlock, scrollRoot)
+    ) {
       void tryPrefetchNextChapter();
     }
 
@@ -385,18 +468,46 @@ export function useComicChapterStream({
       visibleChapterRef.current = null;
       prefetchRef.current = null;
       prefetchLockRef.current = false;
+      prefetchCooldownUntilRef.current = 0;
       appendedChapterIdsRef.current = new Set();
+      lastSeedChapterIdRef.current = null;
+      lastSeedParentIdRef.current = null;
+      streamInteractedRef.current = false;
+      pendingScrollToChapterRef.current = null;
+      pendingScrollGenerationRef.current = 0;
       return;
     }
 
+    const parentId = parent.id;
+    const chapterId = activeChapter.id;
+    const items = chapterItemsRef.current;
+    const hasReadyActiveSlot = slotsRef.current.some(
+      slot => slot.chapter.id === chapterId && slot.status === "ready",
+    );
+    const streamAlreadySeeded = lastSeedChapterIdRef.current === chapterId
+      && lastSeedParentIdRef.current === parentId
+      && hasReadyActiveSlot;
+
+    if (streamAlreadySeeded) {
+      return;
+    }
+
+    if (items.length === 0) {
+      return;
+    }
+
+    lastSeedChapterIdRef.current = chapterId;
+    lastSeedParentIdRef.current = parentId;
+    streamInteractedRef.current = false;
+
     const generation = ++seedGenerationRef.current;
-    const items = chapterItems;
-    let resolvedChapter = activeChapter;
+    const activeChapterDetail = activeChapterDetailRef.current;
+    let resolvedChapter = activeChapterRef.current ?? activeChapter;
     let idx = items.findIndex(item => item.id === resolvedChapter.id);
     if (
       idx < 0
       && activeChapterDetail?.id
-      && activeChapterDetail.id !== activeChapter.id
+      && activeChapterDetail.id !== resolvedChapter.id
     ) {
       const detailIdx = items.findIndex(item => item.id === activeChapterDetail.id);
       if (detailIdx >= 0) {
@@ -405,25 +516,27 @@ export function useComicChapterStream({
       }
     }
     if (idx < 0) {
-      if (activeChapterDetail?.id === activeChapter.id && activeChapterDetail.content?.trim()) {
-        const soloHtml = prepareComicStreamSlotHtml(
-          prepareChapterDisplayContent(activeChapterDetail, runtimeBase, theme),
-        );
+      if (activeChapterDetail?.id === resolvedChapter.id && activeChapterDetail.content?.trim()) {
+        const soloContent = prepareStreamContentRef.current(activeChapterDetail);
         setSlots([
           {
             chapter: activeChapterDetail,
-            contentHtml: soloHtml,
-            status: soloHtml ? "ready" : "loading",
+            pageUrls: soloContent.pageUrls,
+            contentHtml: soloContent.html,
+            status: isComicStreamSlotReady(soloContent) ? "ready" : "loading",
           },
         ]);
         setReachedEnd(true);
-        notifyVisibleChapter(activeChapterDetail);
-        if (!soloHtml) {
-          void fetchChapterDetail(resolvedChapter)
+        notifyVisibleChapterRef.current(activeChapterDetail);
+        if (!isComicStreamSlotReady(soloContent)) {
+          void fetchChapterDetailRef.current(resolvedChapter)
             .then(detail => {
               if (seedGenerationRef.current !== generation) return;
-              const html = prepareStreamHtml(detail);
-              updateChapterSlot(resolvedChapter.id, detail, html);
+              updateChapterSlotRef.current(
+                resolvedChapter.id,
+                detail,
+                prepareStreamContentRef.current(detail),
+              );
             })
             .catch(() => {
               if (seedGenerationRef.current !== generation) return;
@@ -445,40 +558,45 @@ export function useComicChapterStream({
 
     const prevChapter = idx > 0 ? items[idx - 1] : null;
     pendingScrollToChapterRef.current = resolvedChapter.id;
+    pendingScrollGenerationRef.current = generation;
     setReachedEnd(idx >= items.length - 1);
     appendLockRef.current = false;
     prefetchLockRef.current = false;
     prefetchRef.current = null;
+    prefetchCooldownUntilRef.current = 0;
 
     const activeDetail =
       activeChapterDetail?.id === resolvedChapter.id ? activeChapterDetail : resolvedChapter;
-    const activeHtml = activeDetail.content?.trim()
-      ? prepareComicStreamSlotHtml(
-          prepareChapterDisplayContent(activeDetail, runtimeBase, theme),
-        )
-      : "";
+    const activeContent = activeDetail.content?.trim()
+      ? prepareStreamContentRef.current(activeDetail)
+      : { pageUrls: null, html: "" };
 
     const initial: ComicStreamSlot[] = [];
     if (prevChapter) {
-      initial.push({ chapter: prevChapter, contentHtml: "", status: "loading" });
+      initial.push({ chapter: prevChapter, contentHtml: "", pageUrls: null, status: "loading" });
     }
     initial.push({
       chapter: activeDetail,
-      contentHtml: activeHtml,
-      status: activeHtml ? "ready" : "loading",
+      pageUrls: activeContent.pageUrls,
+      contentHtml: activeContent.html,
+      status: isComicStreamSlotReady(activeContent) ? "ready" : "loading",
     });
     appendedChapterIdsRef.current = new Set(
       initial.filter(slot => slot.status === "ready").map(slot => slot.chapter.id),
     );
     setSlots(initial);
-    notifyVisibleChapter(activeDetail);
+    notifyVisibleChapterRef.current(activeDetail);
 
     if (prevChapter) {
-      void fetchChapterDetail(prevChapter)
+      void fetchChapterDetailRef.current(prevChapter)
         .then(detail => {
           if (seedGenerationRef.current !== generation) return;
-          const html = prepareStreamHtml(detail);
-          updateChapterSlot(prevChapter.id, detail, html);
+          const content = prepareStreamContentRef.current(detail);
+          if (!isComicStreamSlotReady(content)) {
+            setSlots(prev => prev.filter(slot => slot.chapter.id !== prevChapter.id));
+            return;
+          }
+          updateChapterSlotRef.current(prevChapter.id, detail, content);
         })
         .catch(() => {
           if (seedGenerationRef.current !== generation) return;
@@ -486,73 +604,66 @@ export function useComicChapterStream({
         });
     }
 
-    if (!activeHtml) {
-      void fetchChapterDetail(resolvedChapter)
+    if (!isComicStreamSlotReady(activeContent) && !detailLoadingRef.current) {
+      void fetchChapterDetailRef.current(resolvedChapter)
         .then(detail => {
           if (seedGenerationRef.current !== generation) return;
-          const html = prepareStreamHtml(detail);
-          updateChapterSlot(resolvedChapter.id, detail, html);
+          const content = prepareStreamContentRef.current(detail);
+          if (!isComicStreamSlotReady(content)) return;
+          updateChapterSlotRef.current(resolvedChapter.id, detail, content);
         })
         .catch(() => {
           if (seedGenerationRef.current !== generation) return;
+          if (detailLoadingRef.current) return;
           setSlots(prev =>
             prev.map(slot =>
-              slot.chapter.id === resolvedChapter.id
+              slot.chapter.id === resolvedChapter.id && slot.status === "loading"
                 ? { ...slot, status: "error" }
                 : slot,
             ),
           );
         });
     }
-  }, [
-    enabled,
-    parent?.id,
-    parent?.pluginId,
-    activeChapter?.id,
-    activeChapterDetail?.id,
-    activeChapterDetail?.content,
-    chapterItems,
-    fetchChapterDetail,
-    prepareStreamHtml,
-    runtimeBase,
-    theme,
-    notifyVisibleChapter,
-    updateChapterSlot,
-  ]);
+  }, [enabled, parent?.id, activeChapter?.id, chapterItems.length]);
 
   useEffect(() => {
     if (!enabled || !activeChapter || !activeChapterDetail) return;
     if (activeChapterDetail.id !== activeChapter.id) return;
-    const html = prepareComicStreamSlotHtml(
-      prepareChapterDisplayContent(activeChapterDetail, runtimeBase, theme),
-    );
-    if (!html) return;
-    const signature = comicChapterStreamSignature(html);
+    const content = prepareStreamContent(activeChapterDetail);
+    if (!isComicStreamSlotReady(content)) return;
+    const signature = slotContentSignature(content);
     setSlots(prev =>
       prev.map(slot => {
         if (slot.chapter.id !== activeChapter.id) return slot;
+        const existingSignature = slot.pageUrls?.length
+          ? slot.pageUrls.join("\n")
+          : comicChapterStreamSignature(slot.contentHtml);
         if (
-          slot.contentHtml
-          && slot.status === "ready"
-          && comicChapterStreamSignature(slot.contentHtml) === signature
+          slot.status === "ready"
+          && isComicStreamSlotReady({ pageUrls: slot.pageUrls, html: slot.contentHtml })
+          && existingSignature === signature
         ) {
           if (slot.chapter === activeChapterDetail) return slot;
           return { ...slot, chapter: activeChapterDetail };
         }
         return {
           chapter: activeChapterDetail,
-          contentHtml: html,
+          pageUrls: content.pageUrls,
+          contentHtml: content.html,
           status: "ready",
         };
       }),
     );
+    const idx = chapterItemsRef.current.findIndex(item => item.id === activeChapter.id);
+    if (idx >= 0) {
+      setReachedEnd(idx >= chapterItemsRef.current.length - 1);
+    }
   }, [
     enabled,
     activeChapter?.id,
     activeChapterDetail?.content,
     activeChapterDetail?.id,
-    runtimeBase,
-    theme,
+    prepareStreamContent,
   ]);
 
   useEffect(() => {
@@ -560,7 +671,10 @@ export function useComicChapterStream({
     setSlots(prev => {
       if (prev.length === 0) return prev;
       return prev.map(slot => {
-        if (slot.status !== "loading" || slot.chapter.id !== activeChapter.id) {
+        if (slot.chapter.id !== activeChapter.id) {
+          return slot;
+        }
+        if (slot.status === "ready") {
           return slot;
         }
         if (activeChapterDetail?.id !== activeChapter.id) {
@@ -569,17 +683,16 @@ export function useComicChapterStream({
         if (!activeChapterDetail.content?.trim()) {
           return slot;
         }
-        const html = prepareComicStreamSlotHtml(
-          prepareChapterDisplayContent(activeChapterDetail, runtimeBase, theme),
-        );
-        if (html) {
+        const content = prepareStreamContent(activeChapterDetail);
+        if (isComicStreamSlotReady(content)) {
           return {
             chapter: activeChapterDetail,
-            contentHtml: html,
+            pageUrls: content.pageUrls,
+            contentHtml: content.html,
             status: "ready" as const,
           };
         }
-        return { ...slot, status: "error" as const };
+        return slot;
       });
     });
   }, [
@@ -588,8 +701,7 @@ export function useComicChapterStream({
     activeChapter?.id,
     activeChapterDetail?.content,
     activeChapterDetail?.id,
-    runtimeBase,
-    theme,
+    prepareStreamContent,
   ]);
 
   useLayoutEffect(() => {
@@ -601,7 +713,20 @@ export function useComicChapterStream({
 
   useLayoutEffect(() => {
     const targetId = pendingScrollToChapterRef.current;
-    if (!targetId || !scrollRootRef.current || !streamContainerRef.current) return;
+    const expectedGeneration = pendingScrollGenerationRef.current;
+    if (!targetId || !expectedGeneration || !scrollRootRef.current || !streamContainerRef.current) {
+      return;
+    }
+    if (expectedGeneration !== seedGenerationRef.current) {
+      pendingScrollToChapterRef.current = null;
+      pendingScrollGenerationRef.current = 0;
+      return;
+    }
+    if (streamInteractedRef.current) {
+      pendingScrollToChapterRef.current = null;
+      pendingScrollGenerationRef.current = 0;
+      return;
+    }
 
     const block = streamContainerRef.current.querySelector(
       `[data-comic-chapter="${targetId}"]`,
@@ -617,6 +742,7 @@ export function useComicChapterStream({
     }
 
     pendingScrollToChapterRef.current = null;
+    pendingScrollGenerationRef.current = 0;
     const scrollRoot = scrollRootRef.current;
     const rootRect = scrollRoot.getBoundingClientRect();
     const blockRect = block.getBoundingClientRect();
@@ -630,6 +756,7 @@ export function useComicChapterStream({
 
     let raf = 0;
     const onScroll = () => {
+      streamInteractedRef.current = true;
       window.cancelAnimationFrame(raf);
       raf = window.requestAnimationFrame(() => {
         checkStreamOnScroll();

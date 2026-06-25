@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/Icon";
 import { isDarkTheme } from "@/lib/themeMode";
 import type { Article, ThemeMode } from "@/types";
@@ -43,6 +43,7 @@ export function ChaptersList({
   onClearAndRefresh,
 }: ChaptersListProps) {
   const activeItemRef = useRef<HTMLButtonElement>(null);
+  const [sortOrder, setSortOrder] = useState<"asc" | "desc">("asc");
 
   useEffect(() => {
     activeItemRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
@@ -52,6 +53,11 @@ export function ChaptersList({
   const busy = loading || refreshing;
   const isDark = isDarkTheme(theme);
   const isSidebar = variant === "sidebar";
+  const sortedItems = useMemo(
+    () => (sortOrder === "asc" ? items : [...items].reverse()),
+    [items, sortOrder],
+  );
+  const sortTitle = sortOrder === "asc" ? "排序：正序" : "排序：倒序";
 
   const header = (
     <div
@@ -67,6 +73,20 @@ export function ChaptersList({
           <h2 className="text-sm font-semibold truncate flex-1 min-w-0">{heading}</h2>
           {(canRefresh || onRefresh || onClearAndRefresh) ? (
             <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={() => setSortOrder(current => (current === "asc" ? "desc" : "asc"))}
+                title={sortTitle}
+                aria-label={sortTitle}
+                className="orbit-chapters-list-action p-1.5 rounded-lg"
+              >
+                <Icon
+                  name="sort-vertical"
+                  className={`w-3.5 h-3.5 transition-transform duration-200 ${
+                    sortOrder === "desc" ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
               <button
                 type="button"
                 onClick={() => onRefresh?.()}
@@ -98,11 +118,11 @@ export function ChaptersList({
 
   const listBody = busy ? (
     <p className="text-sm orbit-text-muted text-center py-6">正在加载目录…</p>
-  ) : items.length === 0 ? (
+  ) : sortedItems.length === 0 ? (
     <p className="text-sm orbit-text-muted text-center py-6">暂无条目</p>
   ) : (
     <>
-      {items.map((item, index) => {
+      {sortedItems.map((item, index) => {
         const isActive = activeItemId === item.id;
         return (
           <button

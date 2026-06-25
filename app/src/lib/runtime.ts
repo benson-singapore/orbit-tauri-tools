@@ -4,6 +4,13 @@ import type { HealthResponse, RuntimeStatusResponse } from "@/types";
 
 let cachedBaseUrl: string | null = null;
 
+/** Synchronous access after {@link getRuntimeBaseUrl} or {@link waitForRuntimeReady} resolves. */
+export function getCachedRuntimeBaseUrl(): string | null {
+  const viteUrl = viteDevRuntimeUrl();
+  if (viteUrl) return viteUrl;
+  return cachedBaseUrl;
+}
+
 /** 纯 Vite 调试时可设 VITE_ORBIT_RUNTIME_URL，无需 Tauri */
 function viteDevRuntimeUrl(): string | null {
   const url = import.meta.env.VITE_ORBIT_RUNTIME_URL;

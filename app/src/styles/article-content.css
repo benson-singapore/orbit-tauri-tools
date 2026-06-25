@@ -1,7 +1,7 @@
 /* Reader font scale — set --reader-scale on .article-reader (default 1) */
 .article-reader {
   --reader-scale: 1;
-  --comic-page-width: 100%;
+  --comic-page-width: 70%;
 }
 
 /* Comic page width slider — native range input in reader toolbar */
@@ -492,6 +492,7 @@
 /* Comic reader — extracted page images only, no plugin chrome */
 .article-reader--comic .comic-chapter-stream {
   margin-top: 0;
+  overflow-anchor: none;
 }
 
 .article-content.comic-chapter-pages {
@@ -512,7 +513,7 @@
 
 .article-content.comic-chapter-pages :where(img.comic-page-lazy[src^="data:"]) {
   display: block;
-  width: var(--comic-page-width, 100%);
+  width: var(--comic-page-width, 70%);
   min-height: 50vh;
   margin-left: auto;
   margin-right: auto;
@@ -540,7 +541,7 @@
 
 .comic-chapter-stream .comic-chapter-pages :where(img.comic-page-lazy[src^="data:"]) {
   display: block;
-  width: var(--comic-page-width, 100%);
+  width: var(--comic-page-width, 70%);
   min-height: 50vh;
   margin-left: auto;
   margin-right: auto;
@@ -551,13 +552,13 @@
   background-color: #141414;
 }
 
-/* Comic reader page width — set --comic-page-width on .article-reader (default 100%) */
+/* Comic reader page width — set --comic-page-width on .article-reader (default 70%) */
 .article-content :where(
   .comic-reader-pages img,
   .comic-reader-page figure img,
   .comic-chapter-pages img
 ) {
-  width: var(--comic-page-width, 100%) !important;
+  width: var(--comic-page-width, 70%) !important;
   max-width: none;
 }
 

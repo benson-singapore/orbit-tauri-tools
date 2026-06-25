@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { articleContentTheme, isDarkTheme } from "@/lib/themeMode";
+import { articleContentTheme } from "@/lib/themeMode";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { Icon } from "@/components/Icon";
 import { YouTubeEmbed } from "@/components/YouTubeEmbed";
@@ -7,10 +7,6 @@ import { ChaptersDrawer } from "@/components/ChaptersDrawer";
 import { ChaptersList } from "@/components/ChaptersList";
 import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
-import {
-  dedupeCoverImageFromContent,
-  prepareArticleHtmlContent,
-} from "@/lib/articleContent";
 import {
   resolveArticleDetailChannel,
   resolveArticleHasDetail,
@@ -21,12 +17,12 @@ import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import { bindArticleContentImages } from "@/lib/imageProxy";
 import {
-  prepareComicFlatPagesHtml,
   prepareMangaIntroDisplayContent,
-  syncComicReaderImages,
 } from "@/lib/comicChapterContent";
 import { comicPageWidthCssValue } from "@/lib/comicPageWidth";
 import { ComicChapterStream } from "@/components/ComicChapterStream";
+import { ComicPagesView } from "@/components/ComicPagesView";
+import { useComicArticleDisplay } from "@/hooks/useComicArticleDisplay";
 import { useComicChapterStream } from "@/hooks/useComicChapterStream";
 import {
   bindArticleContentPlayers,
@@ -64,7 +60,7 @@ export function ArticleDetailPanel({
   runtimeBase,
   article: initialArticle,
   readerFontScale,
-  comicPageWidth = 100,
+  comicPageWidth = 70,
   hasDetail,
   activeChannel,
   pluginMeta,
@@ -223,32 +219,16 @@ export function ArticleDetailPanel({
 
   const youTubeVideoId = useMemo(() => resolveYouTubeVideoId(article), [article]);
 
-  const baseDisplayContent = useMemo(() => {
-    if (!article.content?.trim()) return "";
-    let content = article.content;
-    if (article.type === "text" && article.image) {
-      content = dedupeCoverImageFromContent(article.image, content);
-    }
-    return prepareArticleHtmlContent(content, runtimeBase, {
-      darkTheme: isDarkTheme(theme),
-    });
-  }, [article.content, article.image, article.type, runtimeBase, theme]);
+  const {
+    pageUrls: comicPageUrls,
+    html: comicHtml,
+    isComicHtml,
+    isComicReader: isComicReaderContent,
+  } = useComicArticleDisplay(article, runtimeBase, theme);
 
-  const selectedItemHasComicReader = useMemo(
-    () => baseDisplayContent.includes("comic-reader"),
-    [baseDisplayContent],
-  );
+  const selectedItemHasComicReader = isComicHtml;
 
-  const comicFlatPagesHtml = useMemo(
-    () => (
-      selectedItemHasComicReader && baseDisplayContent
-        ? prepareComicFlatPagesHtml(baseDisplayContent)
-        : null
-    ),
-    [selectedItemHasComicReader, baseDisplayContent],
-  );
-
-  const isComicReaderContent = Boolean(comicFlatPagesHtml);
+  const baseDisplayContent = comicHtml;
 
   const isMangaIntroPage = Boolean(
     hasChaptersMode
@@ -267,8 +247,7 @@ export function ArticleDetailPanel({
   }, [baseDisplayContent, isMangaIntroPage]);
 
   const canUseComicChapterStream = Boolean(
-    selectedItemHasComicReader
-    && comicFlatPagesHtml
+    isComicReaderContent
     && chapters.isActive
     && hasChaptersMode
     && initialArticle
@@ -296,7 +275,27 @@ export function ArticleDetailPanel({
     ? (comicStream.visibleChapter ?? chapters.activeChapter ?? article)
     : (chapters.activeChapter ?? article);
 
-  const activeChapterId = comicToolbarChapter?.id
+  const toolbarNavChapterId = useMemo(() => {
+    if (!chapters.isActive) return null;
+    const candidates = [
+      comicStream.visibleChapter?.id,
+      chapters.activeChapter?.id,
+      article?.id,
+    ].filter((id): id is string => Boolean(id));
+    for (const id of candidates) {
+      if (chapters.items.some(item => item.id === id)) return id;
+    }
+    return chapters.activeChapter?.id ?? null;
+  }, [
+    chapters.isActive,
+    chapters.items,
+    chapters.activeChapter?.id,
+    comicStream.visibleChapter?.id,
+    article?.id,
+  ]);
+
+  const activeChapterId = toolbarNavChapterId
+    ?? comicToolbarChapter?.id
     ?? chapters.activeChapter?.id
     ?? article.id;
 
@@ -317,10 +316,11 @@ export function ArticleDetailPanel({
     sessionId,
     contentRef: playbackContentRef,
     scrollRootRef,
+    runtimeBase,
     contentReady: (
       comicChapterStreamActive
         ? comicStream.slots.some(slot => slot.status === "ready")
-        : Boolean(comicFlatPagesHtml || displayContent)
+        : Boolean(comicPageUrls?.length || comicHtml || displayContent)
     ) && !showContentLoading,
     enabled: true,
   });
@@ -333,15 +333,15 @@ export function ArticleDetailPanel({
 
     const hasComicContent = comicChapterStreamActive
       ? comicStream.slots.some(slot => slot.status === "ready")
-      : Boolean(comicFlatPagesHtml);
+      : Boolean(comicPageUrls?.length || comicHtml);
     if (!hasComicContent && !displayContent) return;
 
     if (!isComicReaderContent) {
       highlightArticleCode(contentRoot);
       bindArticleContentImages(contentRoot, runtimeBase);
       bindArticleContentPlayers(contentRoot, { sessionId });
-    } else {
-      syncComicReaderImages(contentRoot, scrollRootRef.current, { runtimeBase });
+    } else if (isComicHtml) {
+      bindArticleContentImages(contentRoot, runtimeBase);
     }
 
     if (resolvedResumeIntent?.progress && !resumeAppliedRef.current && !showContentLoading) {
@@ -364,7 +364,9 @@ export function ArticleDetailPanel({
     };
   }, [
     displayContent,
-    comicFlatPagesHtml,
+    comicPageUrls,
+    comicHtml,
+    isComicHtml,
     isComicReaderContent,
     comicChapterStreamActive,
     useComicChapterStreamMode,
@@ -584,14 +586,15 @@ export function ArticleDetailPanel({
                   slots={comicStream.slots}
                   streamContainerRef={comicStream.streamContainerRef}
                   theme={theme}
+                  runtimeBase={runtimeBase}
                   reachedEnd={comicStream.reachedEnd}
                 />
-            ) : comicFlatPagesHtml ? (
-              <div
+            ) : comicPageUrls?.length ? (
+              <ComicPagesView
                 ref={contentRef}
-                data-theme={articleContentTheme(theme)}
-                className="article-content comic-chapter-pages mt-6"
-                dangerouslySetInnerHTML={{ __html: comicFlatPagesHtml }}
+                pages={comicPageUrls}
+                runtimeBase={runtimeBase}
+                theme={theme}
               />
             ) : displayContent ? (
               <>

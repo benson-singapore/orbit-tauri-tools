@@ -371,7 +371,8 @@ export function collectTimeProgress(
 export function isComicContentRoot(root: HTMLElement | null | undefined): boolean {
   if (!root) return false;
   if (root.dataset.comicStream === "true") return true;
-  return Boolean(root.querySelector(".comic-reader, img[data-comic-lazy]"));
+  if (root.dataset.comicPages === "true") return true;
+  return Boolean(root.querySelector(".comic-reader, img[data-comic-lazy], [data-comic-pages]"));
 }
 
 function getMangaImages(root: HTMLElement): HTMLImageElement[] {
@@ -379,7 +380,9 @@ function getMangaImages(root: HTMLElement): HTMLImageElement[] {
   if (lazy.length > 0) return lazy;
 
   const comicImages = Array.from(
-    root.querySelectorAll<HTMLImageElement>(".comic-reader img, .comic-chapter-pages img"),
+    root.querySelectorAll<HTMLImageElement>(
+      ".comic-reader img, .comic-chapter-pages img, [data-comic-pages] img",
+    ),
   );
   const images = comicImages.length > 0
     ? comicImages

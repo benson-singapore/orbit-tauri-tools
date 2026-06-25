@@ -2,11 +2,106 @@ import {
   dedupeCoverImageFromContent,
   prepareArticleHtmlContent,
 } from "@/lib/articleContent";
-import { bindSingleArticleContentImage } from "@/lib/imageProxy";
+import {
+  bindSingleArticleContentImage,
+  comicPageImageUrl,
+  isComicLazyImageActivated,
+} from "@/lib/imageProxy";
+import { isTauriRuntime } from "@/lib/appInfo";
+import { getCachedRuntimeBaseUrl } from "@/lib/runtime";
 import { isDarkTheme } from "@/lib/themeMode";
 import type { Article, ThemeMode } from "@/types";
 
 export const COMIC_PRELOAD_REMAINING_PAGES = 10;
+
+/** Distance from chapter bottom (px) before prefetching the next chapter. */
+export const COMIC_CHAPTER_PREFETCH_DISTANCE_PX = 1600;
+
+/** Parse comic chapter content when it is a JSON array of image URLs. */
+export function parseComicPageUrls(content: string): string[] | null {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith("[")) return null;
+
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+
+    const urls: string[] = [];
+    for (const item of parsed) {
+      if (typeof item !== "string") return null;
+      const url = item.trim();
+      if (!url.startsWith("http://") && !url.startsWith("https://")) return null;
+      urls.push(url);
+    }
+    return urls;
+  } catch {
+    return null;
+  }
+}
+
+export function isComicReaderHtml(content: string): boolean {
+  return content.includes("comic-reader");
+}
+
+export function resolveComicArticleDisplay(
+  article: Pick<Article, "content" | "image" | "type">,
+  runtimeBase: string | null,
+  theme: ThemeMode,
+): { pageUrls: string[] | null; html: string } {
+  const raw = article.content?.trim() ?? "";
+  const pageUrls = parseComicPageUrls(raw);
+  if (pageUrls) {
+    return { pageUrls, html: "" };
+  }
+
+  if (!raw) {
+    return { pageUrls: null, html: "" };
+  }
+
+  let content = raw;
+  if (article.type === "text" && article.image) {
+    content = dedupeCoverImageFromContent(article.image, content);
+  }
+
+  return {
+    pageUrls: null,
+    html: prepareArticleHtmlContent(content, runtimeBase, {
+      darkTheme: isDarkTheme(theme),
+    }),
+  };
+}
+
+export function resolveComicStreamSlotContent(
+  article: Article,
+  runtimeBase: string | null,
+  theme: ThemeMode,
+): { pageUrls: string[] | null; html: string } {
+  const resolved = resolveComicArticleDisplay(article, runtimeBase, theme);
+  if (resolved.pageUrls?.length || !resolved.html.trim()) {
+    return resolved;
+  }
+  return {
+    pageUrls: null,
+    html: prepareComicStreamSlotHtml(resolved.html),
+  };
+}
+
+export function isComicStreamSlotReady(content: {
+  pageUrls: string[] | null;
+  html: string;
+}): boolean {
+  return Boolean(content.pageUrls?.length || content.html.trim());
+}
+
+export function comicStreamContentSignature(
+  article: Article,
+  runtimeBase: string | null,
+  theme: ThemeMode,
+): string {
+  const { pageUrls, html } = resolveComicStreamSlotContent(article, runtimeBase, theme);
+  if (pageUrls?.length) return pageUrls.join("\n");
+  return comicChapterStreamSignature(html);
+}
 
 /** 1×1 transparent GIF — keeps layout without triggering network loads. */
 export const COMIC_LAZY_PLACEHOLDER_SRC =
@@ -70,10 +165,10 @@ function resolveComicImageUrl(img: Element): string {
   return "";
 }
 
-function isComicLazyImageActivated(img: HTMLImageElement): boolean {
-  const dataSrc = img.getAttribute("data-src")?.trim() ?? "";
-  if (!dataSrc) return true;
-  return img.getAttribute("src")?.trim() === dataSrc;
+function resolveComicRuntimeBase(
+  runtimeBase: string | null | undefined,
+): string | null {
+  return runtimeBase ?? getCachedRuntimeBaseUrl();
 }
 
 function startComicLazyImageLoad(
@@ -81,7 +176,9 @@ function startComicLazyImageLoad(
   dataSrc: string,
   runtimeBase: string | null | undefined,
 ): void {
-  if (isComicLazyImageActivated(img) || img.dataset.comicLazyLoading === "true") return;
+  const base = resolveComicRuntimeBase(runtimeBase);
+  if (isTauriRuntime() && !base) return;
+  if (isComicLazyImageActivated(img, base) || img.dataset.comicLazyLoading === "true") return;
 
   img.dataset.comicLazyLoading = "true";
   void acquireComicLazySlot().then(() => {
@@ -97,13 +194,43 @@ function startComicLazyImageLoad(
     };
     img.addEventListener("load", done, { once: true });
     img.addEventListener("error", done, { once: true });
-    img.src = dataSrc;
-    bindSingleArticleContentImage(img, runtimeBase);
+    delete img.dataset.orbitImgRetry;
+    const displaySrc = comicPageImageUrl(base, dataSrc);
+    bindSingleArticleContentImage(img, base);
+    img.src = displaySrc;
   });
 }
 
 export function collectComicLazyImages(root: ParentNode): HTMLImageElement[] {
   return Array.from(root.querySelectorAll<HTMLImageElement>("img[data-comic-lazy]"));
+}
+
+function resolveComicViewportMetrics(scrollRoot: HTMLElement | null): {
+  focusLine: number;
+  rootTop: number;
+  rootBottom: number;
+} {
+  if (scrollRoot) {
+    const rootRect = scrollRoot.getBoundingClientRect();
+    return {
+      focusLine: rootRect.top + rootRect.height * 0.4,
+      rootTop: rootRect.top,
+      rootBottom: rootRect.bottom,
+    };
+  }
+  return {
+    focusLine: window.innerHeight * 0.4,
+    rootTop: 0,
+    rootBottom: window.innerHeight,
+  };
+}
+
+function isComicImageInViewport(
+  rect: DOMRect,
+  rootTop: number,
+  rootBottom: number,
+): boolean {
+  return rect.bottom > rootTop && rect.top < rootBottom;
 }
 
 /** 0-based index of the comic page nearest the viewport focus line. */
@@ -117,19 +244,27 @@ export function resolveComicLazyPageIndex(
   }
   if (images.length === 0) return 0;
 
-  const rootRect = scrollRoot?.getBoundingClientRect();
-  const focusLine = rootRect
-    ? rootRect.top + rootRect.height * 0.4
-    : window.innerHeight * 0.4;
+  const { focusLine, rootTop, rootBottom } = resolveComicViewportMetrics(scrollRoot);
 
-  let currentIndex = 0;
+  let currentIndex = -1;
+  let hasInViewport = false;
   for (let i = 0; i < images.length; i++) {
     const rect = images[i].getBoundingClientRect();
+    if (rect.height <= 1) continue;
+    if (!isComicImageInViewport(rect, rootTop, rootBottom)) {
+      if (rect.bottom <= rootTop) {
+        currentIndex = i;
+      }
+      continue;
+    }
+    hasInViewport = true;
     if (rect.top <= focusLine) {
       currentIndex = i;
     }
   }
-  return currentIndex;
+
+  if (!hasInViewport) return -1;
+  return Math.max(0, currentIndex);
 }
 
 /** Load comic page images near the viewport (or a resume target) and skip the rest. */
@@ -146,6 +281,7 @@ export function syncComicLazyImages(
     scrollRoot,
     options?.focusPageIndex,
   );
+  if (currentIndex < 0) return;
   const loadStart = Math.max(0, currentIndex - COMIC_LAZY_PRELOAD_BEFORE);
   const loadEnd = Math.min(images.length - 1, currentIndex + COMIC_LAZY_PRELOAD_AFTER);
 
@@ -155,6 +291,79 @@ export function syncComicLazyImages(
     if (!dataSrc) continue;
     startComicLazyImageLoad(img, dataSrc, options?.runtimeBase);
   }
+}
+
+/** Eagerly load the first N pages of a chapter (for seamless chapter transitions). */
+export function syncComicLazyImagesLeading(
+  chapterRoot: HTMLElement,
+  count: number,
+  runtimeBase?: string | null,
+): void {
+  const images = collectComicLazyImages(chapterRoot);
+  if (images.length === 0) return;
+  const end = Math.min(Math.max(0, count), images.length);
+  for (let i = 0; i < end; i++) {
+    const dataSrc = images[i].getAttribute("data-src") ?? "";
+    if (!dataSrc) continue;
+    startComicLazyImageLoad(images[i], dataSrc, runtimeBase);
+  }
+}
+
+/** True when the reader has scrolled within `thresholdPx` of a chapter block's end. */
+export function isNearComicChapterEnd(
+  chapterBlock: HTMLElement,
+  scrollRoot: HTMLElement,
+  thresholdPx = COMIC_CHAPTER_PREFETCH_DISTANCE_PX,
+): boolean {
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const blockRect = chapterBlock.getBoundingClientRect();
+  return blockRect.bottom - rootRect.bottom <= thresholdPx;
+}
+
+function findVisibleComicChapterBlockInStream(
+  streamRoot: HTMLElement,
+  scrollRoot: HTMLElement | null,
+): HTMLElement | null {
+  const blocks = Array.from(
+    streamRoot.querySelectorAll<HTMLElement>("[data-comic-chapter]"),
+  );
+  if (blocks.length === 0) return null;
+
+  const { focusLine, rootTop, rootBottom } = resolveComicViewportMetrics(scrollRoot);
+  let bestBlock: HTMLElement | null = null;
+  let bestTop = -Infinity;
+
+  for (const block of blocks) {
+    const rect = block.getBoundingClientRect();
+    if (!isComicImageInViewport(rect, rootTop, rootBottom)) continue;
+    if (rect.top <= focusLine && rect.top > bestTop) {
+      bestTop = rect.top;
+      bestBlock = block;
+    }
+  }
+
+  if (bestBlock) return bestBlock;
+
+  for (const block of blocks) {
+    const rect = block.getBoundingClientRect();
+    if (isComicImageInViewport(rect, rootTop, rootBottom)) {
+      return block;
+    }
+  }
+
+  return null;
+}
+
+/** Load page images for the chapter block currently in view (stream mode). */
+export function syncComicStreamVisibleChapterImages(
+  streamRoot: HTMLElement,
+  scrollRoot: HTMLElement | null,
+  options?: { runtimeBase?: string | null },
+): void {
+  const visibleBlock = findVisibleComicChapterBlockInStream(streamRoot, scrollRoot);
+  const content = visibleBlock?.querySelector<HTMLElement>(".article-content");
+  if (!content) return;
+  syncComicLazyImages(content, scrollRoot, options);
 }
 
 export function syncComicLazyImagesForChapterPage(
@@ -170,10 +379,6 @@ export function syncComicLazyImagesForChapterPage(
   const focusIndex = allImages.indexOf(focusImg);
   if (focusIndex < 0) return;
   syncComicLazyImages(streamRoot, null, { focusPageIndex: focusIndex, runtimeBase });
-}
-
-export function isComicReaderHtml(html: string): boolean {
-  return html.includes("comic-reader");
 }
 
 export function formatComicChapterToolbarSubtitle(options: {
@@ -235,8 +440,11 @@ export function collectComicPageImageElements(reader: ParentNode): HTMLImageElem
   );
 }
 
-/** Stable signature for flattened stream HTML — skip DOM rebuild when URLs are unchanged. */
+/** Stable signature for stream chapter content — skip rebuild when URLs are unchanged. */
 export function comicChapterStreamSignature(contentHtml: string): string {
+  const pages = parseComicPageUrls(contentHtml);
+  if (pages) return pages.join("\n");
+
   if (!contentHtml.trim() || typeof DOMParser === "undefined") {
     return contentHtml.trim();
   }
@@ -254,19 +462,21 @@ function activateComicImage(
   runtimeBase: string | null | undefined,
 ): void {
   if (!dataSrc) return;
+  const base = resolveComicRuntimeBase(runtimeBase);
 
   if (img.hasAttribute("data-comic-lazy")) {
-    startComicLazyImageLoad(img, dataSrc, runtimeBase);
+    startComicLazyImageLoad(img, dataSrc, base);
     return;
   }
 
-  if (img.getAttribute("src")?.trim() === dataSrc) {
-    bindSingleArticleContentImage(img, runtimeBase);
+  const displaySrc = comicPageImageUrl(base, dataSrc);
+  if (img.getAttribute("src")?.trim() === displaySrc) {
+    bindSingleArticleContentImage(img, base);
     return;
   }
 
-  img.src = dataSrc;
-  bindSingleArticleContentImage(img, runtimeBase);
+  bindSingleArticleContentImage(img, base);
+  img.src = displaySrc;
 }
 
 /** Eagerly load prev/next nav thumbnails; lazy-load page images near the viewport. */
@@ -311,6 +521,7 @@ export function prepareChapterDisplayContent(
   theme: ThemeMode,
 ): string {
   if (!article.content?.trim()) return "";
+  if (parseComicPageUrls(article.content)) return "";
   let content = article.content;
   if (article.type === "text" && article.image) {
     content = dedupeCoverImageFromContent(article.image, content);
@@ -351,6 +562,7 @@ export function flattenComicChapterImagesHtml(contentHtml: string): string {
 
 /** Flatten plugin comic HTML to sequential page images; null when no pages found. */
 export function prepareComicFlatPagesHtml(contentHtml: string): string | null {
+  if (parseComicPageUrls(contentHtml)) return null;
   if (!contentHtml.trim() || !isComicReaderHtml(contentHtml)) return null;
   const flat = flattenComicChapterImagesHtml(contentHtml);
   if (!flat.trim()) return null;
@@ -360,11 +572,36 @@ export function prepareComicFlatPagesHtml(contentHtml: string): string | null {
   return collectComicPageImageElements(doc.body).length > 0 ? flat : null;
 }
 
-/** Flatten to page images when possible; otherwise keep the original HTML. */
+/** Keep plugin HTML as-is for stream slots (no flattening). */
 export function prepareComicStreamSlotHtml(contentHtml: string): string {
-  if (!contentHtml.trim()) return "";
-  const flat = prepareComicFlatPagesHtml(contentHtml);
-  return flat ?? contentHtml;
+  const trimmed = contentHtml.trim();
+  if (!trimmed || typeof DOMParser === "undefined") {
+    return trimmed;
+  }
+
+  const doc = new DOMParser().parseFromString(trimmed, "text/html");
+  const body = doc.body;
+
+  const hasComicPages = collectComicPageImageElements(body).length > 0;
+  if (!hasComicPages) {
+    return trimmed;
+  }
+
+  // Some plugin chapters inject a sticky "简介" card before pages.
+  // In stream mode this card can persist across chapter boundaries.
+  let removed = false;
+  for (const detailBody of body.querySelectorAll<HTMLElement>(".comic-detail-body")) {
+    const text = (detailBody.textContent ?? "").replace(/\s+/g, "");
+    if (!text) continue;
+    const looksLikeIntro = /来源|打开原网页|简介|介绍/.test(text);
+    if (!looksLikeIntro) continue;
+
+    const removableRoot = detailBody.closest(".comic-detail") ?? detailBody;
+    removableRoot.remove();
+    removed = true;
+  }
+
+  return removed ? body.innerHTML.trim() : trimmed;
 }
 
 const MANGA_INTRO_NAV_RE = /^(简介|介绍|章节|目录|推荐|评论|相关|资讯|话|卷)/;
@@ -575,18 +812,24 @@ function countMangaRemainingPagesFromImages(
   images: HTMLImageElement[],
   scrollRoot: HTMLElement,
 ): number {
-
   const rootRect = scrollRoot.getBoundingClientRect();
   const focusLine = rootRect.top + rootRect.height * 0.55;
 
-  let currentIndex = 0;
+  let currentIndex = -1;
   for (let i = 0; i < images.length; i++) {
     const rect = images[i].getBoundingClientRect();
+    if (rect.height <= 1) continue;
+    if (rect.bottom <= rootRect.top) {
+      currentIndex = i;
+      continue;
+    }
+    if (rect.top >= rootRect.bottom) break;
     if (rect.top <= focusLine) {
       currentIndex = i;
     }
   }
 
+  if (currentIndex < 0) return images.length - 1;
   return images.length - 1 - currentIndex;
 }
 
