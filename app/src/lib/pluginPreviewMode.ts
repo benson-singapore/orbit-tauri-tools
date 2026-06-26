@@ -26,15 +26,25 @@ export function defaultPluginPreviewMode(
   }
 }
 
+export function isPreviewModeAllowedForPlugin(
+  mode: PluginPreviewMode,
+  plugin?: Pick<Plugin, "mediaType"> | null,
+): boolean {
+  if (mode === "waterfall") {
+    return plugin?.mediaType === "image";
+  }
+  if (mode === "socialFeed") {
+    return plugin?.mediaType === "social";
+  }
+  return true;
+}
+
 export function resolvePluginPreviewMode(
   plugin: Pick<Plugin, "mediaType"> | undefined | null,
   stored: PluginPreviewMode | null | undefined,
 ): PluginPreviewMode {
   const mode = stored ?? defaultPluginPreviewMode(plugin);
-  if (mode === "waterfall" && plugin?.mediaType !== "image") {
-    return defaultPluginPreviewMode(plugin);
-  }
-  if (mode === "socialFeed" && plugin?.mediaType !== "social") {
+  if (!isPreviewModeAllowedForPlugin(mode, plugin)) {
     return defaultPluginPreviewMode(plugin);
   }
   if (mode === "videoWall") {

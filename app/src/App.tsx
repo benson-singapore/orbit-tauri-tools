@@ -105,6 +105,7 @@ import { pluginNeedsVariablesConfiguration } from "@/lib/pluginVariablesReady";
 import {
   getStoredPluginPreviewMode,
   persistPluginPreviewMode,
+  isPreviewModeAllowedForPlugin,
   resolvePluginPreviewMode,
 } from "@/lib/pluginPreviewMode";
 import {
@@ -612,7 +613,8 @@ export default function App() {
   const isSplitPreviewMode = isSplitBroadcastMode || isSplitDetailMode;
   const isSplitPaneLayout = isSplitPreviewMode && activePlugin !== "all";
   const isVideoWallPreviewMode = pluginPreviewMode === "videoWall";
-  const isSocialFeedPreviewMode = pluginPreviewMode === "socialFeed";
+  const isSocialFeedPreviewMode = pluginPreviewMode === "socialFeed"
+    && isSocialPlugin(activePluginMeta);
   const isGridPageMode = isGridPreviewMode && gridDetailViewMode === "page";
   const isPageDetailView = isGridPageMode && gridPageDetailOpen;
   const isWallVideoActive = isWallVideoPreviewMode(pluginPreviewMode);
@@ -1718,6 +1720,7 @@ export default function App() {
 
   const handleSelectPreviewMode = useCallback((mode: PluginPreviewMode) => {
     if (activePlugin === "all") return;
+    if (!isPreviewModeAllowedForPlugin(mode, activePluginMeta)) return;
     if (mode === "videoWall" || mode === "split" || mode === "splitDetail") {
       setReaderSessions(prev =>
         prev.map(session => {
@@ -1748,7 +1751,7 @@ export default function App() {
       persistPluginPreviewMode(activePlugin, mode);
     }
     setPreviewModeMenuOpen(false);
-  }, [activePlugin]);
+  }, [activePlugin, activePluginMeta]);
 
   const handleVideoWallExpandSession = useCallback((sessionId: string) => {
     if (pluginPreviewMode !== "split") {
@@ -1767,6 +1770,14 @@ export default function App() {
       setPluginPreviewMode("grid");
     }
   }, [pluginPreviewMode, showVideoWallPreviewOption, videoWallSessions.length]);
+
+  useEffect(() => {
+    if (activePlugin === "all") return;
+    const resolved = resolvePluginPreviewMode(activePluginMeta, pluginPreviewMode);
+    if (resolved !== pluginPreviewMode) {
+      setPluginPreviewMode(resolved);
+    }
+  }, [activePlugin, activePluginMeta, pluginPreviewMode]);
 
   const handleGridColumnCountChange = useCallback((count: GridColumnCount) => {
     setGridColumnCount(count);
@@ -2906,7 +2917,11 @@ export default function App() {
                           >
                             <Icon name="layers" className="w-3.5 h-3.5" />
                             <span className="hidden sm:inline">
-                              {previewModeLabel(pluginPreviewMode)}
+                              {previewModeLabel(
+                                activePlugin === "all"
+                                  ? "reader"
+                                  : resolvePluginPreviewMode(activePluginMeta, pluginPreviewMode),
+                              )}
                             </span>
                           </button>
                           <button
@@ -2952,7 +2967,7 @@ export default function App() {
                                 布局模式
                               </div>
                               {previewModeOptionsForPlugin(activePluginMeta, showVideoWallPreviewOption).map(([mode, label, desc]) => {
-                                const isActive = pluginPreviewMode === mode;
+                                const isActive = resolvePluginPreviewMode(activePluginMeta, pluginPreviewMode) === mode;
                                 return (
                                   <button
                                     key={mode}
