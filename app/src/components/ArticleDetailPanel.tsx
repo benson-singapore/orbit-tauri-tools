@@ -537,7 +537,11 @@ export function ArticleDetailPanel({
                 {article.type === "video" ? (
                   <div className="relative aspect-video bg-neutral-950 flex flex-col items-center justify-center text-white">
                     {youTubeVideoId ? (
-                      <YouTubeEmbed videoId={youTubeVideoId} title={article.title} />
+                      <YouTubeEmbed
+                        runtimeBase={runtimeBase}
+                        videoId={youTubeVideoId}
+                        title={article.title}
+                      />
                     ) : article.videoUrl ? (
                       <video
                         src={article.videoUrl}

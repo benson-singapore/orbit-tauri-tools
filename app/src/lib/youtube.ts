@@ -1,4 +1,7 @@
 import type { Article } from "@/types";
+import { isTauriRuntime } from "@/lib/appInfo";
+import { getCachedRuntimeBaseUrl } from "@/lib/runtime";
+import { runtimeFetch } from "@/lib/runtimeFetch";
 
 const YOUTUBE_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
 const YOUTUBE_HOST_RE = /(?:youtube\.com|youtu\.be|youtube-nocookie\.com)/i;
@@ -45,17 +48,120 @@ export function resolveYouTubeVideoId(
   );
 }
 
-export function youtubeEmbedUrl(videoId: string, startSeconds?: number): string {
+export function resolveRuntimeBaseForEmbed(
+  runtimeBase?: string | null,
+): string | null {
+  const explicit = runtimeBase?.trim();
+  if (explicit) return explicit;
+  return getCachedRuntimeBaseUrl();
+}
+
+/** Returns true when the runtime exposes the YouTube native stream route. */
+export async function verifyYouTubeRuntimePlayback(runtimeBase: string): Promise<boolean> {
+  const base = runtimeBase.replace(/\/$/, "");
+  try {
+    const res = await runtimeFetch(`${base}/v1/youtube/stream?v=invalid`);
+    return res.status === 400;
+  } catch {
+    return false;
+  }
+}
+
+/** @deprecated use verifyYouTubeRuntimePlayback */
+export async function verifyYouTubeRuntimeEmbed(runtimeBase: string): Promise<boolean> {
+  return verifyYouTubeRuntimePlayback(runtimeBase);
+}
+
+export interface YouTubeStreamInfo {
+  streamUrl: string;
+  quality: string;
+}
+
+export async function fetchYouTubeStream(
+  runtimeBase: string,
+  videoId: string,
+): Promise<YouTubeStreamInfo | null> {
+  const base = runtimeBase.replace(/\/$/, "");
+  try {
+    const res = await runtimeFetch(`${base}/v1/youtube/stream?v=${encodeURIComponent(videoId)}`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      ok?: boolean;
+      streamUrl?: string;
+      quality?: string;
+    };
+    if (!data.ok || !data.streamUrl?.trim()) return null;
+    return {
+      streamUrl: data.streamUrl.trim(),
+      quality: data.quality?.trim() || "auto",
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function youtubeSimpleEmbedUrl(videoId: string, startSeconds?: number): string {
+  const startParam =
+    startSeconds !== undefined && startSeconds > 0
+      ? `?start=${Math.floor(startSeconds)}`
+      : "";
+  return `https://www.youtube.com/embed/${videoId}${startParam}`;
+}
+
+export function youtubeEmbedUrl(
+  videoId: string,
+  startSeconds?: number,
+  options?: { enableJsApi?: boolean },
+): string {
+  const enableJsApi = options?.enableJsApi ?? false;
   const origin =
-    typeof window !== "undefined" ? encodeURIComponent(window.location.origin) : "";
+    enableJsApi && typeof window !== "undefined"
+      ? encodeURIComponent(window.location.origin)
+      : "";
   const originParam = origin ? `&origin=${origin}` : "";
   const startParam =
     startSeconds !== undefined && startSeconds > 0
       ? `&start=${Math.floor(startSeconds)}`
       : "";
+  const jsApiParam = enableJsApi ? "&enablejsapi=1" : "";
   // fs=0 hides YouTube's native fullscreen control (broken in macOS WKWebView).
-  // enablejsapi=1 allows postMessage play/pause/seek after DOM reparent (e.g. dock to wall).
-  return `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&fs=0&enablejsapi=1${originParam}${startParam}`;
+  return `https://www.youtube.com/embed/${videoId}?rel=0&modestbranding=1&fs=0${jsApiParam}${originParam}${startParam}`;
+}
+
+export function youtubeRuntimeEmbedUrl(
+  runtimeBase: string,
+  videoId: string,
+  options?: { startSeconds?: number; enableJsApi?: boolean; title?: string },
+): string {
+  const base = runtimeBase.replace(/\/$/, "");
+  const params = new URLSearchParams({ v: videoId });
+  if (options?.enableJsApi) {
+    params.set("jsapi", "1");
+  }
+  if (options?.startSeconds !== undefined && options.startSeconds > 0) {
+    params.set("start", String(Math.floor(options.startSeconds)));
+  }
+  if (options?.title?.trim()) {
+    params.set("title", options.title.trim());
+  }
+  return `${base}/v1/embed/youtube?${params.toString()}`;
+}
+
+export function resolveYouTubeEmbedSrc(
+  runtimeBase: string | null | undefined,
+  videoId: string,
+  options?: { startSeconds?: number; enableJsApi?: boolean; title?: string },
+): string | null {
+  const base = resolveRuntimeBaseForEmbed(runtimeBase);
+  if (base) {
+    return youtubeRuntimeEmbedUrl(base, videoId, options);
+  }
+  if (import.meta.env.VITE_ORBIT_RUNTIME_URL || isTauriRuntime()) {
+    return null;
+  }
+  return youtubeEmbedUrl(videoId, options?.startSeconds, {
+    enableJsApi: options?.enableJsApi,
+  });
 }
 
 export function isVideoPluginChannel(

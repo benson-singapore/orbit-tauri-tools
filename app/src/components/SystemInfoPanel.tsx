@@ -1,10 +1,23 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { marked } from "marked";
 import { isDarkTheme } from "@/lib/themeMode";
 import {
+  AVAILABLE_EXPERIENCE_MODES,
   EXPERIENCE_MODE_LABELS,
+  normalizeExperienceMode,
   type ExperienceMode,
 } from "@/lib/experienceMode";
 import { Icon } from "@/components/Icon";
+import {
+  checkAppUpdate,
+  fetchReleaseHistory,
+  fetchReleasePlatforms,
+  resolveCurrentPlatformInfo,
+  type AppReleaseItem,
+  type AppUpdateCheckResult,
+  type AppUpdateSummary,
+  type ReleasePlatform,
+} from "@/lib/appUpdates";
 import {
   detectBuildModeLabel,
   detectPlatformLabel,
@@ -23,6 +36,72 @@ const SECTIONS: { id: SystemInfoSection; label: string; icon: string }[] = [
   { id: "runtime", label: "运行环境", icon: "terminal" },
   { id: "updates", label: "软件更新", icon: "download" },
 ];
+
+marked.setOptions({ gfm: true, breaks: true });
+
+function formatReleaseChannelLabel(channel?: string | null): string {
+  if (!channel) return "未知渠道";
+  if (channel === "stable") return "稳定版";
+  if (channel === "beta") return "测试版";
+  if (channel === "nightly") return "夜间版";
+  return channel;
+}
+
+function formatLocalTime(value?: string | null): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return date.toLocaleString("zh-CN", {
+    hour12: false,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function formatRelativeCheckTime(value?: string | null): string {
+  if (!value) return "—";
+  const ms = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return formatLocalTime(value);
+  if (ms < 60_000) return "刚刚";
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 60) return `${minutes} 分钟前`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} 小时前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} 天前`;
+  return formatLocalTime(value);
+}
+
+function ReleaseNotes({
+  notes,
+  isDark,
+  collapsed = false,
+}: {
+  notes?: string | null;
+  isDark: boolean;
+  collapsed?: boolean;
+}) {
+  const html = useMemo(() => {
+    if (!notes?.trim()) return "";
+    return marked.parse(notes) as string;
+  }, [notes]);
+
+  if (!html) {
+    return <p className={`text-xs leading-relaxed ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>暂无更新说明。</p>;
+  }
+
+  return (
+    <div
+      className={`prose prose-sm max-w-none text-xs ${
+        isDark ? "prose-invert prose-p:text-neutral-300 prose-strong:text-neutral-100" : "prose-p:text-neutral-700"
+      } ${collapsed ? "line-clamp-3 overflow-hidden" : ""}`}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
 
 function InfoRow({
   label,
@@ -112,7 +191,7 @@ function ExperienceModeRow({
   isDark: boolean;
   onChange?: (mode: ExperienceMode) => void;
 }) {
-  const modes: ExperienceMode[] = ["safe", "full"];
+  const modes = AVAILABLE_EXPERIENCE_MODES;
 
   return (
     <div
@@ -139,7 +218,7 @@ function ExperienceModeRow({
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                onClick={() => onChange(mode)}
+                onClick={() => onChange(normalizeExperienceMode(mode))}
                 className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
                   selected
                     ? "bg-[#5856D6] text-white shadow-sm"
@@ -220,6 +299,8 @@ interface SystemInfoPanelProps {
   onExperienceModeChange?: (mode: ExperienceMode) => void;
   installedPluginCount: number;
   runningPluginCount: number;
+  updateSummary?: AppUpdateSummary | null;
+  onUpdateSummaryChange?: (summary: AppUpdateSummary) => void;
 }
 
 export function SystemInfoPanel({
@@ -228,6 +309,8 @@ export function SystemInfoPanel({
   onExperienceModeChange,
   installedPluginCount,
   runningPluginCount,
+  updateSummary,
+  onUpdateSummaryChange,
 }: SystemInfoPanelProps) {
   const [activeSection, setActiveSection] = useState<SystemInfoSection>("overview");
   const [loading, setLoading] = useState(true);
@@ -237,10 +320,19 @@ export function SystemInfoPanel({
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatusResponse | null>(null);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const [runtimeBaseUrl, setRuntimeBaseUrl] = useState<string | null>(null);
+  const [releasePlatforms, setReleasePlatforms] = useState<ReleasePlatform[]>([]);
+  const [releaseHistory, setReleaseHistory] = useState<AppReleaseItem[]>([]);
+  const [updateInfo, setUpdateInfo] = useState<AppUpdateCheckResult | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [platformId, setPlatformId] = useState<string | null>(null);
+  const [lastCheckedAt, setLastCheckedAt] = useState<string | null>(null);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [expandedReleaseIds, setExpandedReleaseIds] = useState<Set<string>>(new Set());
 
   const isDark = isDarkTheme(theme);
   const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-100";
   const mutedBg = isDark ? "bg-neutral-900/40" : "bg-neutral-50";
+  const hasAvailableUpdate = updateInfo?.updateAvailable ?? updateSummary?.updateAvailable ?? false;
 
   const openExternalUrl = useCallback(async (url: string) => {
     try {
@@ -253,27 +345,91 @@ export function SystemInfoPanel({
     window.open(url, "_blank", "noopener,noreferrer");
   }, []);
 
+  const notifyUpdateSummary = useCallback((summary: AppUpdateSummary) => {
+    onUpdateSummaryChange?.(summary);
+  }, [onUpdateSummaryChange]);
+
+  const loadUpdateData = useCallback(async (info: AppInfo) => {
+    notifyUpdateSummary({
+      updateAvailable: false,
+      loading: true,
+      platformId,
+      latestVersion: updateSummary?.latestVersion ?? null,
+      channel: updateSummary?.channel ?? null,
+      error: null,
+    });
+
+    let resolvedPlatformId: string | null = null;
+    try {
+      const currentPlatform = await resolveCurrentPlatformInfo();
+      resolvedPlatformId = currentPlatform.id;
+      setPlatformId(currentPlatform.id);
+
+      const [platforms, history, update] = await Promise.all([
+        fetchReleasePlatforms(),
+        fetchReleaseHistory(),
+        checkAppUpdate(info.version, currentPlatform.id),
+      ]);
+
+      setReleasePlatforms(platforms);
+      setReleaseHistory(history);
+      setUpdateInfo(update);
+      setUpdateError(null);
+      const checkedAt = new Date().toISOString();
+      setLastCheckedAt(checkedAt);
+      notifyUpdateSummary({
+        updateAvailable: update.updateAvailable,
+        loading: false,
+        platformId: currentPlatform.id,
+        latestVersion: update.latest?.appVersion ?? null,
+        channel: update.channel,
+        error: null,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setReleasePlatforms([]);
+      setReleaseHistory([]);
+      setUpdateInfo(null);
+      setUpdateError(message);
+      const checkedAt = new Date().toISOString();
+      setLastCheckedAt(checkedAt);
+      notifyUpdateSummary({
+        updateAvailable: false,
+        loading: false,
+        platformId: resolvedPlatformId ?? platformId,
+        latestVersion: null,
+        channel: null,
+        error: message,
+      });
+    }
+  }, [notifyUpdateSummary, platformId, updateSummary?.channel, updateSummary?.latestVersion]);
+
   const loadData = useCallback(async () => {
     const info = await loadAppInfo();
     setAppInfo(info);
 
-    try {
-      const baseUrl = await waitForRuntimeReady();
-      setRuntimeBaseUrl(baseUrl);
-      const [h, status] = await Promise.all([
-        fetchHealth(baseUrl),
-        fetchStatus(baseUrl),
-      ]);
-      setHealth(h);
-      setRuntimeStatus(status);
-      setRuntimeError(null);
-    } catch (err) {
-      setHealth(null);
-      setRuntimeStatus(null);
-      setRuntimeBaseUrl(null);
-      setRuntimeError(err instanceof Error ? err.message : String(err));
-    }
-  }, []);
+    await Promise.allSettled([
+      loadUpdateData(info),
+      (async () => {
+        try {
+          const baseUrl = await waitForRuntimeReady();
+          setRuntimeBaseUrl(baseUrl);
+          const [h, status] = await Promise.all([
+            fetchHealth(baseUrl),
+            fetchStatus(baseUrl),
+          ]);
+          setHealth(h);
+          setRuntimeStatus(status);
+          setRuntimeError(null);
+        } catch (err) {
+          setHealth(null);
+          setRuntimeStatus(null);
+          setRuntimeBaseUrl(null);
+          setRuntimeError(err instanceof Error ? err.message : String(err));
+        }
+      })(),
+    ]);
+  }, [loadUpdateData]);
 
   useEffect(() => {
     let cancelled = false;
@@ -300,6 +456,21 @@ export function SystemInfoPanel({
   const dbOk = runtimeStatus?.db === "ready";
   const swaggerUrl = runtimeBaseUrl ? `${runtimeBaseUrl.replace(/\/+$/, "")}/swagger/` : null;
   const frontendWebUrl = resolveBrowserFrontendUrl();
+  const currentPlatformLabel = useMemo(() => {
+    if (!platformId) return "—";
+    return releasePlatforms.find(item => item.id === platformId)?.label ?? platformId;
+  }, [platformId, releasePlatforms]);
+  const latestRelease = updateInfo?.latest ?? null;
+  const currentReleaseVersion = updateInfo?.current.appVersion ?? appInfo?.version ?? "—";
+  const historyPageSize = 5;
+  const historyTotalPages = Math.max(1, Math.ceil(releaseHistory.length / historyPageSize));
+  const historyStart = (historyPage - 1) * historyPageSize;
+  const historyItems = releaseHistory.slice(historyStart, historyStart + historyPageSize);
+
+  useEffect(() => {
+    setHistoryPage(1);
+    setExpandedReleaseIds(new Set());
+  }, [releaseHistory]);
 
   const renderOverview = () => (
     <div className="space-y-5">
@@ -354,6 +525,19 @@ export function SystemInfoPanel({
         <InfoRow label="Runtime 版本" value={runtimeStatus?.runtime ?? health?.version ?? "—"} isDark={isDark} />
         <InfoRow label="Tauri 版本" value={appInfo?.tauriVersion ?? "—"} isDark={isDark} />
         <InfoRow label="运行平台" value={detectPlatformLabel()} isDark={isDark} />
+        <InfoRow
+          label="更新状态"
+          value={
+            updateSummary?.loading
+              ? "检查中"
+              : hasAvailableUpdate
+                ? `发现新版本 v${latestRelease?.appVersion ?? "—"}`
+                : updateError
+                  ? "检查失败"
+                  : "已是最新版本"
+          }
+          isDark={isDark}
+        />
       </SectionCard>
     </div>
   );
@@ -372,6 +556,7 @@ export function SystemInfoPanel({
       <InfoRow label="运行环境" value={appInfo?.isTauri ? "Tauri 桌面应用" : "浏览器预览"} isDark={isDark} />
       <InfoRow label="构建模式" value={detectBuildModeLabel()} isDark={isDark} />
       <InfoRow label="运行平台" value={detectPlatformLabel()} isDark={isDark} />
+      <InfoRow label="更新平台" value={currentPlatformLabel} isDark={isDark} />
     </SectionCard>
   );
 
@@ -459,29 +644,61 @@ export function SystemInfoPanel({
       >
         <div className="flex-1 min-w-0">
           <h4 className="text-sm font-semibold">当前版本</h4>
-          <p className="text-2xl font-bold mt-2 text-[#5856D6]">v{appInfo?.version ?? "—"}</p>
+          <p className="text-2xl font-bold mt-2 text-[#5856D6]">v{currentReleaseVersion}</p>
           <p className={`text-xs mt-2 ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-            发布渠道：稳定版
+            发布渠道：{formatReleaseChannelLabel(updateInfo?.channel)}
           </p>
         </div>
-        <div className="shrink-0">
-          <StatusBadge ok label="已是最新版本" />
+        <div className="shrink-0 flex items-center gap-2">
+          <StatusBadge
+            ok={!hasAvailableUpdate && !updateError}
+            label={
+              updateSummary?.loading
+                ? "正在检查更新"
+                : hasAvailableUpdate
+                  ? `可更新到 v${latestRelease?.appVersion ?? "—"}`
+                  : updateError
+                    ? "检查更新失败"
+                    : "已是最新版本"
+            }
+          />
+          <button
+            type="button"
+            onClick={() => void openExternalUrl("https://orbit-plugins-resource.pages.dev/")}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#5856D6] text-white hover:bg-[#4c4ac0] transition-colors"
+          >
+            <Icon name="share" className="w-3.5 h-3.5" />
+            下载
+          </button>
         </div>
       </div>
 
       <SectionCard
         title="更新说明"
-        description="自动更新功能即将推出"
+        description={hasAvailableUpdate ? "已获取最新版本信息" : "当前版本与最新版本对比结果"}
         isDark={isDark}
         subtleBorder={subtleBorder}
       >
-        <div className={`px-0 py-3 text-xs leading-relaxed ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-          <p>当前版本暂无可用更新。后续将支持自动检测新版本、查看更新日志与一键升级。</p>
-          <ul className="mt-3 space-y-1.5 list-disc list-inside">
-            <li>应用版本：{appInfo?.version ?? "—"}</li>
-            <li>Runtime 版本：{runtimeStatus?.runtime ?? "—"}</li>
-            <li>上次检查：{loading ? "—" : "刚刚"}</li>
-          </ul>
+        <div className={`px-0 py-3 space-y-4 text-xs leading-relaxed ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+          {updateError ? (
+            <p className="text-amber-500">更新检查失败：{updateError}</p>
+          ) : hasAvailableUpdate ? (
+            <>
+              <p>
+                检测到新版本 <span className="font-semibold text-[#5856D6]">v{latestRelease?.appVersion ?? "—"}</span>，
+                当前平台可下载包已匹配为 <span className="font-mono">{currentPlatformLabel}</span>。
+              </p>
+              <ReleaseNotes notes={latestRelease?.releaseNotes} isDark={isDark} />
+            </>
+          ) : (
+            <p>当前版本暂无可用更新，已经根据当前平台完成版本检查。</p>
+          )}
+          <div className="space-y-1.5">
+            <InfoRow label="应用版本" value={appInfo?.version ?? "—"} isDark={isDark} />
+            <InfoRow label="Runtime 版本" value={runtimeStatus?.runtime ?? health?.version ?? "—"} isDark={isDark} />
+            <InfoRow label="检查平台" value={currentPlatformLabel} isDark={isDark} />
+            <InfoRow label="上次检查" value={formatRelativeCheckTime(lastCheckedAt)} isDark={isDark} />
+          </div>
         </div>
       </SectionCard>
 
@@ -491,17 +708,84 @@ export function SystemInfoPanel({
         subtleBorder={subtleBorder}
       >
         <div className="py-3 space-y-4">
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold">v1.0.0</span>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${mutedBg} text-neutral-500`}>
-                当前
-              </span>
+          {historyItems.length > 0 ? historyItems.map(item => (
+            <div key={item.id}>
+              <div className="flex items-center flex-wrap gap-2">
+                <span className="text-xs font-semibold">v{item.appVersion}</span>
+                {item.isCurrent ? (
+                  <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${mutedBg} text-neutral-500`}>
+                    当前
+                  </span>
+                ) : null}
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-md ${mutedBg} text-neutral-500`}>
+                  {formatReleaseChannelLabel(item.releaseChannel)}
+                </span>
+              </div>
+              <p className={`text-[11px] mt-1.5 ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                发布时间：{formatLocalTime(item.publishedAt)} · Runtime：{item.runtimeVersion || "—"}
+              </p>
+              <div className="mt-2">
+                <ReleaseNotes
+                  notes={item.releaseNotes}
+                  isDark={isDark}
+                  collapsed={!expandedReleaseIds.has(item.id)}
+                />
+                {(item.releaseNotes?.trim()?.length ?? 0) > 0 ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setExpandedReleaseIds(prev => {
+                        const next = new Set(prev);
+                        if (next.has(item.id)) {
+                          next.delete(item.id);
+                        } else {
+                          next.add(item.id);
+                        }
+                        return next;
+                      });
+                    }}
+                    className={`mt-1 text-[11px] font-medium ${
+                      isDark ? "text-[#9f9dff] hover:text-[#b1afff]" : "text-[#5856D6] hover:text-[#4b49ba]"
+                    }`}
+                  >
+                    {expandedReleaseIds.has(item.id) ? "收起" : "展开"}
+                  </button>
+                ) : null}
+              </div>
             </div>
-            <p className={`text-xs mt-1.5 leading-relaxed ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-              首个正式公开版本，包含插件市场、RSS/WASM 插件支持与本地 Runtime 服务。
-            </p>
-          </div>
+          )) : (
+            <p className={`text-xs ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>暂无版本历史。</p>
+          )}
+
+          {releaseHistory.length > historyPageSize ? (
+            <div className="pt-1 flex items-center justify-between">
+              <span className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                第 {historyPage} / {historyTotalPages} 页
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setHistoryPage(prev => Math.max(1, prev - 1))}
+                  disabled={historyPage <= 1}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium border ${subtleBorder} ${
+                    isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+                  } disabled:opacity-50`}
+                >
+                  上一页
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryPage(prev => Math.min(historyTotalPages, prev + 1))}
+                  disabled={historyPage >= historyTotalPages}
+                  className={`px-2.5 py-1 rounded-md text-[11px] font-medium border ${subtleBorder} ${
+                    isDark ? "text-neutral-300 hover:bg-neutral-900/50" : "text-neutral-600 hover:bg-neutral-50"
+                  } disabled:opacity-50`}
+                >
+                  下一页
+                </button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </SectionCard>
     </div>
@@ -536,6 +820,12 @@ export function SystemInfoPanel({
             >
               <Icon name={section.icon} className="w-4 h-4 shrink-0" />
               <span className="truncate text-left">{section.label}</span>
+              {section.id === "updates" && hasAvailableUpdate ? (
+                <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-500">
+                  <span className="h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden />
+                  新版本
+                </span>
+              ) : null}
             </button>
           ))}
         </nav>

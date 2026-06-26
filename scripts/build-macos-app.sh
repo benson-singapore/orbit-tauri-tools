@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/lib/build-common.sh"
 LOGO="${LOGO:-$ROOT/docs/html/logo_black.png}"
 BUNDLES="${BUNDLES:-dmg,app}"
 SKIP_ICONS="${SKIP_ICONS:-0}"
+VITE_ORBIT_ENABLE_FULL_EXPERIENCE="${VITE_ORBIT_ENABLE_FULL_EXPERIENCE:-0}"
 
 # ── 加载签名配置 ─────────────────────────────────────────────────────
 if [[ -f "$SCRIPT_DIR/signing.env" ]]; then
@@ -133,6 +134,7 @@ info "Tauri 打包 (.app)..."
 (
   cd "$APP_DIR"
   export SKIP_RUNTIME_BUILD=1
+  export VITE_ORBIT_ENABLE_FULL_EXPERIENCE
   export APPLE_SIGNING_IDENTITY
   [[ -n "${APPLE_PROVIDER_SHORT_NAME:-}" ]] && export APPLE_PROVIDER_SHORT_NAME
   [[ -n "${APPLE_ID:-}" ]]              && export APPLE_ID

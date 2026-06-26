@@ -42,4 +42,5 @@ fi
 echo "Starting Tauri (ORBIT_RUNTIME_URL=${URL}) ..."
 cd "$ROOT/app"
 export ORBIT_RUNTIME_URL="$URL"
+export VITE_ORBIT_ENABLE_FULL_EXPERIENCE="${VITE_ORBIT_ENABLE_FULL_EXPERIENCE:-1}"
 exec npm run tauri:dev

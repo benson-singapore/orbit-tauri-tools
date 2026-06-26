@@ -9,6 +9,10 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod youtube_login;
+
+use youtube_login::open_youtube_login_window;
+
 struct RuntimeState {
     url: Mutex<Option<String>>,
     sidecar: Mutex<Option<CommandChild>>,
@@ -50,6 +54,11 @@ fn get_runtime_url(state: State<RuntimeState>) -> Result<Option<String>, String>
         .lock()
         .map(|guard| guard.clone())
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_app_platform() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
 }
 
 #[tauri::command]
@@ -307,7 +316,12 @@ pub fn run() {
             url: Mutex::new(None),
             sidecar: Mutex::new(None),
         })
-        .invoke_handler(tauri::generate_handler![get_runtime_url, runtime_http])
+        .invoke_handler(tauri::generate_handler![
+            get_runtime_url,
+            get_app_platform,
+            runtime_http,
+            open_youtube_login_window
+        ])
         .setup(|app| {
             if !use_external_runtime(app.handle()) {
                 spawn_runtime(app.handle())?;

@@ -140,7 +140,12 @@ export function ReaderVideoPlayer({
   return (
     <div className={className}>
       {youTubeVideoId ? (
-        <YouTubeEmbed sessionId={sessionId} videoId={youTubeVideoId} title={article.title} />
+        <YouTubeEmbed
+          sessionId={sessionId}
+          runtimeBase={runtimeBase}
+          videoId={youTubeVideoId}
+          title={article.title}
+        />
       ) : videoUrl ? (
         <video
           ref={videoRef}

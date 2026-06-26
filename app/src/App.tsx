@@ -32,9 +32,12 @@ import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { mergeArticleListWithDetail } from "@/lib/articleContent";
 import {
+  AVAILABLE_EXPERIENCE_MODES,
   EXPERIENCE_MODE_LABELS,
+  FULL_EXPERIENCE_ENABLED,
   filterGroupedPluginsForExperienceMode,
   isMaturePlugin,
+  normalizeExperienceMode,
   persistExperienceMode,
   readStoredExperienceMode,
   type ExperienceMode,
@@ -310,6 +313,14 @@ export default function App() {
       setActivePlugin("all");
     }
   }, [experienceMode, activePlugin, pluginById]);
+
+  useEffect(() => {
+    const normalized = normalizeExperienceMode(experienceMode);
+    if (normalized !== experienceMode) {
+      setExperienceMode(normalized);
+      persistExperienceMode(normalized);
+    }
+  }, [experienceMode]);
 
   useEffect(() => {
     if (activePlugin === "all") return;
@@ -1945,12 +1956,12 @@ export default function App() {
             </span>
           </button>
 
-          {experienceMode === "full" ? (
+          {FULL_EXPERIENCE_ENABLED ? (
             <div className="relative shrink-0" aria-label="体验模式">
               <select
                 value={experienceMode}
                 onChange={e => {
-                  const mode = e.target.value as ExperienceMode;
+                  const mode = normalizeExperienceMode(e.target.value as ExperienceMode);
                   setExperienceMode(mode);
                   persistExperienceMode(mode);
                 }}
@@ -1960,7 +1971,7 @@ export default function App() {
                     : "orbit-titlebar-select orbit-titlebar-select-light"
                 }
               >
-                {(["safe", "full"] as const).map(mode => (
+                {AVAILABLE_EXPERIENCE_MODES.map(mode => (
                   <option key={mode} value={mode}>
                     {EXPERIENCE_MODE_LABELS[mode]}
                   </option>
@@ -3183,6 +3194,7 @@ export default function App() {
                       <div className="relative aspect-video bg-neutral-950 flex flex-col items-center justify-center text-white">
                         {selectedYouTubeVideoId ? (
                           <YouTubeEmbed
+                            runtimeBase={runtimeBase}
                             videoId={selectedYouTubeVideoId}
                             title={selectedItem.title}
                           />

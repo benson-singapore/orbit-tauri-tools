@@ -14,7 +14,7 @@ BUNDLES           ?=
         build-runtime build-runtime-all \
         build-runtime-macos-arm64 build-runtime-macos-x64 \
         build-runtime-windows build-runtime-linux build-runtime-linux-arm64 \
-        build build-macos build-macos-x64 build-windows build-linux \
+        build build-macos build-macos-x64 build-macos-arm64-full build-windows build-linux \
         icons check-go swagger swagger-check
 
 help: ## 显示命令列表
@@ -25,6 +25,7 @@ help: ## 显示命令列表
 	@echo "打包示例:"
 	@echo "  make build-macos              # macOS 本机架构 (.app + .dmg)"
 	@echo "  make build-macos-x64          # M 系列 Mac 上打 Intel 包"
+	@echo "  make build-macos-arm64-full   # M 系列私有完整级包 (.app + .dmg)"
 	@echo "  make build-runtime-all        # 预编译全部平台 runtime (Zig)"
 	@echo "  make build-windows            # Windows 安装包 (须在 Windows 运行)"
 	@echo "  make build-linux              # Linux 安装包 (须在 Linux 运行)"
@@ -41,10 +42,10 @@ dev-go: ## 启动 Go runtime (go run，默认端口 17890)
 	ORBIT_PORT=$(ORBIT_PORT) bash scripts/dev-go.sh
 
 dev-tauri: ## 启动 Tauri 并连接外部 Go (需先 dev-go)
-	cd app && ORBIT_RUNTIME_URL=$(ORBIT_RUNTIME_URL) npm run tauri:dev
+	cd app && ORBIT_RUNTIME_URL=$(ORBIT_RUNTIME_URL) VITE_ORBIT_ENABLE_FULL_EXPERIENCE=1 npm run tauri:dev
 
 dev-web: ## 启动 Vite 前端开发服务（连接 Go runtime）
-	cd app && VITE_ORBIT_RUNTIME_URL=$(ORBIT_RUNTIME_URL) npm run dev
+	cd app && VITE_ORBIT_RUNTIME_URL=$(ORBIT_RUNTIME_URL) VITE_ORBIT_ENABLE_FULL_EXPERIENCE=1 npm run dev
 
 open-web: ## 在浏览器打开前端页面
 	open "$(WEB_URL)"
@@ -53,7 +54,7 @@ dev: ## 单终端：后台 Go + Tauri（Ctrl+C 结束两者）
 	bash scripts/dev-all.sh
 
 dev-sidecar: ## Tauri 自动拉起已编译的 sidecar（需先 make build-runtime）
-	cd app && npm run tauri:dev
+	cd app && VITE_ORBIT_ENABLE_FULL_EXPERIENCE=1 npm run tauri:dev
 
 # ── Runtime 交叉编译 ─────────────────────────────────────────────────
 
@@ -88,6 +89,9 @@ build-macos: ## 打包并签名 macOS 应用（含 sidecar JIT 补签，产出 .
 
 build-macos-x64: ## 在 M 系列 Mac 上打包 Intel 版 macOS 应用
 	MACOS_ARCH=x86_64 bash scripts/build-macos-app.sh
+
+build-macos-arm64-full: ## 打包 macOS arm64 私有完整级应用（仅内部使用）
+	MACOS_ARCH=arm64 VITE_ORBIT_ENABLE_FULL_EXPERIENCE=1 bash scripts/build-macos-app.sh
 
 build-windows: ## 打包 Windows 应用（须在 Windows 上运行）
 	bash scripts/build-windows-app.sh

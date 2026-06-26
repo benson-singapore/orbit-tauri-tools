@@ -5,20 +5,38 @@ const STORAGE_KEY = "orbit.experienceMode";
 
 export type ExperienceMode = "safe" | "full";
 
+const FULL_EXPERIENCE_ENV = String(import.meta.env.VITE_ORBIT_ENABLE_FULL_EXPERIENCE ?? "")
+  .trim()
+  .toLowerCase();
+
+export const FULL_EXPERIENCE_ENABLED =
+  FULL_EXPERIENCE_ENV === "1" || FULL_EXPERIENCE_ENV === "true" || FULL_EXPERIENCE_ENV === "yes";
+
+export const AVAILABLE_EXPERIENCE_MODES: ExperienceMode[] = FULL_EXPERIENCE_ENABLED
+  ? ["safe", "full"]
+  : ["safe"];
+
 export const EXPERIENCE_MODE_DEFAULT: ExperienceMode = "safe";
 
-const VALID_MODES = new Set<ExperienceMode>(["safe", "full"]);
+const VALID_MODES = new Set<ExperienceMode>(AVAILABLE_EXPERIENCE_MODES);
 
 export const EXPERIENCE_MODE_LABELS: Record<ExperienceMode, string> = {
   safe: "安全级",
   full: "完整级",
 };
 
+export function normalizeExperienceMode(mode: ExperienceMode): ExperienceMode {
+  if (mode === "full" && !FULL_EXPERIENCE_ENABLED) {
+    return "safe";
+  }
+  return mode;
+}
+
 export function readStoredExperienceMode(): ExperienceMode {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw && VALID_MODES.has(raw as ExperienceMode)) {
-      return raw as ExperienceMode;
+      return normalizeExperienceMode(raw as ExperienceMode);
     }
   } catch {
     // ignore
@@ -28,7 +46,7 @@ export function readStoredExperienceMode(): ExperienceMode {
 
 export function persistExperienceMode(mode: ExperienceMode): void {
   try {
-    localStorage.setItem(STORAGE_KEY, mode);
+    localStorage.setItem(STORAGE_KEY, normalizeExperienceMode(mode));
   } catch {
     // ignore quota / private mode
   }

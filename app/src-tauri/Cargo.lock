@@ -2213,6 +2213,7 @@ dependencies = [
  "tauri-plugin-http",
  "tauri-plugin-shell",
  "tokio",
+ "url",
 ]
 
 [[package]]

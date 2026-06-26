@@ -57,6 +57,12 @@ import {
   filterVariablesForSave,
   savePluginVariables,
 } from "@/lib/runtimeV2";
+import {
+  checkAppUpdate,
+  resolveCurrentPlatformInfo,
+  type AppUpdateSummary,
+} from "@/lib/appUpdates";
+import { loadAppInfo } from "@/lib/appInfo";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
 import { ALL_MANAGE_GROUP_ID, DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import { SystemInfoPanel } from "@/components/SystemInfoPanel";
@@ -2317,6 +2323,7 @@ function ImportPluginModal({
   const [viewMode, setViewMode] = useState<"form" | "json">("form");
   const [importSource, setImportSource] = useState<"rss" | "wasm">("rss");
   const [orbitFile, setOrbitFile] = useState<File | null>(null);
+  const [orbitSourceUrl, setOrbitSourceUrl] = useState("");
   const [isInstallingOrbit, setIsInstallingOrbit] = useState(false);
   const orbitFileInputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -2660,14 +2667,45 @@ function ImportPluginModal({
   };
 
   const handleOrbitInstall = async () => {
-    if (!orbitFile || !onOrbitImport) {
-      setError("请先选择 .orbit 插件包");
+    if (!onOrbitImport) {
+      setError("当前版本暂不支持 WASM 插件导入");
+      return;
+    }
+    const sourceUrl = orbitSourceUrl.trim();
+    const hasOrbitFile = Boolean(orbitFile);
+    if (!hasOrbitFile && !sourceUrl) {
+      setError("请先选择 .orbit 插件包或填写下载 URL");
+      return;
+    }
+    if (!hasOrbitFile && sourceUrl && !isHttpUrl(sourceUrl)) {
+      setError("请输入有效的 http(s) 下载链接");
       return;
     }
     setIsInstallingOrbit(true);
     setError(null);
     try {
-      await onOrbitImport(orbitFile);
+      let nextFile = orbitFile;
+      if (!nextFile && sourceUrl) {
+        const res = await runtimeFetch(sourceUrl);
+        if (!res.ok) {
+          throw new Error(`下载失败：HTTP ${res.status}`);
+        }
+        const blob = await res.blob();
+        if (!blob.size) {
+          throw new Error("下载失败：文件为空");
+        }
+        const parsed = new URL(sourceUrl);
+        const pathname = parsed.pathname || "";
+        const filenameFromUrl = pathname.split("/").filter(Boolean).pop();
+        const filename = filenameFromUrl && filenameFromUrl.endsWith(".orbit")
+          ? filenameFromUrl
+          : "plugin.orbit";
+        nextFile = new File([blob], filename, { type: blob.type || "application/zip" });
+      }
+      if (!nextFile) {
+        throw new Error("未找到可安装的 .orbit 文件");
+      }
+      await onOrbitImport(nextFile);
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -2743,6 +2781,38 @@ function ImportPluginModal({
           {!initialPlugin ? (
           <aside className={`w-72 shrink-0 border-r ${subtleBorder} p-5 flex flex-col ${isDark ? "bg-neutral-950/10" : "bg-white"}`}>
             <nav className="space-y-2">
+              {onOrbitImport && !initialPlugin ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setImportSource("wasm");
+                    setError(null);
+                  }}
+                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-colors ${
+                    importSource === "wasm"
+                      ? isDark
+                        ? "border-emerald-900/40 bg-emerald-950/20 text-neutral-100"
+                        : "border-emerald-200 bg-emerald-50/60 text-neutral-900"
+                      : `${subtleBorder} ${isDark ? "hover:bg-neutral-900/40 text-neutral-300" : "hover:bg-neutral-50 text-neutral-700"}`
+                  }`}
+                >
+                  <div className={`p-2.5 rounded-xl ${isDark ? "bg-emerald-900/40" : "bg-emerald-500"}`}>
+                    <Icon name="puzzle" className={`w-4 h-4 ${isDark ? "text-emerald-300" : "text-white"}`} />
+                  </div>
+                  <div className="flex-1 min-w-0 text-left">
+                    <p className="text-sm font-semibold truncate">WASM 官方插件</p>
+                    <p className={`text-[11px] mt-0.5 truncate ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                      导入 .orbit 包（本地或 URL）
+                    </p>
+                  </div>
+                  {importSource === "wasm" ? (
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${isDark ? "bg-neutral-900/60 text-neutral-300" : "bg-white text-neutral-600 border border-neutral-200"}`}>
+                      当前
+                    </span>
+                  ) : null}
+                </button>
+              ) : null}
+
               <button
                 type="button"
                 onClick={() => {
@@ -2771,38 +2841,6 @@ function ImportPluginModal({
                 ) : null}
               </button>
 
-              {onOrbitImport && !initialPlugin ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setImportSource("wasm");
-                    setError(null);
-                  }}
-                  className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border transition-colors ${
-                    importSource === "wasm"
-                      ? isDark
-                        ? "border-emerald-900/40 bg-emerald-950/20 text-neutral-100"
-                        : "border-emerald-200 bg-emerald-50/60 text-neutral-900"
-                      : `${subtleBorder} ${isDark ? "hover:bg-neutral-900/40 text-neutral-300" : "hover:bg-neutral-50 text-neutral-700"}`
-                  }`}
-                >
-                  <div className={`p-2.5 rounded-xl ${isDark ? "bg-emerald-900/40" : "bg-emerald-500"}`}>
-                    <Icon name="puzzle" className={`w-4 h-4 ${isDark ? "text-emerald-300" : "text-white"}`} />
-                  </div>
-                  <div className="flex-1 min-w-0 text-left">
-                    <p className="text-sm font-semibold truncate">WASM 官方插件</p>
-                    <p className={`text-[11px] mt-0.5 truncate ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                      导入 .orbit 包（manifest + wasm）
-                    </p>
-                  </div>
-                  {importSource === "wasm" ? (
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-md ${isDark ? "bg-neutral-900/60 text-neutral-300" : "bg-white text-neutral-600 border border-neutral-200"}`}>
-                      当前
-                    </span>
-                  ) : null}
-                </button>
-              ) : null}
-
               <div className={`w-full flex items-center gap-3 px-4 py-3 rounded-2xl border ${subtleBorder} ${isDark ? "bg-neutral-900/40 text-neutral-500" : "bg-neutral-50 text-neutral-400"}`}>
                 <div className={`p-2.5 rounded-xl ${isDark ? "bg-neutral-800" : "bg-neutral-200"}`}>
                   <Icon name="terminal" className="w-4 h-4" />
@@ -2824,7 +2862,7 @@ function ImportPluginModal({
               </div>
               <p className={`text-[11px] mt-2 leading-relaxed ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
                 {isWasmImport
-                  ? "在右侧选择 .orbit 文件后点击安装，系统将自动解压 manifest 与 wasm 主文件。"
+                  ? "在右侧可选择本地 .orbit 包，或填写 URL 自动下载并安装。"
                   : "右侧 JSON 会随表单实时生成；你也可以切到 JSON 模式直接编辑，失焦后会自动回填并格式化。"}
               </p>
             </div>
@@ -2841,7 +2879,7 @@ function ImportPluginModal({
                   </div>
                   <h4 className="text-sm font-bold mb-2">上传 WASM 官方插件包</h4>
                   <p className={`text-[11px] leading-relaxed max-w-md mb-6 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                    支持 `.orbit` 格式（ZIP 压缩包），需包含 `manifest.json`、`.wasm.br` 主文件及校验信息。
+                    支持 `.orbit` 格式（ZIP 压缩包），可本地上传或 URL 导入，需包含 `manifest.json`、`.wasm.br` 主文件及校验信息。
                   </p>
 
                   <input
@@ -2887,6 +2925,23 @@ function ImportPluginModal({
                     <Icon name="download" className="w-4 h-4" />
                     选择 .orbit 文件
                   </button>
+                  <div className="w-full max-w-md mt-4 text-left">
+                    <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                      或通过 URL 自动导入
+                    </label>
+                    <input
+                      value={orbitSourceUrl}
+                      onChange={(e) => {
+                        setOrbitSourceUrl(e.target.value);
+                        setError(null);
+                      }}
+                      placeholder="https://example.com/plugin.orbit"
+                      className={`mt-2 w-full px-4 py-3 text-xs rounded-2xl border outline-none focus:border-emerald-500/40 ${inputBg} ${inputBorder} ${inputText}`}
+                    />
+                    <p className={`mt-2 text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                      点击底部「安装插件」后会优先使用本地文件；若未选择本地文件，则自动下载该链接并导入。
+                    </p>
+                  </div>
 
                   {error ? <p className="text-xs text-rose-500 mt-4">{error}</p> : null}
                 </div>
@@ -3236,7 +3291,7 @@ function ImportPluginModal({
             {isWasmImport ? (
               <button
                 type="button"
-                disabled={!orbitFile || isInstallingOrbit}
+                disabled={(!orbitFile && !orbitSourceUrl.trim()) || isInstallingOrbit}
                 onClick={() => {
                   void handleOrbitInstall();
                 }}
@@ -3642,6 +3697,14 @@ export function PluginManagerModal({
     llm: false,
     tts: false,
   });
+  const [systemUpdateSummary, setSystemUpdateSummary] = useState<AppUpdateSummary>({
+    updateAvailable: false,
+    loading: true,
+    platformId: null,
+    latestVersion: null,
+    channel: null,
+    error: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -3664,6 +3727,39 @@ export function PluginManagerModal({
         if (!cancelled) {
           setSettingsConfigTabs({ llm: false, tts: false });
         }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      setSystemUpdateSummary(prev => ({ ...prev, loading: true, error: null }));
+      try {
+        const [info, platform] = await Promise.all([
+          loadAppInfo(),
+          resolveCurrentPlatformInfo(),
+        ]);
+        const update = await checkAppUpdate(info.version, platform.id);
+        if (cancelled) return;
+        setSystemUpdateSummary({
+          updateAvailable: update.updateAvailable,
+          loading: false,
+          platformId: platform.id,
+          latestVersion: update.latest?.appVersion ?? null,
+          channel: update.channel,
+          error: null,
+        });
+      } catch (err) {
+        if (cancelled) return;
+        setSystemUpdateSummary(prev => ({
+          ...prev,
+          loading: false,
+          error: err instanceof Error ? err.message : String(err),
+        }));
       }
     })();
     return () => {
@@ -3938,6 +4034,9 @@ export function PluginManagerModal({
               >
                 <Icon name={tab.icon} className="w-4 h-4" />
                 <span className="hidden sm:inline">{tab.label}</span>
+                {tab.id === "system" && systemUpdateSummary.updateAvailable ? (
+                  <span className="inline-flex h-2 w-2 rounded-full bg-rose-500" aria-label="发现新版本" />
+                ) : null}
               </button>
             ))}
           </div>
@@ -4136,6 +4235,8 @@ export function PluginManagerModal({
               onExperienceModeChange={onExperienceModeChange}
               installedPluginCount={installedPlugins.length}
               runningPluginCount={runningCount}
+              updateSummary={systemUpdateSummary}
+              onUpdateSummaryChange={setSystemUpdateSummary}
             />
           )}
 
