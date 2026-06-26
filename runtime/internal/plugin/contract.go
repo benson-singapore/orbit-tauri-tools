@@ -17,6 +17,7 @@ const (
 	MediaVideo   = "video"
 	MediaAudio   = "audio"
 	MediaRating  = "rating"
+	MediaSocial  = "social"
 
 	CapFeed     = "feed"
 	CapSearch   = "search"
@@ -124,23 +125,54 @@ type FeedQueryResult struct {
 
 // FeedItem is the normalized output shared with the frontend.
 type FeedItem struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	Summary     string   `json:"summary"`
-	Content     string   `json:"content,omitempty"`
-	Type        string   `json:"type"`
-	PluginID    string   `json:"pluginId"`
-	PluginName  string   `json:"pluginName"`
-	Author      string   `json:"author"`
-	PublishedAt int64    `json:"publishedAt"`
-	Time        string   `json:"time"`
-	Reads       string   `json:"reads"`
-	Image       string   `json:"image,omitempty"`
-	SourceURL   string   `json:"sourceUrl,omitempty"`
-	ChannelID   string   `json:"channelId,omitempty"`
-	Tags        []string `json:"tags"`
-	ReadAt      int64    `json:"readAt,omitempty"`
-	IsRead      bool     `json:"isRead"`
+	ID           string         `json:"id"`
+	Title        string         `json:"title"`
+	Summary      string         `json:"summary"`
+	Content      string         `json:"content,omitempty"`
+	Type         string         `json:"type"`
+	PluginID     string         `json:"pluginId"`
+	PluginName   string         `json:"pluginName"`
+	Author       string         `json:"author"`
+	PublishedAt  int64          `json:"publishedAt"`
+	Time         string         `json:"time"`
+	Reads        string         `json:"reads"`
+	Image        string         `json:"image,omitempty"`
+	SourceURL    string         `json:"sourceUrl,omitempty"`
+	ChannelID    string         `json:"channelId,omitempty"`
+	Tags         []string       `json:"tags"`
+	ReadAt       int64          `json:"readAt,omitempty"`
+	IsRead       bool           `json:"isRead"`
+	Kind         string         `json:"kind,omitempty"`
+	AuthorAvatar string         `json:"authorAvatar,omitempty"`
+	AuthorHandle string         `json:"authorHandle,omitempty"`
+	Stats        *SocialStats   `json:"stats,omitempty"`
+	Media        []SocialMedia  `json:"media,omitempty"`
+	Quote        *SocialQuote   `json:"quote,omitempty"`
+}
+
+type SocialStats struct {
+	Likes    int `json:"likes"`
+	Replies  int `json:"replies"`
+	Restacks int `json:"restacks"`
+}
+
+type SocialMedia struct {
+	Type       string `json:"type"`
+	URL        string `json:"url,omitempty"`
+	Thumbnail  string `json:"thumbnail,omitempty"`
+	Title      string `json:"title,omitempty"`
+	PlaybackID string `json:"playbackId,omitempty"`
+	Width      int    `json:"width,omitempty"`
+	Height     int    `json:"height,omitempty"`
+}
+
+type SocialQuote struct {
+	ID           string `json:"id"`
+	Author       string `json:"author"`
+	AuthorAvatar string `json:"authorAvatar,omitempty"`
+	AuthorHandle string `json:"authorHandle,omitempty"`
+	Body         string `json:"body"`
+	URL          string `json:"url,omitempty"`
 }
 
 // PluginRecord merges manifest with runtime state from SQLite.

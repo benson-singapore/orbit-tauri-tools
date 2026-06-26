@@ -5,6 +5,7 @@ interface PluginChannelBarProps {
   channels: PluginChannel[];
   onChannelChange: (channelId: string) => void;
   className?: string;
+  minChannels?: number;
 }
 
 export function PluginChannelBar({
@@ -12,8 +13,9 @@ export function PluginChannelBar({
   channels,
   onChannelChange,
   className = "",
+  minChannels = 2,
 }: PluginChannelBarProps) {
-  if (channels.length <= 1) return null;
+  if (channels.length < minChannels) return null;
 
   return (
     <div className={`flex gap-1 overflow-x-auto pb-1 no-scrollbar ${className}`}>
@@ -24,8 +26,8 @@ export function PluginChannelBar({
           onClick={() => onChannelChange(ch.id)}
           className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
             activeChannel === ch.id
-              ? "bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm"
-              : "bg-neutral-50 hover:bg-neutral-100 dark:bg-neutral-800 dark:hover:bg-neutral-700 text-neutral-600 dark:text-neutral-300"
+              ? "orbit-filter-chip orbit-filter-chip--active"
+              : "orbit-filter-chip"
           }`}
         >
           {ch.label}

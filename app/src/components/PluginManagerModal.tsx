@@ -950,7 +950,8 @@ function WasmManifestEditorModal({
       nextMediaType === "image" ||
       nextMediaType === "video" ||
       nextMediaType === "audio" ||
-      nextMediaType === "rating"
+      nextMediaType === "rating" ||
+      nextMediaType === "social"
     ) {
       setMediaType(nextMediaType);
     }
@@ -1859,6 +1860,7 @@ function WasmManifestEditorModal({
                               <option value="video">video</option>
                               <option value="audio">audio</option>
                               <option value="rating">rating</option>
+                              <option value="social">social</option>
                             </StyledSelect>
                           </div>
                         </div>
@@ -2372,7 +2374,8 @@ function ImportPluginModal({
       initialPlugin.mediaType === "image" ||
       initialPlugin.mediaType === "video" ||
       initialPlugin.mediaType === "audio" ||
-      initialPlugin.mediaType === "rating"
+      initialPlugin.mediaType === "rating" ||
+      initialPlugin.mediaType === "social"
     ) {
       setMediaType(initialPlugin.mediaType);
     }
@@ -2488,7 +2491,8 @@ function ImportPluginModal({
         nextMediaType === "image" ||
         nextMediaType === "video" ||
         nextMediaType === "audio" ||
-        nextMediaType === "rating"
+        nextMediaType === "rating" ||
+        nextMediaType === "social"
       ) {
         setMediaType(nextMediaType);
       }
@@ -3065,6 +3069,7 @@ function ImportPluginModal({
                           <option value="video">video</option>
                           <option value="audio">audio</option>
                           <option value="rating">rating</option>
+                          <option value="social">social</option>
                         </StyledSelect>
                       </div>
                       <div className="space-y-1.5">

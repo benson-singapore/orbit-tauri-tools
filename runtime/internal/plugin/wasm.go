@@ -94,16 +94,47 @@ type wasmFeedResult struct {
 }
 
 type wasmFeedItem struct {
-	ID          string   `json:"id"`
-	Title       string   `json:"title"`
-	URL         string   `json:"url"`
-	Content     string   `json:"content,omitempty"`
-	Summary     string   `json:"summary,omitempty"`
-	Author      string   `json:"author,omitempty"`
-	Cover       string   `json:"cover,omitempty"`
-	Image       string   `json:"image,omitempty"`
-	PublishedAt string   `json:"published_at"`
-	Tags        []string `json:"tags,omitempty"`
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	URL          string           `json:"url"`
+	Content      string           `json:"content,omitempty"`
+	Summary      string           `json:"summary,omitempty"`
+	Author       string           `json:"author,omitempty"`
+	Cover        string           `json:"cover,omitempty"`
+	Image        string           `json:"image,omitempty"`
+	PublishedAt  string           `json:"published_at"`
+	Tags         []string         `json:"tags,omitempty"`
+	Kind         string           `json:"kind,omitempty"`
+	AuthorAvatar string           `json:"author_avatar,omitempty"`
+	AuthorHandle string           `json:"author_handle,omitempty"`
+	Stats        *wasmSocialStats `json:"stats,omitempty"`
+	Media        []wasmSocialMedia `json:"media,omitempty"`
+	Quote        *wasmSocialQuote `json:"quote,omitempty"`
+}
+
+type wasmSocialStats struct {
+	Likes    int `json:"likes"`
+	Replies  int `json:"replies"`
+	Restacks int `json:"restacks"`
+}
+
+type wasmSocialMedia struct {
+	Type       string `json:"type"`
+	URL        string `json:"url,omitempty"`
+	Thumbnail  string `json:"thumbnail,omitempty"`
+	Title      string `json:"title,omitempty"`
+	PlaybackID string `json:"playback_id,omitempty"`
+	Width      int    `json:"width,omitempty"`
+	Height     int    `json:"height,omitempty"`
+}
+
+type wasmSocialQuote struct {
+	ID           string `json:"id"`
+	Author       string `json:"author"`
+	AuthorAvatar string `json:"author_avatar,omitempty"`
+	AuthorHandle string `json:"author_handle,omitempty"`
+	Body         string `json:"body"`
+	URL          string `json:"url,omitempty"`
 }
 
 type hostHTTPRequest struct {
@@ -482,21 +513,29 @@ func mapWasmFeedItems(rec *PluginRecord, channelID string, result wasmFeedResult
 		if img == "" {
 			img = strings.TrimSpace(it.Image)
 		}
+		reads := formatSocialReads(it.Stats)
 		items = append(items, FeedItem{
-			ID:          id,
-			Title:       it.Title,
-			Summary:     it.Summary,
-			Content:     it.Content,
-			Type:        contentType,
-			PluginID:    rec.ID,
-			PluginName:  rec.Name,
-			Author:      it.Author,
-			PublishedAt: publishedAt,
-			Time:        formatFeedRelativeTime(publishedAt),
-			Image:       img,
-			SourceURL:   strings.TrimSpace(it.URL),
-			ChannelID:   channelID,
-			Tags:        append([]string(nil), it.Tags...),
+			ID:           id,
+			Title:        it.Title,
+			Summary:      it.Summary,
+			Content:      it.Content,
+			Type:         contentType,
+			PluginID:     rec.ID,
+			PluginName:   rec.Name,
+			Author:       it.Author,
+			PublishedAt:  publishedAt,
+			Time:         formatFeedRelativeTime(publishedAt),
+			Reads:        reads,
+			Image:        img,
+			SourceURL:    strings.TrimSpace(it.URL),
+			ChannelID:    channelID,
+			Tags:         append([]string(nil), it.Tags...),
+			Kind:         strings.TrimSpace(it.Kind),
+			AuthorAvatar: strings.TrimSpace(it.AuthorAvatar),
+			AuthorHandle: strings.TrimSpace(it.AuthorHandle),
+			Stats:        mapWasmSocialStats(it.Stats),
+			Media:        mapWasmSocialMedia(it.Media),
+			Quote:        mapWasmSocialQuote(it.Quote),
 		})
 	}
 	return items
@@ -528,4 +567,65 @@ func formatFeedRelativeTime(unix int64) string {
 		return fmt.Sprintf("%d 小时前", int(d.Hours()))
 	}
 	return fmt.Sprintf("%d 天前", int(d.Hours()/24))
+}
+
+func mapWasmSocialStats(in *wasmSocialStats) *SocialStats {
+	if in == nil {
+		return nil
+	}
+	return &SocialStats{
+		Likes:    in.Likes,
+		Replies:  in.Replies,
+		Restacks: in.Restacks,
+	}
+}
+
+func mapWasmSocialMedia(in []wasmSocialMedia) []SocialMedia {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]SocialMedia, 0, len(in))
+	for _, m := range in {
+		out = append(out, SocialMedia{
+			Type:       m.Type,
+			URL:        m.URL,
+			Thumbnail:  m.Thumbnail,
+			Title:      m.Title,
+			PlaybackID: m.PlaybackID,
+			Width:      m.Width,
+			Height:     m.Height,
+		})
+	}
+	return out
+}
+
+func mapWasmSocialQuote(in *wasmSocialQuote) *SocialQuote {
+	if in == nil {
+		return nil
+	}
+	return &SocialQuote{
+		ID:           in.ID,
+		Author:       in.Author,
+		AuthorAvatar: in.AuthorAvatar,
+		AuthorHandle: in.AuthorHandle,
+		Body:         in.Body,
+		URL:          in.URL,
+	}
+}
+
+func formatSocialReads(stats *wasmSocialStats) string {
+	if stats == nil {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if stats.Likes > 0 {
+		parts = append(parts, fmt.Sprintf("%d likes", stats.Likes))
+	}
+	if stats.Replies > 0 {
+		parts = append(parts, fmt.Sprintf("%d replies", stats.Replies))
+	}
+	if stats.Restacks > 0 {
+		parts = append(parts, fmt.Sprintf("%d restacks", stats.Restacks))
+	}
+	return strings.Join(parts, " · ")
 }

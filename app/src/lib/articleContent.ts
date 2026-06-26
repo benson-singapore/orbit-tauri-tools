@@ -41,51 +41,6 @@ export function imagesReferToSameAsset(a: string, b: string): boolean {
   return leftName.length > 8 && leftName === rightName;
 }
 
-/** Remove content images that duplicate the article cover (top hero keeps the cover). */
-export function dedupeCoverImageFromContent(
-  coverUrl: string | undefined,
-  html: string,
-): string {
-  const cover = coverUrl?.trim();
-  const content = html.trim();
-  if (!cover || !content || typeof DOMParser === "undefined") {
-    return html;
-  }
-
-  const doc = new DOMParser().parseFromString(content, "text/html");
-  const imgs = Array.from(doc.body.querySelectorAll("img"));
-  const parentsToMaybeRemove = new Set<Element>();
-
-  for (const img of imgs) {
-    const src =
-      img.getAttribute("src") ??
-      img.getAttribute("data-src") ??
-      img.getAttribute("data-original") ??
-      "";
-    if (!imagesReferToSameAsset(cover, src)) {
-      continue;
-    }
-
-    const parent = img.parentElement;
-    img.remove();
-    if (parent) {
-      parentsToMaybeRemove.add(parent);
-    }
-  }
-
-  for (const parent of parentsToMaybeRemove) {
-    if (
-      (parent.tagName === "P" || parent.tagName === "DIV") &&
-      !parent.textContent?.trim() &&
-      !parent.querySelector("img,video,iframe,audio,source")
-    ) {
-      parent.remove();
-    }
-  }
-
-  return doc.body.innerHTML;
-}
-
 /** Resolve lazy-loaded forum images (e.g. Discuz `data-original`) to `src`. */
 export function resolveLazyLoadedImages(html: string): string {
   if (!html.trim() || typeof DOMParser === "undefined") {
@@ -245,6 +200,38 @@ export function normalizeContentTagPills(html: string): string {
   return normalizeInlineTagPills(doc.body) ? doc.body.innerHTML : html;
 }
 
+function normalizeArticleTables(root: ParentNode): boolean {
+  let changed = false;
+
+  for (const table of root.querySelectorAll("table")) {
+    if (table.hasAttribute("style")) {
+      table.removeAttribute("style");
+      changed = true;
+    }
+    for (const attr of ["border", "cellpadding", "cellspacing", "bgcolor", "width"]) {
+      if (table.hasAttribute(attr)) {
+        table.removeAttribute(attr);
+        changed = true;
+      }
+    }
+
+    for (const cell of table.querySelectorAll("th, td, tr, thead, tbody, tfoot")) {
+      if (cell.hasAttribute("style")) {
+        cell.removeAttribute("style");
+        changed = true;
+      }
+      for (const attr of ["bgcolor", "border", "width", "height"]) {
+        if (cell.hasAttribute(attr)) {
+          cell.removeAttribute(attr);
+          changed = true;
+        }
+      }
+    }
+  }
+
+  return changed;
+}
+
 function stripDarkInlineTextColors(root: ParentNode): boolean {
   let changed = false;
 
@@ -301,6 +288,7 @@ export function prepareArticleHtmlContent(
   if (extractRycjPlayerScripts(doc.body)) changed = true;
   if (normalizeInlineTagPills(doc.body)) changed = true;
   if (normalizeContentSourceButtons(doc.body)) changed = true;
+  if (normalizeArticleTables(doc.body)) changed = true;
 
   let result = changed ? doc.body.innerHTML : rewritten;
   if (options?.darkTheme) {

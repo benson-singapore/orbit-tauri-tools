@@ -1,7 +1,4 @@
-import {
-  dedupeCoverImageFromContent,
-  prepareArticleHtmlContent,
-} from "@/lib/articleContent";
+import { prepareArticleHtmlContent } from "@/lib/articleContent";
 import {
   bindSingleArticleContentImage,
   comicPageImageUrl,
@@ -58,14 +55,9 @@ export function resolveComicArticleDisplay(
     return { pageUrls: null, html: "" };
   }
 
-  let content = raw;
-  if (article.type === "text" && article.image) {
-    content = dedupeCoverImageFromContent(article.image, content);
-  }
-
   return {
     pageUrls: null,
-    html: prepareArticleHtmlContent(content, runtimeBase, {
+    html: prepareArticleHtmlContent(raw, runtimeBase, {
       darkTheme: isDarkTheme(theme),
     }),
   };
@@ -522,11 +514,7 @@ export function prepareChapterDisplayContent(
 ): string {
   if (!article.content?.trim()) return "";
   if (parseComicPageUrls(article.content)) return "";
-  let content = article.content;
-  if (article.type === "text" && article.image) {
-    content = dedupeCoverImageFromContent(article.image, content);
-  }
-  return prepareArticleHtmlContent(content, runtimeBase, {
+  return prepareArticleHtmlContent(article.content, runtimeBase, {
     darkTheme: isDarkTheme(theme),
   });
 }

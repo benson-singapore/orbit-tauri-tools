@@ -96,7 +96,6 @@ func (s *SessionStore) SetEphemeral(pluginID, channelID string, items []FeedItem
 	}
 	sess.Ephemeral = append([]FeedItem(nil), items...)
 	sess.HasMore = hasMore
-	sess.LastResponse = nil
 }
 
 func (s *SessionStore) AppendEphemeral(pluginID, channelID string, items []FeedItem, hasMore bool) {

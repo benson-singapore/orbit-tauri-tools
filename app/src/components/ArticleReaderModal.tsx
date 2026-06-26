@@ -11,9 +11,12 @@ import {
   shouldSkipFeedItemDetailFetch,
   isRatingPluginArticle,
 } from "@/lib/browseDynamicFeed";
+import { isSocialPlugin } from "@/lib/socialPlugin";
+import { SocialNoteDetail } from "@/components/SocialNoteDetail";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
-import { bindArticleContentImages } from "@/lib/imageProxy";
+import { bindArticleContentImagesWithPreview, shouldEnableArticleImagePreview } from "@/lib/articleContentImagePreview";
+import { useArticleContentImagePreview } from "@/hooks/useArticleContentImagePreview";
 import {
   prepareMangaIntroDisplayContent,
 } from "@/lib/comicChapterContent";
@@ -121,6 +124,7 @@ export function ArticleReaderModal({
   );
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollRootRef = useRef<HTMLDivElement>(null);
+  const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
   const onArticleChangeRef = useRef(onArticleChange);
   onArticleChangeRef.current = onArticleChange;
 
@@ -359,6 +363,12 @@ export function ArticleReaderModal({
 
   const comicChapterStreamActive = useComicChapterStreamMode && comicStream.slots.length > 0;
 
+  const articleImagePreviewEnabled = shouldEnableArticleImagePreview({
+    isComicReaderContent,
+    comicChapterStreamActive,
+    pluginMediaType: pluginMeta?.mediaType,
+  });
+
   const comicToolbarChapter = comicStream.isActive
     ? (comicStream.visibleChapter ?? chapters.activeChapter ?? article)
     : (chapters.activeChapter ?? article);
@@ -424,12 +434,19 @@ export function ArticleReaderModal({
       : Boolean(comicPageUrls?.length || comicHtml);
     if (!hasComicContent && !displayContent) return;
 
+    let unbindContentImages = () => {};
+
     if (!isComicReaderContent) {
       highlightArticleCode(contentRoot);
-      bindArticleContentImages(contentRoot, runtimeBase);
+      unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
+        onImagePreview: openImagePreview,
+        previewEnabled: articleImagePreviewEnabled,
+      });
       bindArticleContentPlayers(contentRoot, { sessionId });
     } else if (isComicHtml) {
-      bindArticleContentImages(contentRoot, runtimeBase);
+      unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
+        previewEnabled: false,
+      });
     }
 
     if (
@@ -452,6 +469,7 @@ export function ArticleReaderModal({
     }
 
     return () => {
+      unbindContentImages();
       if (!isComicReaderContent) {
         destroyArticleContentPlayers(contentRoot);
       }
@@ -477,6 +495,8 @@ export function ArticleReaderModal({
     channelId,
     channelCapabilities,
     onResumeApplied,
+    openImagePreview,
+    articleImagePreviewEnabled,
   ]);
 
   useEffect(() => {
@@ -802,6 +822,10 @@ export function ArticleReaderModal({
           } as React.CSSProperties}
         >
           <div className="space-y-6">
+            {isSocialPlugin(pluginMeta) ? (
+              <SocialNoteDetail article={article} runtimeBase={runtimeBase} />
+            ) : (
+            <>
             {showRatingHero ? (
               <div className={isExpanded ? "pr-20" : "pr-8"}>
                 <ArticleRatingHero
@@ -930,7 +954,9 @@ export function ArticleReaderModal({
                 )}
               </div>
             )}
-          </div>
+            </div>
+            </>
+            )}
           </div>
         </div>
 
@@ -947,5 +973,10 @@ export function ArticleReaderModal({
     </div>
   );
 
-  return createPortal(modal, document.body);
+  return (
+    <>
+      {createPortal(modal, document.body)}
+      {previewLightbox}
+    </>
+  );
 }

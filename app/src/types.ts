@@ -174,6 +174,31 @@ export interface PluginChannel {
   dynamic?: boolean;
 }
 
+export interface SocialStats {
+  likes: number;
+  replies: number;
+  restacks: number;
+}
+
+export interface SocialMedia {
+  type: "image" | "video" | "link" | string;
+  url?: string;
+  thumbnail?: string;
+  title?: string;
+  playbackId?: string;
+  width?: number;
+  height?: number;
+}
+
+export interface SocialQuote {
+  id: string;
+  author: string;
+  authorAvatar?: string;
+  authorHandle?: string;
+  body: string;
+  url?: string;
+}
+
 export interface Article {
   id: string;
   title: string;
@@ -195,6 +220,12 @@ export interface Article {
   tags: string[];
   isBookmarked: boolean;
   isRead: boolean;
+  kind?: "short" | "long" | string;
+  authorAvatar?: string;
+  authorHandle?: string;
+  stats?: SocialStats;
+  media?: SocialMedia[];
+  quote?: SocialQuote;
 }
 
 export type PluginContentType = "text" | "video" | "audio" | "image";
@@ -274,7 +305,7 @@ export interface Plugin {
   id: string;
   name: string;
   icon: PluginContentType | string;
-  mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating";
+  mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating" | "social";
   active?: boolean;
   /** When true, plugin content appears in Today 全部 aggregate feed */
   includeInAll?: boolean;
@@ -331,7 +362,7 @@ export interface InstallRSSPluginRequest {
   defaultChannel?: string;
   name?: string;
   id?: string;
-  mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating";
+  mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating" | "social";
   refreshInterval?: number;
   userAgent?: string;
   icon?: PluginContentType;

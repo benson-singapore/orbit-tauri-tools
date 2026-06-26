@@ -2,7 +2,14 @@ import type { Plugin } from "@/types";
 
 const STORAGE_KEY = "orbit.pluginPreviewMode";
 
-export type PluginPreviewMode = "reader" | "waterfall" | "grid" | "split" | "splitDetail" | "videoWall";
+export type PluginPreviewMode =
+  | "reader"
+  | "waterfall"
+  | "grid"
+  | "split"
+  | "splitDetail"
+  | "videoWall"
+  | "socialFeed";
 
 export function defaultPluginPreviewMode(
   plugin?: Pick<Plugin, "mediaType"> | null,
@@ -12,6 +19,8 @@ export function defaultPluginPreviewMode(
       return "reader";
     case "image":
       return "waterfall";
+    case "social":
+      return "socialFeed";
     default:
       return "grid";
   }
@@ -23,6 +32,9 @@ export function resolvePluginPreviewMode(
 ): PluginPreviewMode {
   const mode = stored ?? defaultPluginPreviewMode(plugin);
   if (mode === "waterfall" && plugin?.mediaType !== "image") {
+    return defaultPluginPreviewMode(plugin);
+  }
+  if (mode === "socialFeed" && plugin?.mediaType !== "social") {
     return defaultPluginPreviewMode(plugin);
   }
   if (mode === "videoWall") {
@@ -46,7 +58,15 @@ function readMemory(): PluginPreviewModeMemory {
       if (
         typeof pluginId === "string"
         && pluginId.length > 0
-        && (mode === "reader" || mode === "waterfall" || mode === "grid" || mode === "split" || mode === "splitDetail" || mode === "videoWall")
+        && (
+          mode === "reader"
+          || mode === "waterfall"
+          || mode === "grid"
+          || mode === "split"
+          || mode === "splitDetail"
+          || mode === "videoWall"
+          || mode === "socialFeed"
+        )
       ) {
         result[pluginId] = mode;
       }

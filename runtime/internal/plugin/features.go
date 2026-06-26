@@ -590,7 +590,9 @@ func ParamsForLoadMore(
 	}
 
 	switch pag.Style {
-	case PaginationStyleOffset, PaginationStyleCursor:
+	case PaginationStyleCursor:
+		return nil, fmt.Errorf("missing pagination cursor")
+	case PaginationStyleOffset:
 		current, _ := strconv.Atoi(params[paramKey])
 		if current <= 0 {
 			def, _ := strconv.Atoi(pag.Default)

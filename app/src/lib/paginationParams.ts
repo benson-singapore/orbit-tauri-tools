@@ -78,7 +78,19 @@ export function buildFeedLoadMoreParams(options: {
       params[param] = nativeId;
       break;
     }
-    case "cursor":
+    case "cursor": {
+      if (nextParams) {
+        for (const [key, value] of Object.entries(nextParams)) {
+          if (value.trim()) {
+            params[key] = value.trim();
+          }
+        }
+        if (params[param]?.trim()) {
+          break;
+        }
+      }
+      throw new Error("缺少分页游标，请刷新后重试");
+    }
     case "offset": {
       const loadedPages = Math.max(1, Math.floor(articles.length / pageSize));
       params[param] = String(loadedPages + 1);

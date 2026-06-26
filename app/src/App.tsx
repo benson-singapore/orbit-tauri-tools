@@ -53,6 +53,7 @@ import {
   shouldSkipFeedItemDetailFetch,
 } from "@/lib/browseDynamicFeed";
 import { isImageGalleryPlugin } from "@/lib/imagePlugin";
+import { isSocialPlugin, shouldOpenSocialDetail } from "@/lib/socialPlugin";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import {
   channelHasDynamicSearch,
@@ -61,6 +62,8 @@ import {
   isChannelEnabled,
 } from "@/lib/channelStatus";
 import { ProxiedImage } from "@/components/ProxiedImage";
+import { SocialFeedCard } from "@/components/SocialFeedCard";
+import { SocialFeedFocusView } from "@/components/SocialFeedFocusView";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import {
@@ -68,7 +71,8 @@ import {
   resolveChannelHasDetail,
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
-import { bindArticleContentImages } from "@/lib/imageProxy";
+import { bindArticleContentImagesWithPreview, shouldEnableArticleImagePreview } from "@/lib/articleContentImagePreview";
+import { useArticleContentImagePreview } from "@/hooks/useArticleContentImagePreview";
 import {
   formatComicChapterToolbarSubtitle,
   prepareMangaIntroDisplayContent,
@@ -118,6 +122,11 @@ import {
   persistComicPageWidth,
   readStoredComicPageWidth,
 } from "@/lib/comicPageWidth";
+import {
+  getStoredSocialFeedWidth,
+  persistSocialFeedWidth,
+  SOCIAL_FEED_WIDTH_DEFAULT,
+} from "@/lib/socialFeedWidth";
 import {
   articleSessionKey,
   createReaderSession,
@@ -191,6 +200,8 @@ const PREVIEW_MODE_OPTIONS = [
   ["grid", "卡片视图", "卡片评分布局"] as const,
 ];
 
+const SOCIAL_FEED_OPTION = ["socialFeed", "推文展示", "社交推文时间线"] as const;
+
 const SPLIT_BROADCAST_OPTION = ["split", "联播分屏", "左侧卡片，右侧视频同屏联播"] as const;
 const SPLIT_DETAIL_OPTION = ["splitDetail", "阅览分屏", "左侧浏览，右侧即时展示详情"] as const;
 const VIDEO_WALL_PREVIEW_OPTION = ["videoWall", "视频预览", "Dock 视频平铺同播"] as const;
@@ -202,16 +213,25 @@ const PREVIEW_MODE_LABELS: Record<PluginPreviewMode, string> = {
   split: "联播分屏",
   splitDetail: "阅览分屏",
   videoWall: "视频预览",
+  socialFeed: "推文展示",
 };
 
 function previewModeLabel(mode: PluginPreviewMode): string {
   return PREVIEW_MODE_LABELS[mode] ?? "阅读模式";
 }
 
+function feedCountUnit(plugin?: Plugin | null): string {
+  if (isImageGalleryPlugin(plugin)) return "张";
+  if (isSocialPlugin(plugin)) return "条";
+  return "篇";
+}
+
 function previewModeOptionsForPlugin(plugin: Plugin | undefined, showVideoWall: boolean) {
   const showWaterfall = isImageGalleryPlugin(plugin);
+  const showSocialFeed = isSocialPlugin(plugin);
   const base = PREVIEW_MODE_OPTIONS.filter(([mode]) => mode !== "waterfall" || showWaterfall);
   return [
+    ...(showSocialFeed ? [SOCIAL_FEED_OPTION] : []),
     ...base,
     SPLIT_DETAIL_OPTION,
     ...(showVideoWall ? [VIDEO_WALL_PREVIEW_OPTION] : []),
@@ -378,6 +398,7 @@ export default function App() {
   const [contentLoading, setContentLoading] = useState(false);
   const articleContentRef = useRef<HTMLDivElement>(null);
   const [runtimeBase, setRuntimeBase] = useState<string | null>(null);
+  const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
 
   useEffect(() => {
     void waitForRuntimeReady().then((url: string) => {
@@ -415,6 +436,7 @@ export default function App() {
   const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
   const [comicPageWidth, setComicPageWidth] = useState(COMIC_PAGE_WIDTH_DEFAULT);
+  const [socialFeedWidth, setSocialFeedWidth] = useState(SOCIAL_FEED_WIDTH_DEFAULT);
 
   useEffect(() => {
     setReaderFontScale(readStoredReaderFontScale());
@@ -425,6 +447,13 @@ export default function App() {
     setComicPageWidth(width);
     persistComicPageWidth(width);
   }, []);
+
+  const handleSocialFeedWidthChange = useCallback((width: number) => {
+    setSocialFeedWidth(width);
+    if (activePlugin !== "all") {
+      persistSocialFeedWidth(activePlugin, width);
+    }
+  }, [activePlugin]);
 
   const bumpReaderFontScale = useCallback((direction: -1 | 1) => {
     setReaderFontScale((prev) => {
@@ -583,6 +612,7 @@ export default function App() {
   const isSplitPreviewMode = isSplitBroadcastMode || isSplitDetailMode;
   const isSplitPaneLayout = isSplitPreviewMode && activePlugin !== "all";
   const isVideoWallPreviewMode = pluginPreviewMode === "videoWall";
+  const isSocialFeedPreviewMode = pluginPreviewMode === "socialFeed";
   const isGridPageMode = isGridPreviewMode && gridDetailViewMode === "page";
   const isPageDetailView = isGridPageMode && gridPageDetailOpen;
   const isWallVideoActive = isWallVideoPreviewMode(pluginPreviewMode);
@@ -730,6 +760,12 @@ export default function App() {
 
   const comicChapterStreamActive = useComicChapterStreamMode && comicStream.slots.length > 0;
 
+  const selectedItemImagePreviewEnabled = shouldEnableArticleImagePreview({
+    isComicReaderContent,
+    comicChapterStreamActive,
+    pluginMediaType: selectedPluginMeta?.mediaType,
+  });
+
   const comicToolbarChapter = comicStream.isActive
     ? (comicStream.visibleChapter ?? chapters.activeChapter ?? selectedItem)
     : (chapters.activeChapter ?? selectedItem);
@@ -814,12 +850,19 @@ export default function App() {
       : Boolean(comicPageUrls?.length || comicHtml);
     if (!hasComicContent && !selectedItemDisplayContent) return;
 
+    let unbindContentImages = () => {};
+
     if (!isComicReaderContent) {
       highlightArticleCode(contentRoot);
-      bindArticleContentImages(contentRoot, runtimeBase);
+      unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
+        onImagePreview: openImagePreview,
+        previewEnabled: selectedItemImagePreviewEnabled,
+      });
       bindArticleContentPlayers(contentRoot, { sessionId: inlineSessionId });
     } else if (isComicHtml) {
-      bindArticleContentImages(contentRoot, runtimeBase);
+      unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
+        previewEnabled: false,
+      });
     }
 
     if (
@@ -845,6 +888,7 @@ export default function App() {
     }
 
     return () => {
+      unbindContentImages();
       if (!isComicReaderContent) {
         destroyArticleContentPlayers(contentRoot);
       }
@@ -867,6 +911,8 @@ export default function App() {
     inlineDetailPluginMeta,
     activeChannel,
     channelCapabilities,
+    openImagePreview,
+    selectedItemImagePreviewEnabled,
   ]);
 
   const toggleChaptersDrawer = useCallback(() => {
@@ -1048,6 +1094,12 @@ export default function App() {
     item: Article,
     resumeIntent?: PlaybackResumeIntent,
   ) => {
+    const pluginMeta = pluginById.get(item.pluginId);
+    if (isSocialPlugin(pluginMeta) && !shouldOpenSocialDetail(item, pluginMeta)) {
+      void markArticleRead(item);
+      return;
+    }
+
     const requestId = ++itemSelectRequestRef.current;
     void markArticleRead(item);
     setAiSummary(null);
@@ -1055,7 +1107,6 @@ export default function App() {
     setActiveImageIndex(0);
     detailResumeAppliedRef.current = false;
 
-    const pluginMeta = pluginById.get(item.pluginId);
     const channelId = resolveArticleDetailChannel(
       item,
       pluginMeta,
@@ -1136,7 +1187,7 @@ export default function App() {
 
     // Grid browse modes pick items explicitly (handleGridItemSelect / openReaderDetailModal).
     // Auto-selecting the first item here races with that click when page detail opens.
-    if (isGridPreviewMode) return;
+    if (isGridPreviewMode || isSocialFeedPreviewMode) return;
 
     const first = visibleArticles[0];
     if (first) {
@@ -1150,6 +1201,7 @@ export default function App() {
     gridPageDetailOpen,
     activePlugin,
     isGridPreviewMode,
+    isSocialFeedPreviewMode,
   ]);
 
   useEffect(() => {
@@ -1465,6 +1517,7 @@ export default function App() {
     setGridDetailViewMode(getStoredGridDetailViewMode(activePlugin) ?? "modal");
     setVideoWallColumnCount(getStoredVideoWallColumnCount(activePlugin));
     setSplitPaneRatio(getStoredSplitPaneRatio(activePlugin));
+    setSocialFeedWidth(getStoredSocialFeedWidth(activePlugin));
   }, [activePlugin, activePluginMeta]);
 
   useEffect(() => {
@@ -1737,6 +1790,15 @@ export default function App() {
     }
     openReaderDetailModal(article);
   }, [gridDetailViewMode, handleItemSelect, openReaderDetailModal]);
+
+  const handleSocialFeedItemSelect = useCallback((article: Article) => {
+    const pluginMeta = pluginById.get(article.pluginId);
+    if (shouldOpenSocialDetail(article, pluginMeta)) {
+      openReaderDetailModal(article);
+      return;
+    }
+    void markArticleRead(article);
+  }, [markArticleRead, openReaderDetailModal, pluginById]);
 
   const switchReaderToPageDetail = useCallback((
     sessionId: string,
@@ -2430,12 +2492,12 @@ export default function App() {
                     {feedListBusy
                       ? "加载中…"
                       : isBrowseDynamicPluginActive
-                        ? `共 ${feedTotal || filteredArticles.length} ${isImageGalleryPlugin(activePluginMeta) ? "张" : "篇"}`
+                        ? `共 ${feedTotal || filteredArticles.length} ${feedCountUnit(activePluginMeta)}`
                         : isActiveDynamicChannel
                           ? submittedSearch
                             ? `共 ${feedTotal} 条结果`
                             : "实时搜索"
-                          : `共 ${submittedSearch ? feedTotal : filteredArticles.length} 篇`}
+                          : `共 ${submittedSearch ? feedTotal : filteredArticles.length} ${feedCountUnit(activePluginMeta)}`}
                   </span>
                 </div>
               </div>
@@ -2477,6 +2539,30 @@ export default function App() {
                       || (chaptersParent != null && chaptersParent.id === item.id);
                     const isUnread = !item.isRead;
                     const pluginMeta = pluginById.get(item.pluginId);
+                    if (isSocialPlugin(pluginMeta)) {
+                      return (
+                        <SocialFeedCard
+                          key={item.id}
+                          article={item}
+                          runtimeBase={runtimeBase}
+                          isSelected={Boolean(isSelected)}
+                          isUnread={isUnread}
+                          onSelect={() => handleItemSelect(item)}
+                          onIgnore={(e) => {
+                            e.stopPropagation();
+                            handleIgnoreArticle(item.id);
+                          }}
+                          onBookmark={(e) => {
+                            e.stopPropagation();
+                            handleBookmarkToggle(item.id);
+                          }}
+                          failedThumbnail={failedThumbnailIds.has(item.id)}
+                          onThumbnailError={() => {
+                            setFailedThumbnailIds(prev => new Set(prev).add(item.id));
+                          }}
+                        />
+                      );
+                    }
                     return (
                       <div 
                         key={item.id}
@@ -2665,6 +2751,11 @@ export default function App() {
                             由 {selectedItem.author} 撰写
                           </span>
                         ) : null}
+                        {isSocialFeedPreviewMode && activePlugin !== "all" ? (
+                          <span className="text-xs text-neutral-400 truncate">
+                            推文展示 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条
+                          </span>
+                        ) : null}
                         {isGridPreviewMode && activePlugin !== "all" && !pageDetailSubtitle ? (
                           <span className="text-xs text-neutral-400 truncate">
                             卡片视图 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条
@@ -2785,6 +2876,17 @@ export default function App() {
                             label="视频列"
                             value={videoWallColumnCount}
                             onChange={handleVideoWallColumnCountChange}
+                          />
+                        ) : null}
+
+                        {isSocialFeedPreviewMode && activePlugin !== "all" ? (
+                          <ComicPageWidthSlider
+                            theme={theme}
+                            value={socialFeedWidth}
+                            onChange={handleSocialFeedWidthChange}
+                            className="mx-1"
+                            title="调节推文宽度"
+                            ariaLabel="推文宽度"
                           />
                         ) : null}
 
@@ -3018,13 +3120,17 @@ export default function App() {
                   ) : null}
 
                   {isPluginFocusMode
-                    && showPluginChannelBar
-                    && !(isGridPageMode && gridPageDetailOpen) ? (
+                    && !(isGridPageMode && gridPageDetailOpen)
+                    && (
+                      (showPluginChannelBar && !isSocialFeedPreviewMode)
+                      || (isSocialFeedPreviewMode && activePluginChannels.length > 0)
+                    ) ? (
                     <PluginChannelBar
                       activeChannel={activeChannel}
                       channels={activePluginChannels}
                       onChannelChange={selectChannel}
                       className="mt-2"
+                      minChannels={isSocialFeedPreviewMode ? 1 : 2}
                     />
                   ) : null}
                 </div>
@@ -3119,6 +3225,30 @@ export default function App() {
                         ? openReaderDetailModal
                         : undefined
                     }
+                    scrollRootRef={readerPanelRef}
+                  />
+                ) : isSocialFeedPreviewMode && activePlugin !== "all" ? (
+                  <SocialFeedFocusView
+                    theme={theme}
+                    runtimeBase={runtimeBase}
+                    articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                    feedWidthPercent={socialFeedWidth}
+                    loading={feedLoading}
+                    loadingMore={feedLoadingMore}
+                    searching={feedSearching}
+                    hasMore={feedHasMore}
+                    onLoadMore={() => {
+                      void loadMore().catch(console.error);
+                    }}
+                    onItemSelect={handleSocialFeedItemSelect}
+                    onBookmark={(article, event) => {
+                      event.stopPropagation();
+                      handleBookmarkToggle(article.id);
+                    }}
+                    onIgnore={(article, event) => {
+                      event.stopPropagation();
+                      handleIgnoreArticle(article.id);
+                    }}
                     scrollRootRef={readerPanelRef}
                   />
                 ) : isGridPreviewMode && activePlugin !== "all" && !gridPageDetailOpen ? (
@@ -3535,6 +3665,8 @@ export default function App() {
         onClose={closeReaderSession}
         onCloseAll={closeDockedReaderSessions}
       />
+
+      {previewLightbox}
 
     </div>
     </VideoSessionMountProvider>

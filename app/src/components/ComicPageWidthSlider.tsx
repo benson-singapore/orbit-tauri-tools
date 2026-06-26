@@ -14,6 +14,8 @@ interface ComicPageWidthSliderProps {
   value: number;
   onChange: (width: number) => void;
   className?: string;
+  title?: string;
+  ariaLabel?: string;
 }
 
 export function ComicPageWidthSlider({
@@ -21,6 +23,8 @@ export function ComicPageWidthSlider({
   value,
   onChange,
   className = "",
+  title = "调节漫画页宽",
+  ariaLabel = "漫画页宽",
 }: ComicPageWidthSliderProps) {
   const isDark = isDarkTheme(theme);
   const trackRef = useRef<HTMLDivElement>(null);
@@ -42,7 +46,7 @@ export function ComicPageWidthSlider({
   return (
     <div
       className={`flex items-center gap-1.5 shrink-0 ${className}`}
-      title="调节漫画页宽"
+      title={title}
       onMouseEnter={() => setHovering(true)}
       onMouseLeave={() => setHovering(false)}
     >
@@ -73,7 +77,7 @@ export function ComicPageWidthSlider({
           onPointerUp={() => setDragging(false)}
           onPointerCancel={() => setDragging(false)}
           onBlur={() => setDragging(false)}
-          aria-label="漫画页宽"
+          aria-label={ariaLabel}
           aria-valuemin={COMIC_PAGE_WIDTH_MIN}
           aria-valuemax={COMIC_PAGE_WIDTH_MAX}
           aria-valuenow={clamped}

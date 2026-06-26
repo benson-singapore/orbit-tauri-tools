@@ -72,7 +72,11 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 		if items == nil {
 			items = []FeedItem{}
 		}
-		return DispatchResult{Items: items, HasMore: sess.HasMore}, nil
+		out := DispatchResult{Items: items, HasMore: sess.HasMore}
+		if sess.LastResponse != nil && len(sess.LastResponse.Next) > 0 {
+			out.Next = sess.LastResponse.Next
+		}
+		return out, nil
 	}
 
 	rows, total, err := d.registry.store.ListFeedItemsPaged(ctx, pluginID, channelID, limit, offset)
@@ -176,7 +180,7 @@ func (d *FeatureDispatcher) ClearAndRefresh(ctx context.Context, pluginID, chann
 
 	if !features.Feed.Persist {
 		d.sessions.SetEphemeral(rec.ID, ch.ID, result.Items, hasMore)
-		return DispatchResult{Items: result.Items, HasMore: hasMore, Title: result.Title}, nil
+		return DispatchResult{Items: result.Items, HasMore: hasMore, Title: result.Title, Next: result.Next}, nil
 	}
 
 	now := time.Now().Unix()

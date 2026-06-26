@@ -62,11 +62,17 @@ func nativeFeedItemID(row store.FeedItemRow) string {
 
 func feedItemToRow(item FeedItem, channelID string) (store.FeedItemRow, error) {
 	payload, err := json.Marshal(map[string]any{
-		"tags":       item.Tags,
-		"pluginName": item.PluginName,
-		"type":       item.Type,
-		"channelId":  channelID,
-		"content":    item.Content,
+		"tags":         item.Tags,
+		"pluginName":   item.PluginName,
+		"type":         item.Type,
+		"channelId":    channelID,
+		"content":      item.Content,
+		"kind":         item.Kind,
+		"authorAvatar": item.AuthorAvatar,
+		"authorHandle": item.AuthorHandle,
+		"stats":        item.Stats,
+		"media":        item.Media,
+		"quote":        item.Quote,
 	})
 	if err != nil {
 		return store.FeedItemRow{}, err
@@ -105,11 +111,17 @@ func rowToFeedItem(row store.FeedItemRow, includeContent bool) FeedItem {
 	}
 	if row.PayloadJSON != "" {
 		var payload struct {
-			Tags       []string `json:"tags"`
-			PluginName string   `json:"pluginName"`
-			Type       string   `json:"type"`
-			ChannelID  string   `json:"channelId"`
-			Content    string   `json:"content"`
+			Tags         []string        `json:"tags"`
+			PluginName   string          `json:"pluginName"`
+			Type         string          `json:"type"`
+			ChannelID    string          `json:"channelId"`
+			Content      string          `json:"content"`
+			Kind         string          `json:"kind"`
+			AuthorAvatar string          `json:"authorAvatar"`
+			AuthorHandle string          `json:"authorHandle"`
+			Stats        *SocialStats    `json:"stats"`
+			Media        []SocialMedia   `json:"media"`
+			Quote        *SocialQuote    `json:"quote"`
 		}
 		_ = json.Unmarshal([]byte(row.PayloadJSON), &payload)
 		if payload.ChannelID != "" {
@@ -129,6 +141,12 @@ func rowToFeedItem(row store.FeedItemRow, includeContent bool) FeedItem {
 		if includeContent && payload.Content != "" {
 			item.Content = payload.Content
 		}
+		item.Kind = payload.Kind
+		item.AuthorAvatar = payload.AuthorAvatar
+		item.AuthorHandle = payload.AuthorHandle
+		item.Stats = payload.Stats
+		item.Media = payload.Media
+		item.Quote = payload.Quote
 	}
 	return item
 }

@@ -28,6 +28,7 @@ import {
   shouldUseRuntimeV2,
   type RuntimeCallOptions,
 } from "@/lib/runtimeV2";
+import { isSocialPlugin } from "@/lib/socialPlugin";
 import { resolveDefaultPluginChannel } from "@/lib/browseDynamicFeed";
 import {
   buildFeedLoadMoreParams,
@@ -446,6 +447,7 @@ export function useOrbitData(
       });
       if (isStaleRequest()) return -1;
       const items = result.items ?? [];
+      feedNextParamsRef.current = result.next ?? null;
       const paginated = channelSupportsLoadMore(cap, activeChannel);
       setFeedTotal(offset + items.length);
       setHasMore(resolveFeedHasMore({
@@ -576,6 +578,14 @@ export function useOrbitData(
       );
       if (shouldUseRuntimeV2(pluginFilterRef.current, plugin) && feedChannel !== "all") {
         await loadChannelCapabilities(pluginFilterRef.current, feedChannel);
+        if (isSocialPlugin(plugin)) {
+          const refreshResult = await runtimeRefresh(
+            pluginFilterRef.current,
+            feedChannel,
+            runtimeOptionsForPlugin(plugin),
+          );
+          feedNextParamsRef.current = refreshResult.next ?? null;
+        }
       }
       const itemCount = await loadFeedPage({ offset: 0, append: false });
       if (
@@ -674,6 +684,14 @@ export function useOrbitData(
       );
       if (shouldUseRuntimeV2(pluginFilterRef.current, plugin) && feedChannel !== "all") {
         await loadChannelCapabilities(pluginFilterRef.current, feedChannel);
+        if (isSocialPlugin(plugin)) {
+          const refreshResult = await runtimeRefresh(
+            pluginFilterRef.current,
+            feedChannel,
+            runtimeOptionsForPlugin(plugin),
+          );
+          feedNextParamsRef.current = refreshResult.next ?? null;
+        }
       }
       const itemCount = await loadFeedPage({ offset: 0, append: false });
       deferLoadingClear = itemCount === 0 && shouldScheduleBackgroundFeedReload(

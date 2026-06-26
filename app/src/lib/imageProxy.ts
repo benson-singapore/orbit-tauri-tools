@@ -156,6 +156,11 @@ function resolveBoundImageOriginal(img: HTMLImageElement): string {
   return decodeProxiedImageUrl(img.src) ?? "";
 }
 
+/** Resolve the canonical remote URL for an article body image (for copy / download). */
+export function resolveArticleContentImageUrl(img: HTMLImageElement): string {
+  return resolveBoundImageOriginal(img);
+}
+
 /** Comic lazy images keep the real URL in data-src until activated — skip error hooks until then. */
 export function isComicLazyImagePending(img: HTMLImageElement, runtimeBase?: string | null): boolean {
   if (!img.hasAttribute("data-comic-lazy")) return false;
@@ -207,10 +212,13 @@ export function bindArticleContentImages(
   root: HTMLElement | null,
   runtimeBase: string | null | undefined,
 ): void {
-  if (!root || !runtimeBase) return;
+  if (!root) return;
+
+  const base = runtimeBase ?? getCachedRuntimeBaseUrl();
+  if (!base) return;
 
   root.querySelectorAll("img").forEach(img => {
     if (isComicLazyImagePending(img, runtimeBase)) return;
-    attachArticleImageErrorHandler(img, runtimeBase);
+    attachArticleImageErrorHandler(img, base);
   });
 }

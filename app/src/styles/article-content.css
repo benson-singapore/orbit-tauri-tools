@@ -130,6 +130,10 @@
   border-radius: 0.75rem;
 }
 
+.article-content :where(img.orbit-article-image-previewable) {
+  cursor: zoom-in;
+}
+
 .article-content :where(video) {
   display: block;
   width: 100%;
@@ -153,37 +157,51 @@
   border-top-color: #404040;
 }
 
-/* Tables — rounded card, row dividers (no vertical grid) */
+/* Tables — follow global orbit theme tokens */
+.article-content :where(section:has(> table), div:has(> table)) {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin-bottom: 1.25em;
+}
+
+.article-content :where(section:has(> table) > table, div:has(> table) > table) {
+  margin-bottom: 0;
+}
+
 .article-content :where(table) {
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
   font-size: calc(0.9375rem * var(--reader-scale, 1));
   line-height: 1.55;
-  border: 1px solid #e5e5e5;
+  color: var(--orbit-text);
+  border: 1px solid var(--orbit-border-strong);
   border-radius: 0.75rem;
   overflow: hidden;
-  background: #fff;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  background: var(--orbit-surface);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--orbit-text) 5%, transparent);
 }
 
 .article-content :where(th, td) {
-  padding: 0.625rem 0.875rem;
+  padding: 0.65rem 0.9rem;
   text-align: left;
-  vertical-align: top;
+  vertical-align: middle;
+  color: inherit;
 }
 
 .article-content :where(thead th) {
   font-weight: 600;
   font-size: calc(0.8125rem * var(--reader-scale, 1));
-  color: #525252;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e5e5e5;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  color: var(--orbit-text-muted);
+  background: color-mix(in srgb, var(--orbit-accent) 8%, var(--orbit-surface));
+  border-bottom: 1px solid var(--orbit-border-strong);
 }
 
 .article-content :where(tr + tr > th),
 .article-content :where(tr + tr > td) {
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--orbit-border);
 }
 
 .article-content :where(thead + tbody > tr:first-child > th),
@@ -192,19 +210,19 @@
 }
 
 .article-content :where(tbody tr:nth-child(even)) {
-  background: #fafafa;
+  background: color-mix(in srgb, var(--orbit-bg-muted) 55%, var(--orbit-surface));
 }
 
 .article-content :where(table:not(:has(thead)) > tr:nth-child(even):not(:first-child)) {
-  background: #fafafa;
+  background: color-mix(in srgb, var(--orbit-bg-muted) 55%, var(--orbit-surface));
 }
 
 .article-content :where(tbody tr:hover) {
-  background: #f5f5f5;
+  background: color-mix(in srgb, var(--orbit-accent) 10%, var(--orbit-surface));
 }
 
 .article-content :where(table:not(:has(thead)) > tr:not(:first-child):hover) {
-  background: #f5f5f5;
+  background: color-mix(in srgb, var(--orbit-accent) 10%, var(--orbit-surface));
 }
 
 /* No <thead>: treat first row as header */
@@ -212,14 +230,15 @@
 .article-content :where(table:not(:has(thead)) > tr:first-child td) {
   font-weight: 600;
   font-size: calc(0.8125rem * var(--reader-scale, 1));
-  color: #525252;
-  background: #f8f9fa;
-  border-bottom: 1px solid #e5e5e5;
+  letter-spacing: 0.02em;
+  color: var(--orbit-text-muted);
+  background: color-mix(in srgb, var(--orbit-accent) 8%, var(--orbit-surface));
+  border-bottom: 1px solid var(--orbit-border-strong);
 }
 
 .article-content :where(table:not(:has(thead)) > tr:first-child ~ tr > th),
 .article-content :where(table:not(:has(thead)) > tr:first-child ~ tr > td) {
-  border-top: 1px solid #f0f0f0;
+  border-top: 1px solid var(--orbit-border);
 }
 
 .article-content :where(table:not(:has(thead)) > tr:first-child th),
@@ -227,44 +246,9 @@
   border-top: none;
 }
 
-.article-content[data-theme="dark"] :where(table) {
-  border-color: rgba(139, 92, 246, 0.22);
-  background: #1a1428;
-  box-shadow: none;
-}
-
-.article-content[data-theme="dark"] :where(thead th) {
-  color: #c4b5fd;
-  background: #211830;
-  border-bottom-color: rgba(139, 92, 246, 0.22);
-}
-
-.article-content[data-theme="dark"] :where(tr + tr > th),
-.article-content[data-theme="dark"] :where(tr + tr > td) {
-  border-top-color: rgba(139, 92, 246, 0.14);
-}
-
-.article-content[data-theme="dark"] :where(tbody tr:nth-child(even)) {
-  background: #15102a;
-}
-
-.article-content[data-theme="dark"] :where(table:not(:has(thead)) > tr:nth-child(even):not(:first-child)) {
-  background: #15102a;
-}
-
-.article-content[data-theme="dark"] :where(tbody tr:hover) {
-  background: #211830;
-}
-
-.article-content[data-theme="dark"] :where(table:not(:has(thead)) > tr:not(:first-child):hover) {
-  background: #211830;
-}
-
-.article-content[data-theme="dark"] :where(table:not(:has(thead)) > tr:first-child th),
-.article-content[data-theme="dark"] :where(table:not(:has(thead)) > tr:first-child td) {
-  color: #c4b5fd;
-  background: #211830;
-  border-bottom-color: rgba(139, 92, 246, 0.22);
+.article-content :where(td strong, th strong) {
+  color: var(--orbit-text);
+  font-weight: 600;
 }
 
 /* Inline code */

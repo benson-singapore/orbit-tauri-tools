@@ -5,7 +5,8 @@ import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { prepareArticleHtmlContent } from "@/lib/articleContent";
-import { bindArticleContentImages } from "@/lib/imageProxy";
+import { bindArticleContentImagesWithPreview } from "@/lib/articleContentImagePreview";
+import { useArticleContentImagePreview } from "@/hooks/useArticleContentImagePreview";
 import {
   bindArticleContentPlayers,
   destroyArticleContentPlayers,
@@ -58,6 +59,7 @@ export function RatingDetailModal({
   const isDark = isDarkTheme(theme);
   const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
   const contentRef = useRef<HTMLDivElement>(null);
+  const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
 
   const score = parseRatingScore(article.tags ?? []);
   const extraTags = ratingDisplayTags(article.tags ?? []);
@@ -77,11 +79,17 @@ export function RatingDetailModal({
   useEffect(() => {
     if (displayContent) {
       highlightArticleCode(contentRef.current);
-      bindArticleContentImages(contentRef.current, runtimeBase);
+      const unbindContentImages = bindArticleContentImagesWithPreview(contentRef.current, runtimeBase, {
+        onImagePreview: openImagePreview,
+      });
       bindArticleContentPlayers(contentRef.current);
+      return () => {
+        unbindContentImages();
+        destroyArticleContentPlayers(contentRef.current);
+      };
     }
     return () => destroyArticleContentPlayers(contentRef.current);
-  }, [displayContent, runtimeBase, theme]);
+  }, [displayContent, runtimeBase, theme, openImagePreview]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -298,5 +306,10 @@ export function RatingDetailModal({
     </div>
   );
 
-  return createPortal(modal, document.body);
+  return (
+    <>
+      {createPortal(modal, document.body)}
+      {previewLightbox}
+    </>
+  );
 }
