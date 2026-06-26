@@ -58,7 +58,11 @@ fn get_runtime_url(state: State<RuntimeState>) -> Result<Option<String>, String>
 
 #[tauri::command]
 fn get_app_platform() -> String {
-    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+    let os = match std::env::consts::OS {
+        "macos" => "darwin",
+        other => other,
+    };
+    format!("{}-{}", os, std::env::consts::ARCH)
 }
 
 #[tauri::command]

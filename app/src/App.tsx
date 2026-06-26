@@ -2247,14 +2247,15 @@ export default function App() {
           </div>
 
           {/* Bottom App Footer */}
-          <div className={`border-t dark:border-neutral-800 bg-neutral-50/50 dark:bg-neutral-900/20 ${isSidebarCollapsed ? "p-2" : "p-3"}`}>
-            <button 
+          <div className={`orbit-sidebar-footer ${isSidebarCollapsed ? "p-2" : "p-3"}`}>
+            <button
+              type="button"
               onClick={() => setShowPluginStore(true)}
-              className={`w-full flex items-center justify-center rounded-xl bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/40 dark:hover:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 text-xs font-semibold transition-all ${
+              className={`orbit-sidebar-add-plugin w-full flex items-center justify-center rounded-xl text-xs font-semibold ${
                 isSidebarCollapsed ? "p-2" : "gap-2 py-2 px-3"
               }`}
             >
-              <Icon name="puzzle" className="w-4 h-4" />
+              <Icon name="puzzle" className="w-4 h-4 shrink-0" />
               {!isSidebarCollapsed && <span>添加/自定新插件</span>}
             </button>
           </div>

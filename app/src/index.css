@@ -382,3 +382,26 @@ html.dark .orbit-chapters-drawer {
   background: var(--orbit-card-hover);
   color: var(--orbit-text);
 }
+
+.orbit-sidebar-footer {
+  border-top: 1px solid var(--orbit-border);
+  background: color-mix(in srgb, var(--orbit-bg-muted) 50%, transparent);
+}
+
+.orbit-sidebar-add-plugin {
+  color: var(--orbit-text-muted);
+  background: color-mix(in srgb, var(--orbit-accent) 8%, var(--orbit-surface));
+  border: 1px solid color-mix(in srgb, var(--orbit-accent) 22%, var(--orbit-border));
+  transition: background-color 0.2s, border-color 0.2s, box-shadow 0.2s, color 0.2s;
+}
+
+.orbit-sidebar-add-plugin:hover {
+  color: var(--orbit-text);
+  background: color-mix(in srgb, var(--orbit-accent) 14%, var(--orbit-surface));
+  border-color: color-mix(in srgb, var(--orbit-accent) 38%, var(--orbit-border));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--orbit-accent) 12%, transparent);
+}
+
+.orbit-sidebar-add-plugin:active {
+  background: color-mix(in srgb, var(--orbit-accent) 20%, var(--orbit-surface));
+}

@@ -61,6 +61,31 @@ export interface AppPlatformInfo {
   arch: string;
 }
 
+const PLATFORM_LABEL_FALLBACKS: Record<string, string> = {
+  "darwin-aarch64": "macOS (Apple Silicon)",
+  "darwin-x86_64": "macOS (Intel)",
+  "windows-x86_64": "Windows",
+  "linux-x86_64": "Linux",
+};
+
+export function normalizePlatformId(platformId: string): string {
+  const [os = "unknown", arch = "x86_64"] = platformId.split("-");
+  const normalizedOs = os === "macos" ? "darwin" : os;
+  return `${normalizedOs}-${arch}`;
+}
+
+export function platformLabel(
+  platformId: string,
+  platforms: ReleasePlatform[] = [],
+): string {
+  const normalizedId = normalizePlatformId(platformId);
+  return (
+    platforms.find(item => item.id === normalizedId)?.label
+    ?? PLATFORM_LABEL_FALLBACKS[normalizedId]
+    ?? normalizedId
+  );
+}
+
 export interface AppUpdateSummary {
   updateAvailable: boolean;
   loading: boolean;
@@ -124,7 +149,7 @@ function inferArch(): string {
 export async function resolveCurrentPlatformInfo(): Promise<AppPlatformInfo> {
   if (isTauriRuntime()) {
     try {
-      const platformId = await invoke<string>("get_app_platform");
+      const platformId = normalizePlatformId(await invoke<string>("get_app_platform"));
       const [os = "unknown", arch = "x86_64"] = platformId.split("-");
       return { id: platformId, os, arch };
     } catch {
@@ -134,10 +159,11 @@ export async function resolveCurrentPlatformInfo(): Promise<AppPlatformInfo> {
 
   const os = inferOs();
   const arch = inferArch();
+  const id = normalizePlatformId(`${os}-${arch}`);
   return {
-    id: `${os}-${arch}`,
-    os,
-    arch,
+    id,
+    os: id.split("-")[0] ?? os,
+    arch: id.split("-")[1] ?? arch,
   };
 }
 
@@ -157,6 +183,6 @@ export async function checkAppUpdate(
 ): Promise<AppUpdateCheckResult> {
   return fetchApi<AppUpdateCheckResult>("/update-check", {
     appVersion,
-    platform: platformId,
+    platform: normalizePlatformId(platformId),
   });
 }

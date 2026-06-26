@@ -12,6 +12,7 @@ import {
   checkAppUpdate,
   fetchReleaseHistory,
   fetchReleasePlatforms,
+  platformLabel,
   resolveCurrentPlatformInfo,
   type AppReleaseItem,
   type AppUpdateCheckResult,
@@ -365,25 +366,56 @@ export function SystemInfoPanel({
       resolvedPlatformId = currentPlatform.id;
       setPlatformId(currentPlatform.id);
 
-      const [platforms, history, update] = await Promise.all([
+      const [platformsResult, historyResult, updateResult] = await Promise.allSettled([
         fetchReleasePlatforms(),
         fetchReleaseHistory(),
         checkAppUpdate(info.version, currentPlatform.id),
       ]);
 
-      setReleasePlatforms(platforms);
-      setReleaseHistory(history);
-      setUpdateInfo(update);
-      setUpdateError(null);
+      if (platformsResult.status === "fulfilled") {
+        setReleasePlatforms(platformsResult.value);
+      } else {
+        setReleasePlatforms([]);
+      }
+
+      if (historyResult.status === "fulfilled") {
+        setReleaseHistory(historyResult.value);
+      } else {
+        setReleaseHistory([]);
+      }
+
+      if (updateResult.status === "fulfilled") {
+        const update = updateResult.value;
+        setUpdateInfo(update);
+        setUpdateError(null);
+        const checkedAt = new Date().toISOString();
+        setLastCheckedAt(checkedAt);
+        notifyUpdateSummary({
+          updateAvailable: update.updateAvailable,
+          loading: false,
+          platformId: currentPlatform.id,
+          latestVersion: update.latest?.appVersion ?? null,
+          channel: update.channel,
+          error: null,
+        });
+        return;
+      }
+
+      const message =
+        updateResult.reason instanceof Error
+          ? updateResult.reason.message
+          : String(updateResult.reason);
+      setUpdateInfo(null);
+      setUpdateError(message);
       const checkedAt = new Date().toISOString();
       setLastCheckedAt(checkedAt);
       notifyUpdateSummary({
-        updateAvailable: update.updateAvailable,
+        updateAvailable: false,
         loading: false,
         platformId: currentPlatform.id,
-        latestVersion: update.latest?.appVersion ?? null,
-        channel: update.channel,
-        error: null,
+        latestVersion: null,
+        channel: null,
+        error: message,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -458,7 +490,7 @@ export function SystemInfoPanel({
   const frontendWebUrl = resolveBrowserFrontendUrl();
   const currentPlatformLabel = useMemo(() => {
     if (!platformId) return "—";
-    return releasePlatforms.find(item => item.id === platformId)?.label ?? platformId;
+    return platformLabel(platformId, releasePlatforms);
   }, [platformId, releasePlatforms]);
   const latestRelease = updateInfo?.latest ?? null;
   const currentReleaseVersion = updateInfo?.current.appVersion ?? appInfo?.version ?? "—";

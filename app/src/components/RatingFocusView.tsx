@@ -83,18 +83,26 @@ export function RatingFocusView({
     );
   }
 
+  const rowsWithSummary = new Set<number>();
+  for (let i = 0; i < articles.length; i++) {
+    if (articles[i].summary?.trim()) {
+      rowsWithSummary.add(Math.floor(i / columnCount));
+    }
+  }
+
   return (
     <div className="w-full">
       <div
         className="grid gap-3"
         style={{ gridTemplateColumns: `repeat(${columnCount}, minmax(0, 1fr))` }}
       >
-        {articles.map(item => {
+        {articles.map((item, index) => {
           const tags = item.tags ?? [];
           const score = parseRatingScore(tags);
           const displayTags = ratingDisplayTags(tags);
           const hasImage = Boolean(item.image?.trim()) && !failedIds.has(item.id);
           const isSelected = selectedArticleId === item.id;
+          const rowShowsSummary = rowsWithSummary.has(Math.floor(index / columnCount));
 
           return (
             <button
@@ -141,7 +149,9 @@ export function RatingFocusView({
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/15 transition-colors pointer-events-none" />
               </div>
 
-              <div className="flex-shrink-0 p-2.5 space-y-1">
+              <div
+                className={`flex-shrink-0 space-y-1 ${rowShowsSummary ? "p-2.5" : "px-2.5 pt-2 pb-1.5"}`}
+              >
                 <h4
                   className={`text-xs font-semibold leading-5 line-clamp-2 h-10 ${
                     isDarkTheme(theme) ? "text-neutral-100" : "text-neutral-800"
@@ -165,9 +175,11 @@ export function RatingFocusView({
                     ))}
                   </div>
                 ) : null}
-                <p className="text-[10px] leading-4 text-neutral-400 line-clamp-2 h-8">
-                  {item.summary?.trim() || "\u00A0"}
-                </p>
+                {rowShowsSummary ? (
+                  <p className="text-[10px] leading-4 text-neutral-400 line-clamp-2 h-8">
+                    {item.summary?.trim() || "\u00A0"}
+                  </p>
+                ) : null}
               </div>
             </button>
           );
