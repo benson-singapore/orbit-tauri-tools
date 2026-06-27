@@ -1,5 +1,5 @@
 import Hls from "hls.js";
-import { isHlsVideoUrl } from "@/lib/articleVideoUrl";
+import { isHlsVideoUrl, resolveVideoElementSourceUrl } from "@/lib/articleVideoUrl";
 import {
   bindEmbeddedVideoTheater,
   destroyEmbeddedVideoTheater,
@@ -331,6 +331,20 @@ function resolveActiveSourceIndex(article: HTMLElement): number {
   return 0;
 }
 
+function bindPlainContentVideo(video: HTMLVideoElement, sessionId?: string): void {
+  if (video.dataset.orbitInlineVideoBound === "1") return;
+  if (video.closest("article.rycjapi-player")) return;
+
+  const url = resolveVideoElementSourceUrl(video);
+  if (!url) return;
+
+  video.dataset.orbitInlineVideoBound = "1";
+  setEmbeddedVideoSource(video, url, sessionId);
+  bindInlineVideoTracking(video, sessionId);
+  bindEmbeddedResumeListener(video, sessionId);
+  bindEmbeddedVideoTheater(video);
+}
+
 function bindRycjPlayer(article: HTMLElement, sessionId?: string): void {
   const sourcesJson = article.dataset.rycjSources;
   if (!sourcesJson) return;
@@ -390,6 +404,10 @@ export function bindArticleContentPlayers(
     if (article.dataset.orbitPlayerBound === "1") continue;
     article.dataset.orbitPlayerBound = "1";
     bindRycjPlayer(article, sessionId);
+  }
+
+  for (const video of root.querySelectorAll<HTMLVideoElement>("video")) {
+    bindPlainContentVideo(video, sessionId);
   }
 }
 

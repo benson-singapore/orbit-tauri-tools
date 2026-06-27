@@ -405,3 +405,10 @@ html.dark .orbit-chapters-drawer {
 .orbit-sidebar-add-plugin:active {
   background: color-mix(in srgb, var(--orbit-accent) 20%, var(--orbit-surface));
 }
+
+.orbit-sidebar-add-plugin-active {
+  color: var(--orbit-text);
+  background: color-mix(in srgb, var(--orbit-accent) 14%, var(--orbit-surface));
+  border-color: color-mix(in srgb, var(--orbit-accent) 38%, var(--orbit-border));
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--orbit-accent) 12%, transparent);
+}

@@ -699,7 +699,7 @@ export function SystemInfoPanel({
             onClick={() => void openExternalUrl("https://orbit-plugins-resource.pages.dev/")}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#5856D6] text-white hover:bg-[#4c4ac0] transition-colors"
           >
-            <Icon name="share" className="w-3.5 h-3.5" />
+            <Icon name="download" className="w-3.5 h-3.5" />
             下载
           </button>
         </div>

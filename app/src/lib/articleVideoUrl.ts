@@ -48,6 +48,16 @@ function pickBestSourceUrl(sources: Iterable<Element>): string | null {
   return bestUrl;
 }
 
+/** Resolve the best playable URL from a mounted `<video>` element. */
+export function resolveVideoElementSourceUrl(video: HTMLVideoElement): string | null {
+  const directSrc = video.getAttribute("src")?.trim() ?? "";
+  if (isUsableVideoSrc(directSrc)) {
+    return directSrc;
+  }
+
+  return pickBestSourceUrl(video.querySelectorAll("source"));
+}
+
 /** Extract the primary playable URL from article HTML (`<video>` / `<source>`). */
 export function extractVideoUrlFromContent(html: string): string | null {
   if (!html.trim() || typeof DOMParser === "undefined") {
@@ -57,15 +67,8 @@ export function extractVideoUrlFromContent(html: string): string | null {
   const doc = new DOMParser().parseFromString(html, "text/html");
 
   for (const video of doc.querySelectorAll("video")) {
-    const directSrc = video.getAttribute("src")?.trim() ?? "";
-    if (isUsableVideoSrc(directSrc)) {
-      return directSrc;
-    }
-
-    const fromSource = pickBestSourceUrl(video.querySelectorAll("source"));
-    if (fromSource) {
-      return fromSource;
-    }
+    const url = resolveVideoElementSourceUrl(video);
+    if (url) return url;
   }
 
   return pickBestSourceUrl(doc.querySelectorAll("source"));

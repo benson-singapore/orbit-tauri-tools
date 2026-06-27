@@ -2,7 +2,6 @@ import { resolveArticleVideoUrl } from "@/lib/articleVideoUrl";
 import {
   extractActiveRycjVideoUrlFromDom,
   extractRycjVideoUrlFromContent,
-  hasInlineArticleContentPlayer,
 } from "@/lib/articleContentPlayer";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import type { Article } from "@/types";
@@ -14,12 +13,11 @@ export function isVideoArticle(article: Article): boolean {
   return resolveArticleVideoUrl(article) != null;
 }
 
-/** YouTube / explicit videoUrl — inline `rycjapi-player` stays in article HTML until promoted. */
+/** YouTube / explicit `videoUrl` use the session player; HTML-embedded players stay in place. */
 export function usesDedicatedSessionVideoPlayer(article: Article): boolean {
   if (resolveYouTubeVideoId(article)) return true;
   if (article.videoUrl?.trim()) return true;
-  if (hasInlineArticleContentPlayer(article)) return false;
-  return resolveArticleVideoUrl(article) != null;
+  return false;
 }
 
 /** Promote inline rycj chapter player to a wall-playable session video URL. */

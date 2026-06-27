@@ -4051,7 +4051,8 @@ export function PluginManagerModal({
         <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
           {activeTab === "market" && (
             <div className="flex-1 min-h-0 flex">
-              <aside className={`w-52 shrink-0 border-r ${subtleBorder} px-4 py-5 overflow-y-auto flex flex-col`}>
+              <aside className={`w-52 shrink-0 border-r ${subtleBorder} flex flex-col min-h-0`}>
+                <div className="flex-1 min-h-0 overflow-y-auto px-4 pt-5 pb-3">
                 <div className="flex items-center justify-between px-3 mb-3">
                   <p className="text-[10px] font-semibold text-neutral-400 uppercase tracking-wider">插件分组</p>
                   <button
@@ -4068,7 +4069,7 @@ export function PluginManagerModal({
                     />
                   </button>
                 </div>
-                <nav className="space-y-0.5 flex-1 min-h-0">
+                <nav className="space-y-0.5">
                   {marketGroupsLoading && marketGroups.length <= 1 ? (
                     <p className="px-3 py-2 text-xs text-neutral-400">加载分组…</p>
                   ) : (
@@ -4097,14 +4098,14 @@ export function PluginManagerModal({
                     })
                   )}
                 </nav>
-                <div className={`mt-4 pt-4 border-t ${subtleBorder}`}>
+                </div>
+                <div className="orbit-sidebar-footer shrink-0 p-3">
                   <button
                     type="button"
                     onClick={() => setMarketCategory(MARKET_CATEGORY_UPDATES)}
-                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm transition-colors ${
-                      marketCategory === MARKET_CATEGORY_UPDATES
-                        ? "bg-amber-500/10 text-amber-700 dark:text-amber-400 font-medium"
-                        : "text-neutral-600 dark:text-neutral-400 hover:bg-neutral-100 dark:hover:bg-neutral-800/50"
+                    aria-pressed={marketCategory === MARKET_CATEGORY_UPDATES}
+                    className={`orbit-sidebar-add-plugin w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl text-xs font-semibold ${
+                      marketCategory === MARKET_CATEGORY_UPDATES ? "orbit-sidebar-add-plugin-active" : ""
                     }`}
                   >
                     <Icon name="refresh" className="w-4 h-4 shrink-0" />
@@ -4114,7 +4115,7 @@ export function PluginManagerModal({
                         className={`shrink-0 min-w-[1.25rem] h-5 px-1.5 inline-flex items-center justify-center rounded-full text-[10px] font-semibold ${
                           marketCategory === MARKET_CATEGORY_UPDATES
                             ? "bg-amber-500 text-white"
-                            : "bg-amber-100 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                            : "bg-amber-500/15 text-amber-700 dark:text-amber-300"
                         }`}
                       >
                         {pendingUpdateCount}
