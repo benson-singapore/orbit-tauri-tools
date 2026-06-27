@@ -36,6 +36,7 @@ import {
 } from "@/lib/feed";
 import {
   MARKET_CONTENT_RATING_LABELS,
+  normalizeMarketPluginContentRating,
   persistMarketContentRating,
   readStoredMarketContentRating,
 } from "@/lib/marketContentRating";
@@ -64,12 +65,13 @@ import {
 } from "@/lib/appUpdates";
 import { loadAppInfo } from "@/lib/appInfo";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
-import { ALL_MANAGE_GROUP_ID, DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
+import { DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import { SystemInfoPanel } from "@/components/SystemInfoPanel";
 import type {
   InstallRSSPluginRequest,
   MarketPluginContentRating,
   MarketPluginItem,
+  MarketPluginRequiresConfigFilter,
   MarketPluginSort,
   Plugin,
   PluginContentType,
@@ -229,6 +231,15 @@ const MARKET_SORT_OPTIONS: { id: MarketPluginSort; label: string }[] = [
   { id: "size", label: "文件大小" },
 ];
 
+const MARKET_REQUIRES_CONFIG_FILTER_OPTIONS: {
+  id: MarketPluginRequiresConfigFilter;
+  label: string;
+}[] = [
+  { id: "all", label: "全部" },
+  { id: "required", label: "需配置" },
+  { id: "optional", label: "免配置" },
+];
+
 const MARKET_CONTENT_RATING_OPTIONS: { id: MarketPluginContentRating; label: string }[] = [
   { id: "general", label: MARKET_CONTENT_RATING_LABELS.general },
   { id: "under18", label: MARKET_CONTENT_RATING_LABELS.under18 },
@@ -240,6 +251,9 @@ const MARKET_CONTENT_RATING_TAG_CLASS: Record<MarketPluginContentRating, string>
   under18: "bg-sky-50 text-sky-600 border-sky-200 dark:bg-sky-950/40 dark:text-sky-400 dark:border-sky-800",
   mature: "bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-950/40 dark:text-rose-400 dark:border-rose-800",
 };
+
+const MARKET_REQUIRES_CONFIG_TAG_CLASS =
+  "bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-800";
 
 const MARKET_TAG_COLOR_CLASS: Record<string, string> = {
   blue: "bg-blue-50 text-blue-600 border-blue-200",
@@ -352,6 +366,19 @@ function MarketPluginTagsRow({
   );
 }
 
+function filterMarketPluginsByRequiresConfig(
+  items: MarketPluginItem[],
+  filter: MarketPluginRequiresConfigFilter,
+): MarketPluginItem[] {
+  if (filter === "required") {
+    return items.filter(item => item.requiresConfig === true);
+  }
+  if (filter === "optional") {
+    return items.filter(item => !item.requiresConfig);
+  }
+  return items;
+}
+
 function MarketPluginCard({
   plugin,
   categoryLabel,
@@ -424,6 +451,13 @@ function MarketPluginCard({
                 }`}
               >
                 {MARKET_CONTENT_RATING_LABELS[plugin.contentRating]}
+              </span>
+            ) : null}
+            {plugin.requiresConfig ? (
+              <span
+                className={`shrink-0 inline-flex items-center text-[10px] font-medium px-1.5 py-0.5 rounded-md border ${MARKET_REQUIRES_CONFIG_TAG_CLASS}`}
+              >
+                需配置
               </span>
             ) : null}
           </h3>
@@ -891,12 +925,20 @@ function WasmManifestEditorModal({
   onRefresh?: () => void;
 }) {
   const isDark = isDarkTheme(theme);
-  const subtleBorder = isDark ? "border-neutral-800" : "border-neutral-200";
-  const mutedBg = isDark ? "bg-neutral-900/50" : "bg-neutral-50";
-  const panelBg = isDark ? "bg-[#141416] text-white" : "bg-white text-neutral-900";
-  const inputBg = isDark ? "bg-neutral-900/40" : "bg-white";
-  const inputBorder = isDark ? "border-neutral-800" : "border-neutral-200";
-  const inputText = isDark ? "text-neutral-100 placeholder:text-neutral-500" : "text-neutral-900 placeholder:text-neutral-400";
+  const panelBg = isDark ? "orbit-surface-elevated text-[var(--orbit-text)]" : "bg-white text-neutral-900";
+  const subtleBorder = isDark ? "border-[var(--orbit-border)]" : "border-neutral-200";
+  const mutedBg = isDark ? "bg-[color-mix(in_srgb,var(--orbit-bg-muted)_55%,transparent)]" : "bg-neutral-50";
+  const inputBg = isDark ? "bg-[color-mix(in_srgb,var(--orbit-surface)_90%,transparent)]" : "bg-white";
+  const inputBorder = isDark ? "border-[var(--orbit-border)]" : "border-neutral-200";
+  const inputText = isDark ? "text-[var(--orbit-text)] placeholder:text-[var(--orbit-text-subtle)]" : "text-neutral-900 placeholder:text-neutral-400";
+  const tabActiveClass = isDark
+    ? "bg-[color-mix(in_srgb,var(--orbit-accent)_14%,var(--orbit-surface-elevated))] text-[var(--orbit-accent)]"
+    : "bg-[#5856D6]/10 text-[#5856D6]";
+  const tabIdleClass = isDark
+    ? "text-[var(--orbit-text-muted)] hover:bg-[color-mix(in_srgb,var(--orbit-bg-muted)_45%,transparent)] hover:text-[var(--orbit-text)]"
+    : "text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700";
+
+  const needsVariablesConfig = pluginNeedsVariablesConfiguration(plugin);
 
   const baseManifestRef = useRef<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
@@ -910,6 +952,9 @@ function WasmManifestEditorModal({
 
   const [pluginName, setPluginName] = useState("");
   const [mediaType, setMediaType] = useState<NonNullable<InstallRSSPluginRequest["mediaType"]>>("article");
+  const [contentRating, setContentRating] = useState<MarketPluginContentRating>(() =>
+    normalizeMarketPluginContentRating(plugin.contentRating),
+  );
   const [channels, setChannels] = useState<WasmChannelFormRow[]>([
     createWasmChannelRow({ label: "默认" }, { idAuto: true }),
   ]);
@@ -1057,6 +1102,10 @@ function WasmManifestEditorModal({
           ? meta.iconUrl
           : "";
     setLogoImageUrl(nextLogo);
+
+    if (typeof meta.contentRating === "string") {
+      setContentRating(normalizeMarketPluginContentRating(meta.contentRating));
+    }
   };
 
   const buildManifestFromForm = (): Record<string, unknown> => {
@@ -1118,6 +1167,7 @@ function WasmManifestEditorModal({
     meta.color = color.trim();
     meta.marketCategory = marketCategory;
     meta.categoryTag = categoryTag.trim();
+    meta.contentRating = contentRating;
     const logoUrl = logoImageUrl.trim();
     if (logoUrl) {
       meta.logoImageUrl = logoUrl;
@@ -1212,6 +1262,15 @@ function WasmManifestEditorModal({
   }, [plugin.id, plugin.source]);
 
   useEffect(() => {
+    if (!needsVariablesConfig) return;
+    const variablesTabVisible =
+      Object.keys(pluginVariableSchema).length > 0 || hasSecretsApiKey;
+    if (variablesTabVisible) {
+      setFormTab("variables");
+    }
+  }, [needsVariablesConfig, pluginVariableSchema, hasSecretsApiKey]);
+
+  useEffect(() => {
     if (loading || isEditingJson || viewMode !== "form") return;
     setJsonText(buildManifestJsonText());
   }, [
@@ -1220,6 +1279,7 @@ function WasmManifestEditorModal({
     viewMode,
     pluginName,
     mediaType,
+    contentRating,
     channels,
     defaultChannel,
     refreshInterval,
@@ -1405,7 +1465,7 @@ function WasmManifestEditorModal({
                 </button>
               )}
             </div>
-            <p className={`text-[11px] mt-1 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+            <p className={`text-[11px] mt-1 ${isDark ? "text-[var(--orbit-text-muted)]" : "text-neutral-500"}`}>
               修改 channels、secrets、refreshInterval、userAgent、wasm 等配置，支持可视化表单或 JSON 编辑
             </p>
           </div>
@@ -1417,8 +1477,8 @@ function WasmManifestEditorModal({
                 onClick={() => setViewMode("form")}
                 className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                   viewMode === "form"
-                    ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
-                    : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
+                    ? `${tabActiveClass} shadow-sm`
+                    : tabIdleClass
                 }`}
               >
                 可视化配置
@@ -1428,8 +1488,8 @@ function WasmManifestEditorModal({
                 onClick={() => setViewMode("json")}
                 className={`px-4 py-1.5 rounded-xl text-xs font-semibold transition-all ${
                   viewMode === "json"
-                    ? `${isDark ? "bg-neutral-800 text-[#B7B5FF]" : "bg-white text-[#5856D6]"} shadow-sm`
-                    : `${isDark ? "text-neutral-400 hover:text-neutral-200" : "text-neutral-500 hover:text-neutral-700"}`
+                    ? `${tabActiveClass} shadow-sm`
+                    : tabIdleClass
                 }`}
               >
                 JSON 编辑
@@ -1480,18 +1540,18 @@ function WasmManifestEditorModal({
                       key={tab.id}
                       type="button"
                       onClick={() => setFormTab(tab.id)}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-semibold transition-colors ${
-                        formTab === tab.id
-                          ? isDark
-                            ? "bg-neutral-800 text-[#B7B5FF]"
-                            : "bg-[#5856D6]/10 text-[#5856D6]"
-                          : isDark
-                            ? "text-neutral-400 hover:bg-neutral-900/50 hover:text-neutral-200"
-                            : "text-neutral-500 hover:bg-neutral-50 hover:text-neutral-700"
+                      className={`relative w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-left text-xs font-semibold transition-colors ${
+                        formTab === tab.id ? tabActiveClass : tabIdleClass
                       }`}
                     >
                       <Icon name={tab.icon} className="w-4 h-4 shrink-0" />
                       {tab.label}
+                      {tab.id === "variables" && needsVariablesConfig ? (
+                        <span
+                          className="absolute top-2 right-2 h-2 w-2 rounded-full bg-amber-400 ring-2 ring-amber-400/25"
+                          aria-label="需要配置用户变量"
+                        />
+                      ) : null}
                     </button>
                   ))}
                 </aside>
@@ -1813,7 +1873,7 @@ function WasmManifestEditorModal({
                         <div>
                           <h4 className="text-sm font-bold mb-1">插件信息</h4>
                           <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-                            manifest.name、id（只读）与 mediaType
+                            manifest.name、id（只读）、mediaType 与内容分级
                           </p>
                         </div>
 
@@ -1864,6 +1924,28 @@ function WasmManifestEditorModal({
                             </StyledSelect>
                           </div>
                         </div>
+
+                        <div className="space-y-1.5">
+                          <label className={`text-[11px] font-semibold ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+                            内容分级 contentRating
+                          </label>
+                          <StyledSelect
+                            value={contentRating}
+                            onChange={e =>
+                              setContentRating(e.target.value as MarketPluginContentRating)
+                            }
+                            className={`${inputBg} ${inputBorder} ${inputText}`}
+                          >
+                            {MARKET_CONTENT_RATING_OPTIONS.map(option => (
+                              <option key={option.id} value={option.id}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </StyledSelect>
+                          <p className={`text-[10px] leading-relaxed ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                            用于体验模式与「全部」聚合流的可见性控制；保存 manifest 时写入插件元数据。
+                          </p>
+                        </div>
                       </>
                     ) : null}
 
@@ -1871,9 +1953,14 @@ function WasmManifestEditorModal({
                       <>
                         <div>
                           <h4 className="text-sm font-bold mb-1">用户变量</h4>
-                          <p className={`text-[11px] ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+                          <p className={`text-[11px] ${isDark ? "text-[var(--orbit-text-muted)]" : "text-neutral-400"}`}>
                             config.variables — 用户填写的运行时变量值（schema 定义在 manifest 中）
                           </p>
+                          {needsVariablesConfig ? (
+                            <p className="text-[11px] text-amber-700 dark:text-amber-400 mt-2 leading-relaxed">
+                              缺少必要用户变量，请在此填写并保存后，插件才会出现在左侧菜单。
+                            </p>
+                          ) : null}
                         </div>
 
                         <div className="space-y-4">
@@ -2022,9 +2109,9 @@ function WasmManifestEditorModal({
               </div>
             ) : (
               <div className="flex-1 min-h-0 overflow-hidden p-7">
-                <div className={`h-full rounded-[22px] overflow-hidden border ${subtleBorder} ${isDark ? "bg-[#0b0f12]" : "bg-neutral-950"}`}>
-                  <div className={`px-5 py-3 border-b ${isDark ? "border-neutral-800" : "border-neutral-900"} text-xs flex items-center justify-between`}>
-                    <span className={isDark ? "text-neutral-400" : "text-neutral-400"}>manifest.json</span>
+                <div className={`h-full rounded-[22px] overflow-hidden border ${subtleBorder} ${isDark ? "bg-[color-mix(in_srgb,var(--orbit-bg)_82%,transparent)]" : "bg-neutral-950"}`}>
+                  <div className={`px-5 py-3 border-b ${subtleBorder} text-xs flex items-center justify-between`}>
+                    <span className={isDark ? "text-[var(--orbit-text-muted)]" : "text-neutral-400"}>manifest.json</span>
                     <span className="text-emerald-400">● WASM 配置</span>
                   </div>
                   <textarea
@@ -2052,7 +2139,7 @@ function WasmManifestEditorModal({
         </div>
 
         <div className={`h-[68px] px-8 flex items-center justify-between border-t ${subtleBorder}`}>
-          <div className={`text-[11px] ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
+          <div className={`text-[11px] ${isDark ? "text-[var(--orbit-text-muted)]" : "text-neutral-500"}`}>
             {viewMode === "json"
               ? "提示：JSON 模式会绕过部分表单校验，保存前请确认语法正确。"
               : "保存后会立即同步到运行时插件目录。"}
@@ -2323,7 +2410,7 @@ function ImportPluginModal({
   const [jsonText, setJsonText] = useState("");
   const [isEditingJson, setIsEditingJson] = useState(false);
   const [viewMode, setViewMode] = useState<"form" | "json">("form");
-  const [importSource, setImportSource] = useState<"rss" | "wasm">("rss");
+  const [importSource, setImportSource] = useState<"rss" | "wasm">("wasm");
   const [orbitFile, setOrbitFile] = useState<File | null>(null);
   const [orbitSourceUrl, setOrbitSourceUrl] = useState("");
   const [isInstallingOrbit, setIsInstallingOrbit] = useState(false);
@@ -3697,7 +3784,7 @@ export function PluginManagerModal({
   const [installError, setInstallError] = useState<string | null>(null);
   const [importTargetGroupId, setImportTargetGroupId] = useState<string | null>(null);
   const [showGroupManager, setShowGroupManager] = useState(false);
-  const [activeManageGroupId, setActiveManageGroupId] = useState<string>(ALL_MANAGE_GROUP_ID);
+  const [activeManageGroupId, setActiveManageGroupId] = useState<string>(DEFAULT_PLUGIN_GROUP_ID);
   const [settingsConfigTabs, setSettingsConfigTabs] = useState<{ llm: boolean; tts: boolean }>({
     llm: false,
     tts: false,
@@ -3799,42 +3886,25 @@ export function PluginManagerModal({
     [groupedPluginsForManage, experienceMode],
   );
 
-  const allPluginsByInstallTime = useMemo(() => {
-    const seen = new Set<string>();
-    const all: Plugin[] = [];
-    for (const { plugins } of visibleGroupedPluginsForManage) {
-      for (const plugin of plugins) {
-        if (seen.has(plugin.id)) continue;
-        seen.add(plugin.id);
-        all.push(plugin);
-      }
-    }
-    return all.sort(
-      (a, b) =>
-        (b.installedAt ?? b.sort ?? 0) - (a.installedAt ?? a.sort ?? 0),
-    );
-  }, [visibleGroupedPluginsForManage]);
-
   const activeManageGroup = useMemo(() => {
-    if (activeManageGroupId === ALL_MANAGE_GROUP_ID) {
-      return {
-        group: { id: ALL_MANAGE_GROUP_ID, label: "全部" },
-        plugins: allPluginsByInstallTime,
-      };
-    }
     return (
       visibleGroupedPluginsForManage.find(entry => entry.group.id === activeManageGroupId)
       ?? visibleGroupedPluginsForManage[0]
+      ?? null
     );
-  }, [visibleGroupedPluginsForManage, activeManageGroupId, allPluginsByInstallTime]);
+  }, [visibleGroupedPluginsForManage, activeManageGroupId]);
 
   useEffect(() => {
-    if (activeManageGroupId === ALL_MANAGE_GROUP_ID) return;
     if (
       visibleGroupedPluginsForManage.length > 0
       && !visibleGroupedPluginsForManage.some(entry => entry.group.id === activeManageGroupId)
     ) {
-      setActiveManageGroupId(ALL_MANAGE_GROUP_ID);
+      setActiveManageGroupId(
+        visibleGroupedPluginsForManage.find(entry => entry.group.id === DEFAULT_PLUGIN_GROUP_ID)
+          ?.group.id
+          ?? visibleGroupedPluginsForManage[0]?.group.id
+          ?? DEFAULT_PLUGIN_GROUP_ID,
+      );
     }
   }, [visibleGroupedPluginsForManage, activeManageGroupId]);
 
@@ -3857,6 +3927,8 @@ export function PluginManagerModal({
   const [marketTotal, setMarketTotal] = useState(0);
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketSort, setMarketSort] = useState<MarketPluginSort>("downloads");
+  const [marketRequiresConfigFilter, setMarketRequiresConfigFilter] =
+    useState<MarketPluginRequiresConfigFilter>("all");
   const [marketContentRating, setMarketContentRating] = useState<MarketPluginContentRating>(
     readStoredMarketContentRating,
   );
@@ -3917,6 +3989,7 @@ export function PluginManagerModal({
         category: marketCategory === MARKET_CATEGORY_UPDATES ? "all" : marketCategory,
         sort: marketSort,
         contentRating: effectiveMarketContentRating,
+        requiresConfig: marketRequiresConfigFilter,
         search: debouncedMarketSearch,
         pageSize: 50,
       });
@@ -3929,7 +4002,7 @@ export function PluginManagerModal({
     } finally {
       setMarketLoading(false);
     }
-  }, [marketCategory, marketSort, effectiveMarketContentRating, debouncedMarketSearch]);
+  }, [marketCategory, marketSort, marketRequiresConfigFilter, effectiveMarketContentRating, debouncedMarketSearch]);
 
   const handleMarketSidebarRefresh = useCallback(async () => {
     if (marketSidebarRefreshing) return;
@@ -3978,18 +4051,20 @@ export function PluginManagerModal({
   );
 
   const displayedMarketPlugins = useMemo(() => {
-    if (marketCategory !== MARKET_CATEGORY_UPDATES) {
-      return marketPlugins;
-    }
-    return marketPlugins.filter(item => {
-      const installed = findInstalledMarketPlugin(item, installedPlugins);
-      return installed && pluginNeedsUpdate(installed, item);
-    });
-  }, [marketCategory, marketPlugins, installedPlugins]);
+    const baseItems = marketCategory !== MARKET_CATEGORY_UPDATES
+      ? marketPlugins
+      : marketPlugins.filter(item => {
+        const installed = findInstalledMarketPlugin(item, installedPlugins);
+        return installed && pluginNeedsUpdate(installed, item);
+      });
+    return filterMarketPluginsByRequiresConfig(baseItems, marketRequiresConfigFilter);
+  }, [marketCategory, marketPlugins, installedPlugins, marketRequiresConfigFilter]);
 
   const displayedMarketTotal = marketCategory === MARKET_CATEGORY_UPDATES
     ? displayedMarketPlugins.length
-    : marketTotal;
+    : marketRequiresConfigFilter === "all"
+      ? marketTotal
+      : displayedMarketPlugins.length;
 
   useEffect(() => {
     if (activeTab !== "market") {
@@ -4151,6 +4226,22 @@ export function PluginManagerModal({
                         ))}
                       </StyledSelect>
                     </div>
+                    <div className="w-28 shrink-0">
+                      <StyledSelect
+                        value={marketRequiresConfigFilter}
+                        onChange={e =>
+                          setMarketRequiresConfigFilter(e.target.value as MarketPluginRequiresConfigFilter)
+                        }
+                        className={`py-2 px-3 text-xs rounded-xl ${mutedBg} ${subtleBorder}`}
+                        aria-label="配置筛选"
+                      >
+                        {MARKET_REQUIRES_CONFIG_FILTER_OPTIONS.map(option => (
+                          <option key={option.id} value={option.id}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </StyledSelect>
+                    </div>
                     {!isSafeMode ? (
                       <div className="w-32 shrink-0">
                         <StyledSelect
@@ -4173,7 +4264,7 @@ export function PluginManagerModal({
                     <span className="text-[11px] text-neutral-400 whitespace-nowrap shrink-0">
                       {marketCategory === MARKET_CATEGORY_UPDATES
                         ? `待更新 ${displayedMarketTotal} 个插件`
-                        : `发现 ${displayedMarketTotal} 个获取接口`}
+                        : `发现 ${displayedMarketTotal} 个插件`}
                     </span>
                   </div>
                   {installError ? (
@@ -4285,28 +4376,6 @@ export function PluginManagerModal({
                     role="tablist"
                     aria-label="插件分组"
                   >
-                    <button
-                      type="button"
-                      role="tab"
-                      aria-selected={activeManageGroupId === ALL_MANAGE_GROUP_ID}
-                      onClick={() => setActiveManageGroupId(ALL_MANAGE_GROUP_ID)}
-                      className={`shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-medium transition-all ${
-                        activeManageGroupId === ALL_MANAGE_GROUP_ID
-                          ? "bg-white dark:bg-neutral-800 text-[#5856D6] shadow-sm"
-                          : "text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300"
-                      }`}
-                    >
-                      <span className="truncate max-w-[8rem]">全部</span>
-                      <span
-                        className={`text-[10px] px-1.5 py-0.5 rounded-md ${
-                          activeManageGroupId === ALL_MANAGE_GROUP_ID
-                            ? "bg-[#5856D6]/10 text-[#5856D6]"
-                            : "bg-neutral-200/80 dark:bg-neutral-700 text-neutral-500"
-                        }`}
-                      >
-                        {allPluginsByInstallTime.length}
-                      </span>
-                    </button>
                     {visibleGroupedPluginsForManage.map(({ group, plugins }) => (
                       <button
                         key={group.id}
@@ -4336,13 +4405,7 @@ export function PluginManagerModal({
                   {activeManageGroup && (
                     <button
                       type="button"
-                      onClick={() =>
-                        openImportForGroup(
-                          activeManageGroupId === ALL_MANAGE_GROUP_ID
-                            ? DEFAULT_PLUGIN_GROUP_ID
-                            : activeManageGroup.group.id,
-                        )
-                      }
+                      onClick={() => openImportForGroup(activeManageGroup.group.id)}
                       className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold text-white bg-[#5856D6] hover:bg-[#4a48c4]"
                     >
                       导入插件
@@ -4383,9 +4446,7 @@ export function PluginManagerModal({
                     />
                   ) : (
                     <p className="text-sm text-neutral-400 text-center py-16">
-                      {activeManageGroupId === ALL_MANAGE_GROUP_ID
-                        ? "暂无已安装插件，点击「导入插件」开始添加。"
-                        : `「${activeManageGroup.group.label}」暂无插件，点击「导入插件」将自动添加到此分组。`}
+                      {`「${activeManageGroup.group.label}」暂无插件，点击「导入插件」将自动添加到此分组。`}
                     </p>
                   )
                 ) : (

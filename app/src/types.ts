@@ -254,6 +254,8 @@ export interface DictListResponse {
 
 export type MarketPluginSort = "rating" | "downloads" | "size";
 
+export type MarketPluginRequiresConfigFilter = "all" | "required" | "optional";
+
 export type MarketPluginContentRating = "general" | "under18" | "mature";
 
 export interface MarketPluginItem {
@@ -279,6 +281,8 @@ export interface MarketPluginItem {
   downloads?: number;
   version?: string;
   contentRating?: MarketPluginContentRating;
+  /** When true, plugin requires user configuration (e.g. API keys) before use. */
+  requiresConfig?: boolean;
 }
 
 export interface MarketPluginsResponse {

@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	maxOrbitPackageBytes   = 32 << 20 // 32 MiB
+	maxOrbitPackageBytes    = 32 << 20 // 32 MiB
 	defaultManifestFileName = "manifest.default.json"
 )
 
@@ -68,6 +68,8 @@ func (r *Registry) UpdateManifest(ctx context.Context, id string, m *Manifest) (
 		return nil, fmt.Errorf("bundled plugin manifest cannot be edited: %s", id)
 	}
 
+	incomingRating := NormalizeContentRating(m.Meta.ContentRating)
+
 	dir, ok := r.getPluginDir(id)
 	if !ok {
 		userDir, err := UserPluginsDir()
@@ -87,6 +89,9 @@ func (r *Registry) UpdateManifest(ctx context.Context, id string, m *Manifest) (
 
 	rec.Manifest = *m
 	rec.Manifest.Bundled = false
+	if incomingRating != "" {
+		rec.ContentRating = incomingRating
+	}
 	if err := r.upsertPlugin(ctx, rec); err != nil {
 		return nil, err
 	}

@@ -41,7 +41,7 @@ install: ## 安装 app 前端依赖 (npm install)
 dev-go: ## 启动 Go runtime (go run，默认端口 17890)
 	ORBIT_PORT=$(ORBIT_PORT) bash scripts/dev-go.sh
 
-dev-tauri: ## 启动 Tauri 并连接外部 Go (需先 dev-go)
+dev-tauri: build-runtime ## 启动 Tauri 并连接外部 Go (需先 dev-go)
 	cd app && ORBIT_RUNTIME_URL=$(ORBIT_RUNTIME_URL) VITE_ORBIT_ENABLE_FULL_EXPERIENCE=1 npm run tauri:dev
 
 dev-web: ## 启动 Vite 前端开发服务（连接 Go runtime）
@@ -53,7 +53,7 @@ open-web: ## 在浏览器打开前端页面
 dev: ## 单终端：后台 Go + Tauri（Ctrl+C 结束两者）
 	bash scripts/dev-all.sh
 
-dev-sidecar: ## Tauri 自动拉起已编译的 sidecar（需先 make build-runtime）
+dev-sidecar: build-runtime ## Tauri 自动拉起已编译的 sidecar
 	cd app && VITE_ORBIT_ENABLE_FULL_EXPERIENCE=1 npm run tauri:dev
 
 # ── Runtime 交叉编译 ─────────────────────────────────────────────────

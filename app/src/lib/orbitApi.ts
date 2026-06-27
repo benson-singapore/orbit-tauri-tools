@@ -4,6 +4,7 @@ import type {
   MarketPluginItem,
   MarketPluginContentRating,
   MarketPluginSort,
+  MarketPluginRequiresConfigFilter,
   MarketPluginsResponse,
   Plugin,
   PluginCategoryCountsResponse,
@@ -91,6 +92,7 @@ export async function fetchMarketPlugins(options?: {
   category?: string;
   sort?: MarketPluginSort;
   contentRating?: MarketPluginContentRating;
+  requiresConfig?: MarketPluginRequiresConfigFilter;
   search?: string;
   pageSize?: number;
   page?: number;
@@ -105,6 +107,11 @@ export async function fetchMarketPlugins(options?: {
   }
   if (options?.contentRating) {
     params.set("contentRating", options.contentRating);
+  }
+  if (options?.requiresConfig === "required") {
+    params.set("requiresConfig", "true");
+  } else if (options?.requiresConfig === "optional") {
+    params.set("requiresConfig", "false");
   }
   if (options?.search?.trim()) {
     params.set("search", options.search.trim());

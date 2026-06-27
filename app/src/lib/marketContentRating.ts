@@ -30,3 +30,12 @@ export const MARKET_CONTENT_RATING_LABELS: Record<MarketPluginContentRating, str
   under18: "18岁以下",
   mature: "18+",
 };
+
+export function normalizeMarketPluginContentRating(
+  raw?: string | null,
+): MarketPluginContentRating {
+  if (raw === "general" || raw === "under18" || raw === "mature") {
+    return raw;
+  }
+  return MARKET_CONTENT_RATING_DEFAULT;
+}

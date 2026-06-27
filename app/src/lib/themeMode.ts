@@ -2,7 +2,7 @@ import type { ArticleContentTheme, ThemeMode } from "@/types";
 
 const STORAGE_KEY = "orbit.themeMode";
 
-export const THEME_MODE_DEFAULT: ThemeMode = "midnight";
+export const THEME_MODE_DEFAULT: ThemeMode = "ocean";
 
 export const THEME_MODE_OPTIONS: ThemeMode[] = [
   "light",
