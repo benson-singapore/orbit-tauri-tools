@@ -18,12 +18,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/build-common.sh"
 
-NEW_VERSION="${1:-${VERSION:-}}"
-TAG="v${NEW_VERSION}"
 RELEASE_YES="${RELEASE_YES:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 RELEASE_SKIP_PUSH="${RELEASE_SKIP_PUSH:-0}"
-RELEASE_BRANCH="${RELEASE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
 
 usage() {
   cat <<EOF
@@ -42,6 +39,9 @@ confirm() {
   local prompt="$1"
   if [[ "$RELEASE_YES" == "1" ]]; then
     return 0
+  fi
+  if [[ ! -t 0 ]]; then
+    die "非交互环境请设置 RELEASE_YES=1，例如: make release VERSION=x.y.z RELEASE_YES=1"
   fi
   read -r -p "$prompt [y/N] " reply
   [[ "$reply" =~ ^[Yy]$ ]]
@@ -65,31 +65,39 @@ require_remote() {
 }
 
 tag_exists() {
-  git rev-parse "$TAG" >/dev/null 2>&1
+  local tag="$1"
+  git rev-parse "$tag" >/dev/null 2>&1
 }
 
 remote_tag_exists() {
-  git ls-remote --tags origin "refs/tags/$TAG" 2>/dev/null | grep -q .
+  local tag="$1"
+  git ls-remote --tags origin "refs/tags/$tag" 2>/dev/null | grep -q .
 }
 
 main() {
-  [[ -n "$NEW_VERSION" ]] || { usage; die "请指定版本号，例如: make release VERSION=1.2.0"; }
+  local new_version="${1:-${VERSION:-}}"
+  local tag="v${new_version}"
+  local release_branch="${RELEASE_BRANCH:-$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)}"
+  local old_version
+  local same_version=0
+  local version_changed=0
 
-  if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$ ]]; then
-    die "版本号格式无效: $NEW_VERSION（期望 semver，如 1.2.0）"
+  [[ -n "$new_version" ]] || { usage; die "请指定版本号，例如: make release VERSION=1.2.0"; }
+
+  if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$ ]]; then
+    die "版本号格式无效: $new_version（期望 semver，如 1.2.0）"
   fi
 
   require_git_repo
 
-  local old_version
   old_version="$(app_version)"
 
   echo ""
   info "Orbit 发布流程"
   echo "  当前版本: ${old_version:-?}"
-  echo "  目标版本: $NEW_VERSION"
-  echo "  Git tag:  $TAG"
-  echo "  分支:     $RELEASE_BRANCH"
+  echo "  目标版本: $new_version"
+  echo "  Git tag:  $tag"
+  echo "  分支:     $release_branch"
   if [[ "$DRY_RUN" == "1" ]]; then
     warn "DRY_RUN=1：仅同步版本号文件，不 commit / tag / push"
   elif [[ "$RELEASE_SKIP_PUSH" == "1" ]]; then
@@ -99,64 +107,73 @@ main() {
   fi
   echo ""
 
-  if [[ "$NEW_VERSION" == "$old_version" && "$DRY_RUN" != "1" ]]; then
-    warn "目标版本与当前版本相同"
-    confirm "继续发布 $TAG？" || die "已取消"
+  if [[ "$new_version" == "$old_version" ]]; then
+    same_version=1
+    if [[ "$DRY_RUN" != "1" ]]; then
+      warn "目标版本与当前版本相同，将跳过 bump-version，仅打 tag 并推送"
+      confirm "继续为 ${tag} 打 tag 并发布?" || die "已取消"
+    fi
   fi
 
   if [[ "$DRY_RUN" != "1" ]]; then
     require_clean_tree
-    if tag_exists; then
-      die "本地已存在 tag: $TAG"
+    if tag_exists "$tag"; then
+      die "本地已存在 tag: $tag"
     fi
-    if remote_tag_exists; then
-      die "远程已存在 tag: $TAG"
+    if remote_tag_exists "$tag"; then
+      die "远程已存在 tag: $tag"
     fi
     require_remote
   fi
 
   if [[ "$DRY_RUN" == "1" ]]; then
     info "同步版本号（预览）..."
-    bash "$SCRIPT_DIR/bump-version.sh" "$NEW_VERSION"
+    bash "$SCRIPT_DIR/bump-version.sh" "$new_version"
     echo ""
     ok "预览完成。确认无误后执行:"
-    echo "  make release VERSION=$NEW_VERSION"
+    echo "  make release VERSION=$new_version"
     exit 0
   fi
 
-  confirm "确认发布 $NEW_VERSION ($TAG)？" || die "已取消"
+  if [[ "$same_version" != "1" ]]; then
+    confirm "确认发布 ${new_version} (${tag})?" || die "已取消"
+    info "同步版本号..."
+    bash "$SCRIPT_DIR/bump-version.sh" "$new_version"
+    version_changed=1
+  else
+    confirm "确认发布 ${tag}?" || die "已取消"
+  fi
 
-  info "同步版本号..."
-  bash "$SCRIPT_DIR/bump-version.sh" "$NEW_VERSION"
+  if [[ "$version_changed" == "1" ]]; then
+    info "提交版本变更..."
+    git add \
+      app/package.json \
+      app/package-lock.json \
+      app/src-tauri/tauri.conf.json \
+      app/src-tauri/Cargo.toml \
+      app/src-tauri/Cargo.lock
+    git commit -m "chore: release ${tag}"
+  fi
 
-  info "提交版本变更..."
-  git add \
-    app/package.json \
-    app/package-lock.json \
-    app/src-tauri/tauri.conf.json \
-    app/src-tauri/Cargo.toml \
-    app/src-tauri/Cargo.lock
-  git commit -m "chore: release $TAG"
-
-  info "创建 tag $TAG..."
-  git tag -a "$TAG" -m "Release $TAG"
+  info "创建 tag ${tag}..."
+  git tag -a "$tag" -m "Release ${tag}"
 
   if [[ "$RELEASE_SKIP_PUSH" == "1" ]]; then
     echo ""
     ok "本地发布准备完成（未 push）"
-    echo "  git push origin $RELEASE_BRANCH"
-    echo "  git push origin $TAG"
+    echo "  git push origin ${release_branch}"
+    echo "  git push origin ${tag}"
     exit 0
   fi
 
   info "推送到 origin..."
-  git push origin "$RELEASE_BRANCH"
-  git push origin "$TAG"
+  git push origin "$release_branch"
+  git push origin "$tag"
 
   echo ""
-  ok "已发布 $TAG，GitHub Actions 正在构建多平台安装包"
+  ok "已发布 ${tag}，GitHub Actions 正在构建多平台安装包"
   echo "  查看进度: https://github.com/$(git remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')/actions"
-  echo "  Release:  https://github.com/$(git remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')/releases/tag/$TAG"
+  echo "  Release:  https://github.com/$(git remote get-url origin | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')/releases/tag/${tag}"
 }
 
 main "$@"
