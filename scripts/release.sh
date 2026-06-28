@@ -94,7 +94,7 @@ main() {
   [[ -n "$new_version" ]] || { usage; die "请指定版本号，例如: make release VERSION=1.2.0"; }
 
   if [[ ! "$new_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$ ]]; then
-    die "版本号格式无效: $new_version（期望 semver，如 1.2.0）"
+    die "版本号格式无效: ${new_version} (期望 semver，如 1.2.0)"
   fi
 
   require_git_repo

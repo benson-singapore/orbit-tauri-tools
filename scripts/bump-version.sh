@@ -16,7 +16,7 @@ if [[ -z "$NEW_VERSION" ]]; then
 fi
 
 if [[ ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?(\+[a-zA-Z0-9.]+)?$ ]]; then
-  die "版本号格式无效: $NEW_VERSION（期望 semver，如 1.2.0 或 1.2.0-beta.1）"
+  die "版本号格式无效: ${NEW_VERSION} (期望 semver，如 1.2.0 或 1.2.0-beta.1)"
 fi
 
 OLD_VERSION="$(app_version)"

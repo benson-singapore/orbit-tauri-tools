@@ -44,7 +44,7 @@ resolve_macos_arch() {
   case "$arch" in
     arm64|aarch64) echo "arm64" ;;
     x86_64|x64|amd64) echo "x86_64" ;;
-    *) die "不支持的 MACOS_ARCH: $arch（可用 arm64 / x86_64）" ;;
+    *) die "不支持的 MACOS_ARCH: ${arch} (可用 arm64 / x86_64)" ;;
   esac
 }
 

@@ -27,7 +27,7 @@ resolve_linux_target() {
   case "$arch" in
     x86_64|amd64) echo "linux" ;;
     aarch64|arm64) echo "linux-arm64" ;;
-    *) die "不支持的 LINUX_ARCH: $arch（可用 x86_64 / arm64）" ;;
+    *) die "不支持的 LINUX_ARCH: ${arch} (可用 x86_64 / arm64)" ;;
   esac
 }
 

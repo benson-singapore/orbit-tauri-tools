@@ -29,7 +29,7 @@ target_goos() {
     macos-arm64|macos-x64) echo "darwin" ;;
     windows) echo "windows" ;;
     linux|linux-arm64) echo "linux" ;;
-    *) die "未知目标: $1（可用: $ALL_TARGETS all）" ;;
+    *) die "未知目标: ${1} (可用: ${ALL_TARGETS} all)" ;;
   esac
 }
 
@@ -108,7 +108,7 @@ build_one() {
     export CC="zig cc -target $zig_target"
     info "Zig 交叉编译 $name -> $out_name"
   elif is_cross_compile "$name"; then
-    warn "未安装 zig，使用 go 内置交叉编译 $name（CGO_ENABLED=0）"
+    warn "未安装 zig，使用 go 内置交叉编译 ${name} (CGO_ENABLED=0)"
     info "交叉编译 $name -> $out_name"
   else
     info "本机编译 $name -> $out_name"
