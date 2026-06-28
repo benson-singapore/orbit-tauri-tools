@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/build-common.sh"
 
-LOGO="${LOGO:-$ROOT/docs/html/logo_black.png}"
+LOGO="${LOGO:-$ROOT/docs/html/new-logo.png}"
 BUNDLES="${BUNDLES:-dmg,app}"
 SKIP_ICONS="${SKIP_ICONS:-0}"
 VITE_ORBIT_ENABLE_FULL_EXPERIENCE="${VITE_ORBIT_ENABLE_FULL_EXPERIENCE:-0}"

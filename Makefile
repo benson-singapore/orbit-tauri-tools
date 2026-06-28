@@ -14,7 +14,7 @@ BUNDLES           ?=
         build-runtime build-runtime-all \
         build-runtime-macos-arm64 build-runtime-macos-x64 \
         build-runtime-windows build-runtime-linux build-runtime-linux-arm64 \
-        build build-macos build-macos-x64 build-macos-arm64-full build-windows build-linux \
+        build bump-version build-macos build-macos-x64 build-macos-arm64-full build-windows build-linux \
         icons check-go swagger swagger-check
 
 help: ## 显示命令列表
@@ -79,6 +79,11 @@ build-runtime-linux: ## 编译 Linux x64 runtime
 build-runtime-linux-arm64: ## 编译 Linux ARM64 runtime
 	bash scripts/build-runtime.sh linux-arm64
 
+# ── 版本号 ─────────────────────────────────────────────────────────────
+
+bump-version: ## 一键更新应用版本号（修改下方版本号后执行 make bump-version）
+	bash scripts/bump-version.sh 1.1.0
+
 # ── 应用打包 ─────────────────────────────────────────────────────────
 
 build: build-runtime ## 打当前平台正式安装包 (sidecar + 前端 + tauri build)
@@ -101,8 +106,8 @@ build-linux: ## 打包 Linux 应用（须在 Linux 上运行）
 
 # ── 其他 ─────────────────────────────────────────────────────────────
 
-icons: ## 从 docs/html/logo_black.png 重新生成应用图标
-	bash scripts/prepare-app-icon.sh docs/html/logo_black.png app/src-tauri/app-icon.png
+icons: ## 从 docs/html/new-logo.png 重新生成应用图标
+	bash scripts/prepare-app-icon.sh docs/html/new-logo.png app/src-tauri/app-icon.png
 	cd app && npx tauri icon src-tauri/app-icon.png -o src-tauri/icons
 
 check-go: ## 检查 Go 能否通过编译（不启动服务）

@@ -30,13 +30,17 @@
     ],
     "security": {
       "csp": null,
-      "capabilities": ["default"]
+      "capabilities": [
+        "default"
+      ]
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
-    "externalBin": ["binaries/orbit-runtime"],
+    "externalBin": [
+      "binaries/orbit-runtime"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
