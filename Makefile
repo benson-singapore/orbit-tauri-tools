@@ -106,8 +106,8 @@ build-linux: ## 打包 Linux 应用（须在 Linux 上运行）
 
 # ── 其他 ─────────────────────────────────────────────────────────────
 
-icons: ## 从 docs/html/new-logo.png 重新生成应用图标
-	bash scripts/prepare-app-icon.sh docs/html/new-logo.png app/src-tauri/app-icon.png
+icons: ## 从 app/src/assets/logo.png 重新生成应用图标
+	bash scripts/prepare-app-icon.sh app/src/assets/logo.png app/src-tauri/app-icon.png
 	cd app && npx tauri icon src-tauri/app-icon.png -o src-tauri/icons
 
 check-go: ## 检查 Go 能否通过编译（不启动服务）

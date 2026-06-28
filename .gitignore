@@ -1,6 +1,9 @@
 # Dependencies
 app/node_modules/
-orbit-plugins/RSSHub-master
+orbit-plugins/
+
+# Local-only documentation (not published)
+docs/
 
 # Build outputs
 app/dist/
@@ -11,12 +14,17 @@ app/src-tauri/binaries/orbit-runtime-*
 app/app-icon.png
 app/src-tauri/app-icon.png
 
+# TypeScript incremental build cache
+*.tsbuildinfo
+
 # OS
 .DS_Store
+Thumbs.db
 
 # IDE
 .idea/
 .vscode/
+.cursor/
 
 # Go
 runtime/**/*.test

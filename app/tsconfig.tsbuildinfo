@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/vite-env.d.ts","./src/components/icon.tsx","./src/data/articles.ts","./src/data/plugins.ts","./src/hooks/useruntimestatus.ts","./src/lib/runtime.ts"],"errors":true,"version":"5.9.3"}
