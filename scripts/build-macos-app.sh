@@ -35,7 +35,9 @@ fi
 [[ "$(uname -s)" == "Darwin" ]] || die "此脚本仅支持 macOS"
 
 ensure_app_deps
-command -v magick >/dev/null || die "未找到 magick (ImageMagick)，请先安装: brew install imagemagick"
+if [[ "$SKIP_ICONS" != "1" ]]; then
+  command -v magick >/dev/null || die "未找到 magick (ImageMagick)，请先安装: brew install imagemagick"
+fi
 
 resolve_macos_arch() {
   local arch="${MACOS_ARCH:-$(uname -m)}"
