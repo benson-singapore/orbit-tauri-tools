@@ -14,7 +14,8 @@ env:
 
 jobs:
   build-macos-arm64:
-    runs-on: macos-latest
+    # 固定 macos-15，避免 macos-latest 迁移到 macOS 26 期间构建环境突变
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
 
@@ -54,7 +55,7 @@ jobs:
           if-no-files-found: error
 
   build-macos-x64:
-    runs-on: macos-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v6
 
