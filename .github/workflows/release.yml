@@ -16,12 +16,12 @@ jobs:
   build-macos-arm64:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Verify release version
         run: bash .github/scripts/verify-release-version.sh
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -29,7 +29,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: runtime/go.sum
@@ -47,7 +47,7 @@ jobs:
           SKIP_ICONS: "1"
         run: make build-macos
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: macos-arm64
           path: app/src-tauri/target/release/bundle/dmg/*.dmg
@@ -56,12 +56,12 @@ jobs:
   build-macos-x64:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Verify release version
         run: bash .github/scripts/verify-release-version.sh
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -71,7 +71,7 @@ jobs:
         with:
           targets: x86_64-apple-darwin
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: runtime/go.sum
@@ -89,7 +89,7 @@ jobs:
           SKIP_ICONS: "1"
         run: make build-macos-x64
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: macos-x64
           path: app/src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/*.dmg
@@ -98,13 +98,13 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Verify release version
         shell: bash
         run: bash .github/scripts/verify-release-version.sh
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -112,7 +112,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: runtime/go.sum
@@ -129,7 +129,7 @@ jobs:
         shell: bash
         run: bash scripts/build-windows-app.sh
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-x64
           path: |
@@ -140,7 +140,7 @@ jobs:
   build-linux:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Verify release version
         run: bash .github/scripts/verify-release-version.sh
@@ -156,7 +156,7 @@ jobs:
             patchelf \
             libssl-dev
 
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v6
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -164,7 +164,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: runtime/go.sum
@@ -179,7 +179,7 @@ jobs:
       - name: Build Linux x64
         run: bash scripts/build-linux-app.sh
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-x64
           path: |
@@ -195,9 +195,9 @@ jobs:
       - build-linux
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v6
         with:
           path: dist
           merge-multiple: true
