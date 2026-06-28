@@ -74,6 +74,15 @@ remote_tag_exists() {
   git ls-remote --tags origin "refs/tags/$tag" 2>/dev/null | grep -q .
 }
 
+require_version_in_tree() {
+  local expected="$1"
+  local actual
+  actual="$(app_version)"
+  if [[ "$actual" != "$expected" ]]; then
+    die "版本号文件为 ${actual}，与目标 ${expected} 不一致"
+  fi
+}
+
 main() {
   local new_version="${1:-${VERSION:-}}"
   local tag="v${new_version}"
@@ -154,6 +163,8 @@ main() {
       app/src-tauri/Cargo.lock
     git commit -m "chore: release ${tag}"
   fi
+
+  require_version_in_tree "$new_version"
 
   info "创建 tag ${tag}..."
   git tag -a "$tag" -m "Release ${tag}"

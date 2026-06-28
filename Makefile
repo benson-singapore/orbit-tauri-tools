@@ -15,7 +15,7 @@ VERSION           ?=1.1.1
         build-runtime build-runtime-all \
         build-runtime-macos-arm64 build-runtime-macos-x64 \
         build-runtime-windows build-runtime-linux build-runtime-linux-arm64 \
-        build bump-version release release-dry-run \
+        build bump-version release release-dry-run release-retag \
         build-macos build-macos-x64 build-macos-arm64-full build-windows build-linux \
         icons check-go swagger swagger-check
 
@@ -36,6 +36,7 @@ help: ## 显示命令列表
 	@echo "  make bump-version VERSION=1.2.0   # 仅同步版本号"
 	@echo "  make release-dry-run VERSION=1.2.0 # 预览发布（不改 git）"
 	@echo "  make release VERSION=1.2.0        # 改版本号 + commit + tag + push"
+	@echo "  make release-retag VERSION=1.1.1  # 将 tag 移到当前 HEAD（修复错误 tag）"
 	@echo ""
 	@echo "推荐日常开发（两个终端）:"
 	@echo "  make dev-go      # 终端 1"
@@ -99,6 +100,10 @@ release-dry-run: ## 预览发布（仅 bump 版本号，不 commit/tag/push）
 release: ## 发布: bump + commit + tag + push，触发 GitHub Actions
 	@test -n "$(VERSION)" || (echo "请指定版本: make release VERSION=1.2.0" && exit 1)
 	bash scripts/release.sh $(VERSION)
+
+release-retag: ## 将 tag 移到当前 HEAD，修复 tag 与版本不一致
+	@test -n "$(VERSION)" || (echo "请指定版本: make release-retag VERSION=1.1.1" && exit 1)
+	bash scripts/release-retag.sh $(VERSION)
 
 # ── 应用打包 ─────────────────────────────────────────────────────────
 
