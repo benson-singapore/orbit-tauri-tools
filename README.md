@@ -205,7 +205,9 @@ make open-web   # 打开 http://127.0.0.1:5173
 | `make build-runtime-all` | Zig 交叉编译全部平台 runtime |
 | `make build-macos` | 打包 macOS 应用（.app + .dmg） |
 | `make build-macos-x64` | 在 Apple Silicon 上打 Intel 包 |
-| `make bump-version` | 一键同步版本号（修改 Makefile 中版本后执行） |
+| `make bump-version` | 同步版本号，用法：`make bump-version VERSION=1.2.0` |
+| `make release` | 一键发布：改版本号 + commit + tag + push（触发 CI） |
+| `make release-dry-run` | 预览发布，仅同步版本号文件 |
 | `make icons` | 从 `app/src/assets/logo.png` 重新生成图标 |
 | `make check-go` | 检查 Go 能否通过编译 |
 | `make swagger` | 生成 runtime OpenAPI 文档 |
@@ -228,11 +230,59 @@ make build-macos
 
 ### 版本号管理
 
-版本号分布在 `app/package.json`、`app/src-tauri/tauri.conf.json`、`app/src-tauri/Cargo.toml` 等处。使用 `make bump-version`（先在 Makefile 中修改目标版本）可一次性同步。
+版本号分布在 `app/package.json`、`app/src-tauri/tauri.conf.json`、`app/src-tauri/Cargo.toml` 等处。
+
+```bash
+# 仅同步版本号
+make bump-version VERSION=1.2.0
+
+# 预览发布（不改 git）
+make release-dry-run VERSION=1.2.0
+
+# 一键发布：改版本号 → commit → 打 tag → push（触发 GitHub Actions）
+make release VERSION=1.2.0
+
+# 跳过交互确认
+make release VERSION=1.2.0 RELEASE_YES=1
+```
 
 ### 公开发布
 
 面向用户的安装包通过 **GitHub Releases** 分发，不在仓库内直接存放二进制文件。发布说明随 Release 一并发布。
+
+#### 通过 GitHub Actions 自动发布
+
+推送 `v*` 格式的 tag（如 `v1.1.0`）会触发 [`.github/workflows/release.yml`](.github/workflows/release.yml)，自动并行构建并发布：
+
+| 平台 | 产物 |
+|------|------|
+| macOS Apple Silicon | `orbit-<ver>-macos-aarch64.dmg` |
+| macOS Intel | `orbit-<ver>-macos-x86_64.dmg` |
+| Windows x64 | `.msi` + `-setup.exe` |
+| Linux x64 | `.deb` + `.AppImage` |
+
+**发布前准备：**
+
+1. 确保工作区干净（无未提交改动）
+2. 执行一键发布：
+
+```bash
+make release VERSION=1.2.0
+```
+
+macOS 安装包使用 **ad-hoc 临时签名**（无需 Apple 开发者账号）。其他用户首次打开可能遇到 Gatekeeper 提示，需右键「打开」。若日后需要正式对外分发，可配置 `scripts/signing.env` 并在 workflow 中恢复 Developer ID 证书导入。
+
+**可选：正式 macOS 签名（需 Apple Developer 账号）**
+
+在 GitHub 仓库 Settings → Secrets 中配置以下项，并修改 workflow 启用证书导入步骤：
+
+| Secret | 说明 |
+|--------|------|
+| `APPLE_CERTIFICATE_BASE64` | Developer ID Application 证书（.p12，base64 编码） |
+| `APPLE_CERTIFICATE_PASSWORD` | 导出 .p12 时的密码 |
+| `APPLE_SIGNING_IDENTITY` | 证书完整名称 |
+
+Windows / Linux 构建无需额外 Secrets。
 
 ---
 

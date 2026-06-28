@@ -7,6 +7,7 @@ WEB_URL           ?= http://127.0.0.1:5173
 MACOS_ARCH        ?=
 LINUX_ARCH        ?=
 BUNDLES           ?=
+VERSION           ?=
 
 .DEFAULT_GOAL := help
 
@@ -14,7 +15,8 @@ BUNDLES           ?=
         build-runtime build-runtime-all \
         build-runtime-macos-arm64 build-runtime-macos-x64 \
         build-runtime-windows build-runtime-linux build-runtime-linux-arm64 \
-        build bump-version build-macos build-macos-x64 build-macos-arm64-full build-windows build-linux \
+        build bump-version release release-dry-run \
+        build-macos build-macos-x64 build-macos-arm64-full build-windows build-linux \
         icons check-go swagger swagger-check
 
 help: ## 显示命令列表
@@ -29,6 +31,11 @@ help: ## 显示命令列表
 	@echo "  make build-runtime-all        # 预编译全部平台 runtime (Zig)"
 	@echo "  make build-windows            # Windows 安装包 (须在 Windows 运行)"
 	@echo "  make build-linux              # Linux 安装包 (须在 Linux 运行)"
+	@echo ""
+	@echo "发布示例:"
+	@echo "  make bump-version VERSION=1.2.0   # 仅同步版本号"
+	@echo "  make release-dry-run VERSION=1.2.0 # 预览发布（不改 git）"
+	@echo "  make release VERSION=1.2.0        # 改版本号 + commit + tag + push"
 	@echo ""
 	@echo "推荐日常开发（两个终端）:"
 	@echo "  make dev-go      # 终端 1"
@@ -79,10 +86,19 @@ build-runtime-linux: ## 编译 Linux x64 runtime
 build-runtime-linux-arm64: ## 编译 Linux ARM64 runtime
 	bash scripts/build-runtime.sh linux-arm64
 
-# ── 版本号 ─────────────────────────────────────────────────────────────
+# ── 版本号与发布 ───────────────────────────────────────────────────────
 
-bump-version: ## 一键更新应用版本号（修改下方版本号后执行 make bump-version）
-	bash scripts/bump-version.sh 1.1.0
+bump-version: ## 同步版本号，用法: make bump-version VERSION=1.2.0
+	@test -n "$(VERSION)" || (echo "请指定版本: make bump-version VERSION=1.2.0" && exit 1)
+	bash scripts/bump-version.sh $(VERSION)
+
+release-dry-run: ## 预览发布（仅 bump 版本号，不 commit/tag/push）
+	@test -n "$(VERSION)" || (echo "请指定版本: make release-dry-run VERSION=1.2.0" && exit 1)
+	DRY_RUN=1 bash scripts/release.sh $(VERSION)
+
+release: ## 发布: bump + commit + tag + push，触发 GitHub Actions
+	@test -n "$(VERSION)" || (echo "请指定版本: make release VERSION=1.2.0" && exit 1)
+	bash scripts/release.sh $(VERSION)
 
 # ── 应用打包 ─────────────────────────────────────────────────────────
 
