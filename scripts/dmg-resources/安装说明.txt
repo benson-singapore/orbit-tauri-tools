@@ -1,0 +1,22 @@
+Orbit 安装说明
+================
+
+1. 将左侧 orbit 图标拖到右侧「Applications（应用程序）」文件夹。
+   （窗口背景或 GUIDE.png 中有图示说明）
+
+2. 弹出窗口后，从启动台或「应用程序」文件夹打开 orbit。
+
+3. 若首次打开时提示「无法验证开发者」：
+   · 方法一：右键 orbit → 选择「打开」
+   · 方法二：系统设置 → 隐私与安全性 → 点击「仍要打开」
+   · 方法三（终端）：安装完成后打开「终端」，执行：
+
+     # 查看是否有隔离标记（若输出含 com.apple.quarantine 即被拦截）
+     xattr -l /Applications/orbit.app
+
+     # 移除隔离标记后再打开应用
+     xattr -dr com.apple.quarantine /Applications/orbit.app
+
+4. 安装完成后可退出此窗口，并将 orbit 安装磁盘映像推出。
+
+更多帮助：https://github.com/benson-singapore/orbit-tauri-tools

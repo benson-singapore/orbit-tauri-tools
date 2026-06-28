@@ -11,6 +11,8 @@ permissions:
 env:
   GO_VERSION: "1.26"
   NODE_VERSION: "22"
+  CARGO_NET_RETRY: 10
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
 
 jobs:
   build-macos-arm64:
@@ -39,6 +41,10 @@ jobs:
         with:
           workspaces: app/src-tauri -> target
 
+      - name: Prefetch Cargo dependencies
+        working-directory: app/src-tauri
+        run: bash ../../.github/scripts/retry.sh cargo fetch --locked
+
       - name: Install frontend dependencies
         run: make install
 
@@ -46,7 +52,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: "-"
           SKIP_ICONS: "1"
-        run: make build-macos
+        run: bash .github/scripts/retry.sh make build-macos
 
       - uses: actions/upload-artifact@v6
         with:
@@ -81,6 +87,10 @@ jobs:
         with:
           workspaces: app/src-tauri -> target
 
+      - name: Prefetch Cargo dependencies
+        working-directory: app/src-tauri
+        run: bash ../../.github/scripts/retry.sh cargo fetch --locked
+
       - name: Install frontend dependencies
         run: make install
 
@@ -88,7 +98,7 @@ jobs:
         env:
           APPLE_SIGNING_IDENTITY: "-"
           SKIP_ICONS: "1"
-        run: make build-macos-x64
+        run: bash .github/scripts/retry.sh make build-macos-x64
 
       - uses: actions/upload-artifact@v6
         with:
@@ -122,13 +132,20 @@ jobs:
         with:
           workspaces: app/src-tauri -> target
 
+      - name: Prefetch Cargo dependencies
+        working-directory: app/src-tauri
+        shell: bash
+        run: bash ../../.github/scripts/retry.sh cargo fetch --locked
+
       - name: Install frontend dependencies
         shell: bash
         run: cd app && npm ci
 
       - name: Build Windows x64
         shell: bash
-        run: bash scripts/build-windows-app.sh
+        env:
+          CARGO_HTTP_MULTIPLEXING: false
+        run: bash .github/scripts/retry.sh bash scripts/build-windows-app.sh
 
       - uses: actions/upload-artifact@v6
         with:
@@ -174,11 +191,15 @@ jobs:
         with:
           workspaces: app/src-tauri -> target
 
+      - name: Prefetch Cargo dependencies
+        working-directory: app/src-tauri
+        run: bash ../../.github/scripts/retry.sh cargo fetch --locked
+
       - name: Install frontend dependencies
         run: make install
 
       - name: Build Linux x64
-        run: bash scripts/build-linux-app.sh
+        run: bash .github/scripts/retry.sh bash scripts/build-linux-app.sh
 
       - uses: actions/upload-artifact@v6
         with:

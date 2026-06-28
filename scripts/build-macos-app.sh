@@ -198,12 +198,7 @@ recreate_dmg() {
 
   mkdir -p "$dmg_dir"
   rm -f "$dmg_path"
-  info "根据已签名 .app 生成 DMG..."
-  hdiutil create -volname "orbit" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$dmg_path" >/dev/null
-  if [[ "$SIGN_ID" != "-" ]]; then
-    codesign --force --sign "$SIGN_ID" "$dmg_path" 2>/dev/null || true
-  fi
-  ok "DMG 已生成: $dmg_path"
+  bash "$SCRIPT_DIR/create-macos-dmg.sh" "$APP_BUNDLE" "$dmg_path" "orbit" "$SIGN_ID"
 }
 
 if [[ $WANT_DMG -eq 1 ]]; then

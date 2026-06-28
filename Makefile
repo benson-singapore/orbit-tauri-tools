@@ -101,7 +101,7 @@ release: ## 发布: bump + commit + tag + push，触发 GitHub Actions
 	@test -n "$(VERSION)" || (echo "请指定版本: make release VERSION=1.2.0" && exit 1)
 	bash scripts/release.sh $(VERSION)
 
-release-retag: ## 将 tag 移到当前 HEAD，修复 tag 与版本不一致
+release-retag: ## 将 tag 移到当前 HEAD，修复 tag 与版本不一致  make release-retag VERSION=1.1.1 RELEASE_YES=1
 	@test -n "$(VERSION)" || (echo "请指定版本: make release-retag VERSION=1.1.1" && exit 1)
 	bash scripts/release-retag.sh $(VERSION)
 
