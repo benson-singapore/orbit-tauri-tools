@@ -8,11 +8,18 @@ function defaultPaginationParam(style: PaginationFeature["style"]): string {
 export function extractArticleNativeId(
   article: Pick<Article, "id" | "pluginId" | "channelId">,
 ): string {
+  const rawId = article.id?.trim() ?? "";
+  if (!rawId) return "";
+
   const pluginId = article.pluginId?.trim() ?? "";
-  if (!pluginId) return "";
+  if (!pluginId) return rawId;
+
   const prefix = `${pluginId}:`;
-  if (!article.id.startsWith(prefix)) return "";
-  let rest = article.id.slice(prefix.length);
+  if (!rawId.startsWith(prefix)) {
+    // rowToFeedItem strips storage IDs before sending items to the client.
+    return rawId;
+  }
+  let rest = rawId.slice(prefix.length);
   if (!rest) return "";
 
   const channelId = article.channelId?.trim() ?? "";

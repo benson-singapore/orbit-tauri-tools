@@ -696,7 +696,7 @@ export function SystemInfoPanel({
           />
           <button
             type="button"
-            onClick={() => void openExternalUrl("https://orbit-plugins-resource.pages.dev/")}
+            onClick={() => void openExternalUrl("https://orbit.benson.indevs.in/orbit/download")}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#5856D6] text-white hover:bg-[#4c4ac0] transition-colors"
           >
             <Icon name="download" className="w-3.5 h-3.5" />
@@ -855,7 +855,7 @@ export function SystemInfoPanel({
               {section.id === "updates" && hasAvailableUpdate ? (
                 <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-500">
                   <span className="h-1.5 w-1.5 rounded-full bg-rose-500" aria-hidden />
-                  新版本
+                  新
                 </span>
               ) : null}
             </button>

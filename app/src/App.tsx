@@ -30,6 +30,7 @@ import { useComicChapterStream } from "@/hooks/useComicChapterStream";
 import { usePlaybackProgress } from "@/hooks/usePlaybackProgress";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
+import { useAppUpdateSummary } from "@/hooks/useAppUpdateSummary";
 import { mergeArticleListWithDetail } from "@/lib/articleContent";
 import {
   AVAILABLE_EXPERIENCE_MODES,
@@ -410,6 +411,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>("today");
 
   const [showPluginStore, setShowPluginStore] = useState(false);
+  const [appUpdateSummary, setAppUpdateSummary] = useAppUpdateSummary();
   const [isSidebarRefreshing, setIsSidebarRefreshing] = useState(false);
 
   useEffect(() => {
@@ -2330,6 +2332,12 @@ export default function App() {
             >
               <Icon name="puzzle" className="w-4 h-4 shrink-0" />
               {!isSidebarCollapsed && <span>添加/自定新插件</span>}
+              {appUpdateSummary.updateAvailable ? (
+                <span
+                  className="inline-flex h-2 w-2 rounded-full bg-rose-500 shrink-0"
+                  aria-label="发现新版本"
+                />
+              ) : null}
             </button>
           </div>
         </aside>
@@ -2372,6 +2380,8 @@ export default function App() {
               onMovePluginGroup={movePluginGroup}
               onRemovePluginGroup={removePluginGroup}
               embedded
+              appUpdateSummary={appUpdateSummary}
+              onAppUpdateSummaryChange={setAppUpdateSummary}
             />
           ) : (
             <>

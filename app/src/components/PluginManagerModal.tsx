@@ -58,12 +58,7 @@ import {
   filterVariablesForSave,
   savePluginVariables,
 } from "@/lib/runtimeV2";
-import {
-  checkAppUpdate,
-  resolveCurrentPlatformInfo,
-  type AppUpdateSummary,
-} from "@/lib/appUpdates";
-import { loadAppInfo } from "@/lib/appInfo";
+import { type AppUpdateSummary } from "@/lib/appUpdates";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
 import { DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import { SystemInfoPanel } from "@/components/SystemInfoPanel";
@@ -170,6 +165,8 @@ interface PluginManagerModalProps {
   onRemovePluginGroup: (groupId: string) => void;
   getPluginGroupId: (pluginId: string) => string;
   embedded?: boolean;
+  appUpdateSummary: AppUpdateSummary;
+  onAppUpdateSummaryChange: (summary: AppUpdateSummary) => void;
 }
 
 type PluginManagerTopTab = Extract<PluginManagerTab, "market" | "manage" | "system" | "llm" | "tts">;
@@ -3773,6 +3770,8 @@ export function PluginManagerModal({
   onRemovePluginGroup,
   getPluginGroupId,
   embedded = false,
+  appUpdateSummary: systemUpdateSummary,
+  onAppUpdateSummaryChange: setSystemUpdateSummary,
 }: PluginManagerModalProps) {
   const [activeTab, setActiveTab] = useState<PluginManagerTopTab>("market");
   const [marketCategory, setMarketCategory] = useState<PluginMarketCategory>("all");
@@ -3789,15 +3788,6 @@ export function PluginManagerModal({
     llm: false,
     tts: false,
   });
-  const [systemUpdateSummary, setSystemUpdateSummary] = useState<AppUpdateSummary>({
-    updateAvailable: false,
-    loading: true,
-    platformId: null,
-    latestVersion: null,
-    channel: null,
-    error: null,
-  });
-
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -3819,39 +3809,6 @@ export function PluginManagerModal({
         if (!cancelled) {
           setSettingsConfigTabs({ llm: false, tts: false });
         }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      setSystemUpdateSummary(prev => ({ ...prev, loading: true, error: null }));
-      try {
-        const [info, platform] = await Promise.all([
-          loadAppInfo(),
-          resolveCurrentPlatformInfo(),
-        ]);
-        const update = await checkAppUpdate(info.version, platform.id);
-        if (cancelled) return;
-        setSystemUpdateSummary({
-          updateAvailable: update.updateAvailable,
-          loading: false,
-          platformId: platform.id,
-          latestVersion: update.latest?.appVersion ?? null,
-          channel: update.channel,
-          error: null,
-        });
-      } catch (err) {
-        if (cancelled) return;
-        setSystemUpdateSummary(prev => ({
-          ...prev,
-          loading: false,
-          error: err instanceof Error ? err.message : String(err),
-        }));
       }
     })();
     return () => {
@@ -4114,6 +4071,9 @@ export function PluginManagerModal({
               >
                 <Icon name={tab.icon} className="w-4 h-4" />
                 <span className="hidden sm:inline">{tab.label}</span>
+                {tab.id === "market" && pendingUpdateCount > 0 ? (
+                  <span className="inline-flex h-2 w-2 rounded-full bg-amber-400" aria-label="有待更新插件" />
+                ) : null}
                 {tab.id === "system" && systemUpdateSummary.updateAvailable ? (
                   <span className="inline-flex h-2 w-2 rounded-full bg-rose-500" aria-label="发现新版本" />
                 ) : null}
