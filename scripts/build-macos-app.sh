@@ -14,7 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/build-common.sh"
 
-LOGO="${LOGO:-$ROOT/app/src/assets/logo.png}"
+LOGO="${LOGO:-$ROOT/docs/html/new-logo.png}"
 BUNDLES="${BUNDLES:-dmg,app}"
 SKIP_ICONS="${SKIP_ICONS:-0}"
 VITE_ORBIT_ENABLE_FULL_EXPERIENCE="${VITE_ORBIT_ENABLE_FULL_EXPERIENCE:-0}"
@@ -106,7 +106,7 @@ fi
 if [[ "$SKIP_ICONS" != "1" ]]; then
   [[ -f "$LOGO" ]] || die "Logo 不存在: $LOGO"
   info "从 $LOGO 生成应用图标..."
-  bash "$SCRIPT_DIR/prepare-app-icon.sh" "$LOGO" "$TAURI_DIR/app-icon.png"
+  FULL_ICON=1 bash "$SCRIPT_DIR/prepare-app-icon.sh" "$LOGO" "$TAURI_DIR/app-icon.png"
   (cd "$APP_DIR" && npx tauri icon src-tauri/app-icon.png -o src-tauri/icons)
   ok "应用图标已更新"
 else

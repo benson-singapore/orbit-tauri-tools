@@ -5,6 +5,25 @@ set -euo pipefail
 INPUT="${1:?usage: prepare-app-icon.sh <input.png> <output.png> [size]}"
 OUTPUT="${2:?usage: prepare-app-icon.sh <input.png> <output.png> [size]}"
 SIZE="${3:-1024}"
+
+# Full app icon (white squircle background already baked in): resize only.
+if [[ "${FULL_ICON:-0}" == "1" ]]; then
+  mkdir -p "$(dirname "$OUTPUT")"
+  if command -v magick >/dev/null 2>&1; then
+    magick "$INPUT" -resize "${SIZE}x${SIZE}" PNG32:"$OUTPUT"
+  else
+    python3 - "$INPUT" "$OUTPUT" "$SIZE" <<'PY'
+from PIL import Image
+import sys
+
+input_path, output_path, size = sys.argv[1:4]
+size = int(size)
+Image.open(input_path).convert("RGBA").resize((size, size), Image.LANCZOS).save(output_path)
+PY
+  fi
+  echo "Wrote $OUTPUT (${SIZE}x${SIZE}, full icon)"
+  exit 0
+fi
 # Safe-area scale so Dock size matches other apps (~82%).
 CONTENT_SCALE="${CONTENT_SCALE:-0.82}"
 CONTENT=$(python3 -c "print(int($SIZE * $CONTENT_SCALE))")

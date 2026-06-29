@@ -208,7 +208,7 @@ make open-web   # 打开 http://127.0.0.1:5173
 | `make bump-version` | 同步版本号，用法：`make bump-version VERSION=1.2.0` |
 | `make release` | 一键发布：改版本号 + commit + tag + push（触发 CI） |
 | `make release-dry-run` | 预览发布，仅同步版本号文件 |
-| `make icons` | 从 `app/src/assets/logo.png` 重新生成图标 |
+| `make icons` | 从 `docs/html/new-logo.png` 重新生成图标 |
 | `make check-go` | 检查 Go 能否通过编译 |
 | `make swagger` | 生成 runtime OpenAPI 文档 |
 

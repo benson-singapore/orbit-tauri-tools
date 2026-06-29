@@ -12,7 +12,7 @@
     "tauri:dev": "VITE_ORBIT_ENABLE_FULL_EXPERIENCE=1 tauri dev",
     "tauri:dev:external": "ORBIT_RUNTIME_URL=http://127.0.0.1:17890 VITE_ORBIT_ENABLE_FULL_EXPERIENCE=1 tauri dev",
     "build:runtime": "bash ../scripts/build-runtime.sh",
-    "icons": "bash ../scripts/prepare-app-icon.sh src/assets/logo-black.png src-tauri/app-icon.png && tauri icon src-tauri/app-icon.png -o src-tauri/icons && cargo build --manifest-path src-tauri/Cargo.toml"
+    "icons": "FULL_ICON=1 bash ../scripts/prepare-app-icon.sh ../docs/html/new-logo.png src-tauri/app-icon.png && tauri icon src-tauri/app-icon.png -o src-tauri/icons && cargo build --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.2.0",
