@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } fr
 import { articleContentTheme } from "@/lib/themeMode";
 import { createPortal } from "react-dom";
 import { Icon } from "@/components/Icon";
-import { ProxiedImage } from "@/components/ProxiedImage";
+import { ReaderAudioPlayer } from "@/components/ReaderAudioPlayer";
 import { useVideoSessionMountRegistry } from "@/components/VideoWallMountContext";
 import { stripEmbeddedVideosFromContent } from "@/lib/articleVideoUrl";
 import {
@@ -50,6 +50,7 @@ import {
 import { resolveEffectivePlayback } from "@/lib/playbackConfig";
 import type { PlaybackResumeIntent, PlaybackProgress } from "@/types";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
+import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
 import type { ReaderSessionMode } from "@/lib/readerSessions";
 import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
@@ -283,7 +284,7 @@ export function ArticleReaderModal({
       return Boolean(resolveYouTubeVideoId(article) || article.videoUrl?.trim());
     }
     if (article.type === "audio") {
-      return true;
+      return resolveArticleAudioUrl(article) !== null;
     }
     if (article.type === "image") {
       if (article.galleryImages?.length) {
@@ -295,6 +296,7 @@ export function ArticleReaderModal({
   }, [article, coverImageFailed]);
 
   const hasSessionVideoMedia = usesDedicatedSessionVideoPlayer(article);
+  const audioUrl = useMemo(() => resolveArticleAudioUrl(article), [article]);
   const { registerMount } = useVideoSessionMountRegistry();
 
   const modalMountRef = useCallback(
@@ -863,13 +865,15 @@ export function ArticleReaderModal({
                   />
                 ) : null}
 
-                {article.type === "audio" && article.image ? (
-                  <ProxiedImage
-                    runtimeBase={runtimeBase}
-                    src={article.image}
-                    alt={article.title}
-                    className="w-full max-h-64 object-cover"
-                  />
+                {article.type === "audio" && audioUrl ? (
+                  <div className="p-4 md:p-6 bg-[var(--orbit-surface)]">
+                    <ReaderAudioPlayer
+                      sessionId={sessionId}
+                      article={article}
+                      audioUrl={audioUrl}
+                      runtimeBase={runtimeBase}
+                    />
+                  </div>
                 ) : null}
               </div>
             ) : null}

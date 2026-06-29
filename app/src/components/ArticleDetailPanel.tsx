@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { articleContentTheme } from "@/lib/themeMode";
-import { ProxiedImage } from "@/components/ProxiedImage";
 import { Icon } from "@/components/Icon";
 import { YouTubeEmbed } from "@/components/YouTubeEmbed";
+import { ReaderAudioPlayer } from "@/components/ReaderAudioPlayer";
 import { ChaptersDrawer } from "@/components/ChaptersDrawer";
 import { ChaptersList } from "@/components/ChaptersList";
 import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
@@ -41,6 +41,7 @@ import {
 import { resolveEffectivePlayback } from "@/lib/playbackConfig";
 import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
+import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
 import type { Article, ChannelCapabilities, PlaybackResumeIntent, Plugin, ThemeMode } from "@/types";
 
 interface ArticleDetailPanelProps {
@@ -210,7 +211,7 @@ export function ArticleDetailPanel({
       return Boolean(resolveYouTubeVideoId(article) || article.videoUrl?.trim());
     }
     if (article.type === "audio") {
-      return true;
+      return resolveArticleAudioUrl(article) !== null;
     }
     if (article.type === "image") {
       if (article.galleryImages?.length) {
@@ -222,6 +223,7 @@ export function ArticleDetailPanel({
   }, [article, coverImageFailed]);
 
   const youTubeVideoId = useMemo(() => resolveYouTubeVideoId(article), [article]);
+  const audioUrl = useMemo(() => resolveArticleAudioUrl(article), [article]);
 
   const {
     pageUrls: comicPageUrls,
@@ -586,13 +588,15 @@ export function ArticleDetailPanel({
                   </div>
                 ) : null}
 
-                {article.type === "audio" && article.image ? (
-                  <ProxiedImage
-                    runtimeBase={runtimeBase}
-                    src={article.image}
-                    alt={article.title}
-                    className="w-full max-h-64 object-cover"
-                  />
+                {article.type === "audio" && audioUrl ? (
+                  <div className="p-4 md:p-6 bg-[var(--orbit-surface)]">
+                    <ReaderAudioPlayer
+                      sessionId={sessionId}
+                      article={article}
+                      audioUrl={audioUrl}
+                      runtimeBase={runtimeBase}
+                    />
+                  </div>
                 ) : null}
               </div>
             ) : null}

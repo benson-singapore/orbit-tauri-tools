@@ -32,6 +32,7 @@ import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { useAppUpdateSummary } from "@/hooks/useAppUpdateSummary";
 import { mergeArticleListWithDetail } from "@/lib/articleContent";
+import { filterArticlesWithAudio } from "@/lib/articleAudioPlaylist";
 import {
   AVAILABLE_EXPERIENCE_MODES,
   EXPERIENCE_MODE_LABELS,
@@ -65,6 +66,10 @@ import {
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { SocialFeedCard } from "@/components/SocialFeedCard";
 import { SocialFeedFocusView } from "@/components/SocialFeedFocusView";
+import { AudioFocusView } from "@/components/AudioFocusView";
+import { ReaderAudioPlayer } from "@/components/ReaderAudioPlayer";
+import { buildArticleAudioPlaylist } from "@/lib/articleAudioPlaylist";
+import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import {
@@ -207,6 +212,7 @@ const SOCIAL_FEED_OPTION = ["socialFeed", "推文展示", "社交推文时间线
 const SPLIT_BROADCAST_OPTION = ["split", "联播分屏", "左侧卡片，右侧视频同屏联播"] as const;
 const SPLIT_DETAIL_OPTION = ["splitDetail", "阅览分屏", "左侧浏览，右侧即时展示详情"] as const;
 const VIDEO_WALL_PREVIEW_OPTION = ["videoWall", "视频预览", "Dock 视频平铺同播"] as const;
+const AUDIO_FOCUS_OPTION = ["audioFocus", "音频模式", "频道音频组合播放列表"] as const;
 
 const PREVIEW_MODE_LABELS: Record<PluginPreviewMode, string> = {
   reader: "阅读模式",
@@ -216,6 +222,7 @@ const PREVIEW_MODE_LABELS: Record<PluginPreviewMode, string> = {
   splitDetail: "阅览分屏",
   videoWall: "视频预览",
   socialFeed: "推文展示",
+  audioFocus: "音频模式",
 };
 
 function previewModeLabel(mode: PluginPreviewMode): string {
@@ -231,10 +238,12 @@ function feedCountUnit(plugin?: Plugin | null): string {
 function previewModeOptionsForPlugin(plugin: Plugin | undefined, showVideoWall: boolean) {
   const showWaterfall = isImageGalleryPlugin(plugin);
   const showSocialFeed = isSocialPlugin(plugin);
+  const showAudioFocus = plugin?.mediaType === "audio";
   const base = PREVIEW_MODE_OPTIONS.filter(([mode]) => mode !== "waterfall" || showWaterfall);
   return [
     ...(showSocialFeed ? [SOCIAL_FEED_OPTION] : []),
     ...base,
+    ...(showAudioFocus ? [AUDIO_FOCUS_OPTION] : []),
     SPLIT_DETAIL_OPTION,
     ...(showVideoWall ? [VIDEO_WALL_PREVIEW_OPTION] : []),
     SPLIT_BROADCAST_OPTION,
@@ -467,10 +476,6 @@ export default function App() {
   }, []);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
 
-  // Audio Player State
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
-  const [audioProgress, setAudioProgress] = useState(35);
-
   // Image Slider Index
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
@@ -495,7 +500,7 @@ export default function App() {
       );
     }
     if (selectedItem.type === "audio") {
-      return true;
+      return resolveArticleAudioUrl(selectedItem) !== null;
     }
     if (selectedItem.type === "image") {
       if (selectedItem.galleryImages?.length) {
@@ -508,6 +513,11 @@ export default function App() {
 
   const selectedYouTubeVideoId = useMemo(
     () => (selectedItem ? resolveYouTubeVideoId(selectedItem) : null),
+    [selectedItem],
+  );
+
+  const selectedAudioUrl = useMemo(
+    () => (selectedItem ? resolveArticleAudioUrl(selectedItem) : null),
     [selectedItem],
   );
 
@@ -536,6 +546,15 @@ export default function App() {
       return true;
     });
   }, [visibleArticles, activeTab]);
+
+  const selectedAudioPlaylist = useMemo(() => {
+    if (!selectedItem || !selectedAudioUrl) return undefined;
+    const samePluginArticles = filteredArticles.filter(
+      item => item.pluginId === selectedItem.pluginId,
+    );
+    const playlist = buildArticleAudioPlaylist(samePluginArticles, selectedItem, runtimeBase);
+    return playlist.length > 1 ? playlist : undefined;
+  }, [selectedItem, selectedAudioUrl, filteredArticles, runtimeBase]);
 
   const selectedPluginMeta = selectedItem ? pluginById.get(selectedItem.pluginId) : undefined;
   const isRatingCoverLayout = Boolean(
@@ -617,6 +636,7 @@ export default function App() {
   const isVideoWallPreviewMode = pluginPreviewMode === "videoWall";
   const isSocialFeedPreviewMode = pluginPreviewMode === "socialFeed"
     && isSocialPlugin(activePluginMeta);
+  const isAudioFocusPreviewMode = pluginPreviewMode === "audioFocus";
   const isGridPageMode = isGridPreviewMode && gridDetailViewMode === "page";
   const isPageDetailView = isGridPageMode && gridPageDetailOpen;
   const isWallVideoActive = isWallVideoPreviewMode(pluginPreviewMode);
@@ -1107,7 +1127,6 @@ export default function App() {
     const requestId = ++itemSelectRequestRef.current;
     void markArticleRead(item);
     setAiSummary(null);
-    setIsPlayingAudio(false);
     setActiveImageIndex(0);
     detailResumeAppliedRef.current = false;
 
@@ -1191,7 +1210,7 @@ export default function App() {
 
     // Grid browse modes pick items explicitly (handleGridItemSelect / openReaderDetailModal).
     // Auto-selecting the first item here races with that click when page detail opens.
-    if (isGridPreviewMode || isSocialFeedPreviewMode) return;
+    if (isGridPreviewMode || isSocialFeedPreviewMode || isAudioFocusPreviewMode) return;
 
     const first = visibleArticles[0];
     if (first) {
@@ -1206,6 +1225,7 @@ export default function App() {
     activePlugin,
     isGridPreviewMode,
     isSocialFeedPreviewMode,
+    isAudioFocusPreviewMode,
   ]);
 
   useEffect(() => {
@@ -2713,19 +2733,19 @@ export default function App() {
             <div
               ref={readerPanelRef}
               className={`flex-1 h-full min-w-0 ${
-                isSplitPaneLayout ? "overflow-hidden" : "overflow-y-auto"
+                isSplitPaneLayout || isAudioFocusPreviewMode ? "overflow-hidden" : "overflow-y-auto"
               } ${isDarkTheme(theme) ? "bg-transparent" : "bg-[#fafafa]"}`}
             >
             
             {isPluginFocusMode || selectedItem || chapters.isActive ? (
               <div className={
-                isSplitPaneLayout
+                isSplitPaneLayout || isAudioFocusPreviewMode
                   ? "flex h-full min-h-0 w-full flex-col px-6"
                   : "w-full px-6 pb-8 md:pb-10"
               }>
                 {/* Reader toolbar — sticky near top */}
                 <div
-                  className={`${isSplitPaneLayout ? "shrink-0" : "sticky top-0"} z-10 -mx-6 px-6 pt-2 pb-2 ${isDarkTheme(theme) ? "bg-transparent" : "bg-[#fafafa]"}`}
+                  className={`${isSplitPaneLayout || isAudioFocusPreviewMode ? "shrink-0" : "sticky top-0"} z-10 -mx-6 px-6 pt-2 pb-2 ${isDarkTheme(theme) ? "bg-transparent" : "bg-[#fafafa]"}`}
                 >
                   <div
                     className={`rounded-xl border transition-all duration-200 ${
@@ -2791,6 +2811,13 @@ export default function App() {
                           <span className="text-xs text-neutral-400 truncate">
                             阅览分屏 · 卡片 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条
                             {splitDetailArticle ? ` · 已选「${splitDetailArticle.title}」` : ""}
+                          </span>
+                        ) : null}
+                        {isAudioFocusPreviewMode && activePlugin !== "all" ? (
+                          <span className="text-xs text-neutral-400 truncate">
+                            音频模式 · 共 {filterArticlesWithAudio(
+                              filteredArticles.filter(item => item.pluginId === activePlugin),
+                            ).length} 首
                           </span>
                         ) : null}
                       </div>
@@ -3252,6 +3279,26 @@ export default function App() {
                     }
                     scrollRootRef={readerPanelRef}
                   />
+                ) : isAudioFocusPreviewMode && activePlugin !== "all" ? (
+                  <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <AudioFocusView
+                      theme={theme}
+                      runtimeBase={runtimeBase}
+                      pluginId={activePlugin}
+                      channelId={activeChannel}
+                      articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                      loading={feedLoading}
+                      loadingMore={feedLoadingMore}
+                      searching={feedSearching}
+                      hasMore={feedHasMore}
+                      onLoadMore={() => {
+                        void loadMore().catch(console.error);
+                      }}
+                      onTrackPlay={(article: Article) => {
+                        void markArticleRead(article);
+                      }}
+                    />
+                  </div>
                 ) : isSocialFeedPreviewMode && activePlugin !== "all" ? (
                   <SocialFeedFocusView
                     theme={theme}
@@ -3369,70 +3416,17 @@ export default function App() {
                       </div>
                     )}
 
-                    {/* Type 3: Interactive Podcast/Audio Player Deck */}
-                    {selectedItem.type === 'audio' && (
-                      <div className="p-6 md:p-8 bg-gradient-to-br from-neutral-900 to-neutral-800 text-white space-y-6">
-                        <div className="flex flex-col sm:flex-row items-center gap-6">
-                          {/* Rotating Album Art */}
-                          <div className={`w-28 h-28 rounded-full overflow-hidden border-4 border-neutral-700 flex-shrink-0 shadow-lg relative ${
-                            isPlayingAudio ? 'animate-spin' : ''
-                          }`} style={{ animationDuration: '15s' }}>
-                            <ProxiedImage runtimeBase={runtimeBase} src={selectedItem.image ?? ""} alt="Podcast Cover" className="w-full h-full object-cover" />
-                            <div className="absolute inset-0 m-auto w-8 h-8 rounded-full bg-neutral-900 border border-neutral-700"></div>
-                          </div>
-                          
-                          <div className="flex-1 text-center sm:text-left space-y-2">
-                            <span className="text-xs uppercase tracking-wider text-emerald-400 font-bold">Spotify Podcaster</span>
-                            <h3 className="text-lg font-bold line-clamp-2">{selectedItem.title}</h3>
-                            <p className="text-xs text-neutral-400">正在播放访谈：Sam Altman Special</p>
-                          </div>
-                        </div>
-
-                        {/* Custom Player Controls */}
-                        <div className="space-y-3">
-                          <div className="flex items-center justify-between text-xs text-neutral-400">
-                            <span>05:12</span>
-                            <span>{selectedItem.audioDuration}</span>
-                          </div>
-                          
-                          {/* Audio Progress Bar */}
-                          <div 
-                            onClick={(e) => {
-                              const rect = e.currentTarget.getBoundingClientRect();
-                              const clickX = e.clientX - rect.left;
-                              const width = rect.width;
-                              setAudioProgress(Math.floor((clickX / width) * 100));
-                            }}
-                            className="h-1.5 bg-neutral-700 rounded-full cursor-pointer relative"
-                          >
-                            <div 
-                              className="h-full bg-emerald-500 rounded-full transition-all"
-                              style={{ width: `${audioProgress}%` }}
-                            ></div>
-                            <div 
-                              className="absolute w-3.5 h-3.5 rounded-full bg-white shadow top-1/2 -translate-y-1/2 transition-all cursor-grab"
-                              style={{ left: `calc(${audioProgress}% - 7px)` }}
-                            ></div>
-                          </div>
-
-                          {/* Control deck */}
-                          <div className="flex items-center justify-center gap-6 pt-2">
-                            <button className="text-neutral-400 hover:text-white">
-                              <span className="text-lg">⏮</span>
-                            </button>
-                            <button 
-                              onClick={() => setIsPlayingAudio(!isPlayingAudio)}
-                              className="w-12 h-12 rounded-full bg-emerald-500 hover:bg-emerald-400 flex items-center justify-center text-black font-bold transition-all transform hover:scale-105"
-                            >
-                              <Icon name={isPlayingAudio ? "pause" : "play"} className="w-6 h-6 text-black" />
-                            </button>
-                            <button className="text-neutral-400 hover:text-white">
-                              <span className="text-lg">⏭</span>
-                            </button>
-                          </div>
-                        </div>
+                    {selectedItem.type === "audio" && selectedAudioUrl ? (
+                      <div className="p-4 md:p-6 bg-[var(--orbit-surface)]">
+                        <ReaderAudioPlayer
+                          sessionId={inlineSessionId ?? `inline-audio:${selectedItem.pluginId}:${selectedItem.id}`}
+                          article={selectedItem}
+                          audioUrl={selectedAudioUrl}
+                          runtimeBase={runtimeBase}
+                          playlist={selectedAudioPlaylist}
+                        />
                       </div>
-                    )}
+                    ) : null}
 
                     {/* Type 4: Multi-image gallery */}
                     {selectedItem.type === 'image' && selectedItem.galleryImages?.length ? (

@@ -1,0 +1,55 @@
+/* Custom audio UI — APlayer engine hidden, React chrome visible */
+.orbit-aplayer-engine {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.orbit-channel-audio__hero {
+  margin-bottom: 0;
+  padding-top: 20px;
+  padding-left: 20px;
+  padding-right: 20px;
+  border-radius: 1rem;
+  overflow: hidden;
+}
+
+.orbit-audio-eq span {
+  display: block;
+  width: 2px;
+  border-radius: 999px;
+  background: var(--orbit-accent, #6366f1);
+  animation: orbit-audio-eq 0.9s ease-in-out infinite;
+}
+
+.orbit-audio-eq span:nth-child(1) {
+  height: 0.45rem;
+  animation-delay: 0s;
+}
+
+.orbit-audio-eq span:nth-child(2) {
+  height: 0.8rem;
+  animation-delay: 0.15s;
+}
+
+.orbit-audio-eq span:nth-child(3) {
+  height: 0.55rem;
+  animation-delay: 0.3s;
+}
+
+@keyframes orbit-audio-eq {
+  0%, 100% {
+    transform: scaleY(0.45);
+    opacity: 0.55;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}

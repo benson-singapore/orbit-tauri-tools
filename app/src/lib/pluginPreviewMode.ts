@@ -9,7 +9,8 @@ export type PluginPreviewMode =
   | "split"
   | "splitDetail"
   | "videoWall"
-  | "socialFeed";
+  | "socialFeed"
+  | "audioFocus";
 
 export function defaultPluginPreviewMode(
   plugin?: Pick<Plugin, "mediaType"> | null,
@@ -21,6 +22,8 @@ export function defaultPluginPreviewMode(
       return "waterfall";
     case "social":
       return "socialFeed";
+    case "audio":
+      return "audioFocus";
     default:
       return "grid";
   }
@@ -35,6 +38,9 @@ export function isPreviewModeAllowedForPlugin(
   }
   if (mode === "socialFeed") {
     return plugin?.mediaType === "social";
+  }
+  if (mode === "audioFocus") {
+    return plugin?.mediaType === "audio";
   }
   return true;
 }
@@ -76,6 +82,7 @@ function readMemory(): PluginPreviewModeMemory {
           || mode === "splitDetail"
           || mode === "videoWall"
           || mode === "socialFeed"
+          || mode === "audioFocus"
         )
       ) {
         result[pluginId] = mode;
