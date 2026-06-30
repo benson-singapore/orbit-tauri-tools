@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/andybalholm/brotli"
 	"github.com/tetratelabs/wazero"
@@ -438,12 +439,24 @@ func wasmHostHTTP(
 		return writeHostResp(mod, respPtr, respCap, hostHTTPResponse{Error: err.Error()})
 	}
 	hostResp := hostHTTPResponse{Status: resp.StatusCode}
-	if isTextHTTPContentType(resp.Header.Get("Content-Type")) {
+	contentType := resp.Header.Get("Content-Type")
+	if isHTMLHTTPContentType(contentType) {
+		// HTML pages may use legacy encodings (GBK) while declaring UTF-8.
+		// Always return raw bytes so plugins can decode without JSON corruption.
+		hostResp.BodyBase64 = base64.StdEncoding.EncodeToString(body)
+	} else if isTextHTTPContentType(contentType) && utf8.Valid(body) {
 		hostResp.Body = string(body)
+	} else if isTextHTTPContentType(contentType) {
+		hostResp.BodyBase64 = base64.StdEncoding.EncodeToString(body)
 	} else {
 		hostResp.BodyBase64 = base64.StdEncoding.EncodeToString(body)
 	}
 	return writeHostResp(mod, respPtr, respCap, hostResp)
+}
+
+func isHTMLHTTPContentType(contentType string) bool {
+	ct := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	return ct == "text/html" || ct == "application/xhtml+xml"
 }
 
 func isTextHTTPContentType(contentType string) bool {

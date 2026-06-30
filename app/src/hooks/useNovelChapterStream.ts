@@ -601,8 +601,6 @@ export function useNovelChapterStream({
       return;
     }
 
-    // Skip prepending the intro chapter when entering the first readable chapter.
-    const prevChapter = idx > 1 ? items[idx - 1] : null;
     pendingScrollToChapterRef.current = resolvedChapter.id;
     pendingScrollGenerationRef.current = generation;
     setReachedEnd(idx >= items.length - 1);
@@ -618,9 +616,6 @@ export function useNovelChapterStream({
       : { html: "" };
 
     const initial: NovelStreamSlot[] = [];
-    if (prevChapter) {
-      initial.push({ chapter: prevChapter, contentHtml: "", status: "loading" });
-    }
     initial.push({
       chapter: activeDetail,
       contentHtml: activeContent.html,
@@ -633,23 +628,6 @@ export function useNovelChapterStream({
     notifyVisibleChapterRef.current(activeDetail);
     if (isNovelStreamSlotReady(activeContent)) {
       notifyChapterDetailFetchedRef.current(activeDetail);
-    }
-
-    if (prevChapter) {
-      void fetchChapterDetailRef.current(prevChapter)
-        .then(detail => {
-          if (seedGenerationRef.current !== generation) return;
-          const content = prepareStreamContentRef.current(detail);
-          if (!isNovelStreamSlotReady(content)) {
-            setSlots(prev => prev.filter(slot => slot.chapter.id !== prevChapter.id));
-            return;
-          }
-          updateChapterSlotRef.current(prevChapter.id, detail, content);
-        })
-        .catch(() => {
-          if (seedGenerationRef.current !== generation) return;
-          setSlots(prev => prev.filter(slot => slot.chapter.id !== prevChapter.id));
-        });
     }
 
     if (!isNovelStreamSlotReady(activeContent) && !detailLoadingRef.current) {
