@@ -299,6 +299,9 @@ export function ArticleDetailPanel({
     activeChapter: chapters.activeChapter,
     activeChapterDetail: article,
     detailLoading: chapters.detailLoading,
+    canLoadMoreChapters: channelCapabilities.canLoadMoreChapters,
+    hasMoreChapters: chapters.hasMore,
+    loadMoreChapters: chapters.loadMore,
     channelId,
     runtimeBase,
     theme,
@@ -309,10 +312,10 @@ export function ArticleDetailPanel({
   const novelChapterStreamActive = canUseNovelChapterStream && novelStream.slots.length > 0;
 
   useEffect(() => {
-    if (!novelChapterStreamActive) {
+    if (pluginMeta?.mediaType !== "novel") {
       setNovelPlaybackChapter(null);
     }
-  }, [novelChapterStreamActive]);
+  }, [pluginMeta?.mediaType]);
 
   const articleImagePreviewEnabled = shouldEnableArticleImagePreview({
     isComicReaderContent,
@@ -430,7 +433,7 @@ export function ArticleDetailPanel({
           : Boolean(comicPageUrls?.length || comicHtml || displayContent)
     ) && !showContentLoading,
     contentSurfaceKey: playbackContentSurfaceKey,
-    novelChapterRecord: novelChapterStreamActive ? novelPlaybackChapter : undefined,
+    novelChapterRecord: novelPlaybackChapter ?? undefined,
     historyEnabled: playbackHistoryEnabled,
     // Avoid overwriting existing playback record before resume intent is loaded.
     enabled: playbackHistoryEnabled && resolvedResumeIntent !== undefined,
@@ -690,7 +693,7 @@ export function ArticleDetailPanel({
               {!showRatingHero && isComicReaderContent ? (
                 <div className="flex justify-end">{chaptersOpenButton}</div>
               ) : null}
-              {!showRatingHero && !isComicReaderContent ? (
+              {!showRatingHero && !isComicReaderContent && !isNovelReading ? (
               <div className="flex items-start gap-3">
                 <h1 className="article-reader-title font-extrabold tracking-tight leading-tight flex-1 min-w-0">
                   {article.title}

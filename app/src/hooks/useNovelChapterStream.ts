@@ -19,6 +19,9 @@ type NovelStreamSlotContent = {
   html: string;
 };
 
+/** Fallback trigger: prefetch when scroll root is near bottom. */
+const NOVEL_STREAM_PREFETCH_BOTTOM_DISTANCE_PX = 1200;
+
 function isNovelStreamSlotReady(content: NovelStreamSlotContent): boolean {
   return content.html.trim().length > 0;
 }
@@ -43,6 +46,9 @@ export interface UseNovelChapterStreamOptions {
   activeChapter: Article | null;
   activeChapterDetail: Article | null;
   detailLoading?: boolean;
+  canLoadMoreChapters?: boolean;
+  hasMoreChapters?: boolean;
+  loadMoreChapters?: () => Promise<unknown> | void;
   channelId: string;
   runtimeBase: string | null;
   theme: ThemeMode;
@@ -59,6 +65,9 @@ export function useNovelChapterStream({
   activeChapter,
   activeChapterDetail,
   detailLoading = false,
+  canLoadMoreChapters = false,
+  hasMoreChapters = false,
+  loadMoreChapters,
   channelId,
   runtimeBase,
   theme,
@@ -86,6 +95,7 @@ export function useNovelChapterStream({
   const appendedChapterIdsRef = useRef<Set<string>>(new Set());
   const seedGenerationRef = useRef(0);
   const visibleChapterRef = useRef<Article | null>(null);
+  const loadingMoreChaptersRef = useRef(false);
   const onVisibleChapterChangeRef = useRef(onVisibleChapterChange);
   onVisibleChapterChangeRef.current = onVisibleChapterChange;
   const onChapterDetailFetchedRef = useRef(onChapterDetailFetched);
@@ -200,9 +210,24 @@ export function useNovelChapterStream({
     const lastSlot = currentSlots[lastReadyIdx];
     const items = chapterItemsRef.current;
     const lastIdx = items.findIndex(item => item.id === lastSlot.chapter.id);
-    if (lastIdx < 0 || lastIdx >= items.length - 1) return null;
+    if (lastIdx < 0) return null;
+    if (lastIdx >= items.length - 1) return null;
     return items[lastIdx + 1];
   }, [resolveLastReadySlotIndex]);
+
+  const ensureMoreChapters = useCallback(async (): Promise<boolean> => {
+    if (!enabled || !parent) return false;
+    if (!canLoadMoreChapters || !hasMoreChapters) return false;
+    if (!loadMoreChapters) return false;
+    if (loadingMoreChaptersRef.current) return false;
+    loadingMoreChaptersRef.current = true;
+    try {
+      await loadMoreChapters();
+      return true;
+    } finally {
+      loadingMoreChaptersRef.current = false;
+    }
+  }, [enabled, parent, canLoadMoreChapters, hasMoreChapters, loadMoreChapters]);
 
   const tryTrimLeadingSlot = useCallback(() => {
     const scrollRoot = scrollRootRef.current;
@@ -303,8 +328,14 @@ export function useNovelChapterStream({
     prefetchLockRef.current = true;
     let targetChapterId: string | null = null;
     try {
-      const nextChapter = resolveNextChapter();
+      let nextChapter = resolveNextChapter();
       if (!nextChapter) {
+        const requestedMore = await ensureMoreChapters();
+        if (requestedMore) {
+          // Wait for chapterItems to update; a scroll tick will retry prefetch.
+          prefetchCooldownUntilRef.current = Date.now() + 400;
+          return;
+        }
         setReachedEnd(true);
         return;
       }
@@ -373,6 +404,7 @@ export function useNovelChapterStream({
     parent,
     resolveLastReadySlotIndex,
     resolveNextChapter,
+    ensureMoreChapters,
     fetchChapterDetail,
     prepareStreamContent,
     tryAppendPrefetchedChapter,
@@ -453,6 +485,13 @@ export function useNovelChapterStream({
       && visibleIdx === lastReadyIdx
       && isNearComicChapterEnd(visibleBlock, scrollRoot)
     ) {
+      void tryPrefetchNextChapter();
+    }
+
+    // Fallback for resume-entry paths where visible chapter detection can lag:
+    // if reader is near the overall bottom, still attempt to prefetch/load more.
+    const remaining = scrollRoot.scrollHeight - (scrollRoot.scrollTop + scrollRoot.clientHeight);
+    if (remaining <= NOVEL_STREAM_PREFETCH_BOTTOM_DISTANCE_PX) {
       void tryPrefetchNextChapter();
     }
 
@@ -822,6 +861,15 @@ export function useNovelChapterStream({
       checkStreamOnScroll();
     });
   }, [isActive, slots, checkStreamOnScroll]);
+
+  useEffect(() => {
+    if (!isActive) return;
+    // After chapter list expands via loadMore, retry prefetch without requiring
+    // an extra user scroll event.
+    window.requestAnimationFrame(() => {
+      checkStreamOnScroll();
+    });
+  }, [isActive, chapterItems.length, checkStreamOnScroll]);
 
   return {
     isActive,

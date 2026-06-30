@@ -809,6 +809,9 @@ export default function App() {
     activeChapter: chapters.activeChapter,
     activeChapterDetail: selectedItem,
     detailLoading: chapters.detailLoading,
+    canLoadMoreChapters: channelCapabilities.canLoadMoreChapters,
+    hasMoreChapters: chapters.hasMore,
+    loadMoreChapters: chapters.loadMore,
     channelId: chaptersDetailChannelId,
     runtimeBase,
     theme,
@@ -819,10 +822,12 @@ export default function App() {
   const novelChapterStreamActive = canUseNovelChapterStream && novelStream.slots.length > 0;
 
   useEffect(() => {
-    if (!novelChapterStreamActive) {
+    const isNovelMode = chaptersPluginMeta?.mediaType === "novel"
+      || selectedPluginMeta?.mediaType === "novel";
+    if (!isNovelMode) {
       setNovelPlaybackChapter(null);
     }
-  }, [novelChapterStreamActive]);
+  }, [chaptersPluginMeta?.mediaType, selectedPluginMeta?.mediaType]);
 
   const selectedItemImagePreviewEnabled = shouldEnableArticleImagePreview({
     isComicReaderContent,
@@ -932,7 +937,7 @@ export default function App() {
       channelCapabilities,
     );
   const isInlinePlaybackEnabled = Boolean(
-    playbackArticle && inlinePlaybackHistoryEnabled,
+    playbackArticle && inlinePlaybackHistoryEnabled && isPageDetailView,
   );
   const inlineSessionId = playbackArticle
     ? `inline:${playbackArticle.pluginId}:${chaptersParent?.id ?? playbackArticle.id}`
@@ -961,7 +966,7 @@ export default function App() {
           : Boolean(comicPageUrls?.length || comicHtml || selectedItemDisplayContent)
     ) && !showContentLoading,
     contentSurfaceKey: inlinePlaybackContentSurfaceKey,
-    novelChapterRecord: novelChapterStreamActive ? novelPlaybackChapter : undefined,
+    novelChapterRecord: novelPlaybackChapter ?? undefined,
     historyEnabled: inlinePlaybackHistoryEnabled,
     enabled: isInlinePlaybackEnabled,
   });
@@ -3560,7 +3565,7 @@ export default function App() {
 
                 {/* Article Header (Title, Subinfo) */}
                 <div className="space-y-4">
-                  {!showRatingHero && !isComicReaderContent ? (
+                  {!showRatingHero && !isComicReaderContent && !isNovelReading ? (
                   <div className="flex items-start gap-3">
                     <h1 className="article-reader-title font-extrabold tracking-tight text-neutral-900 dark:text-white leading-tight flex-1 min-w-0">
                       {selectedItem.title}

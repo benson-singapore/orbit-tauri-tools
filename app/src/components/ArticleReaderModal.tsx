@@ -382,6 +382,9 @@ export function ArticleReaderModal({
     activeChapter: chapters.activeChapter,
     activeChapterDetail: article,
     detailLoading: chapters.detailLoading,
+    canLoadMoreChapters: channelCapabilities.canLoadMoreChapters,
+    hasMoreChapters: chapters.hasMore,
+    loadMoreChapters: chapters.loadMore,
     channelId,
     runtimeBase,
     theme,
@@ -392,10 +395,10 @@ export function ArticleReaderModal({
   const novelChapterStreamActive = canUseNovelChapterStream && novelStream.slots.length > 0;
 
   useEffect(() => {
-    if (!novelChapterStreamActive) {
+    if (pluginMeta?.mediaType !== "novel") {
       setNovelPlaybackChapter(null);
     }
-  }, [novelChapterStreamActive]);
+  }, [pluginMeta?.mediaType]);
 
   const articleImagePreviewEnabled = shouldEnableArticleImagePreview({
     isComicReaderContent,
@@ -513,7 +516,7 @@ export function ArticleReaderModal({
           : Boolean(comicPageUrls?.length || displayContent)
     ) && !showContentLoading,
     contentSurfaceKey: playbackContentSurfaceKey,
-    novelChapterRecord: novelChapterStreamActive ? novelPlaybackChapter : undefined,
+    novelChapterRecord: novelPlaybackChapter ?? undefined,
     historyEnabled: playbackHistoryEnabled,
     enabled: isExpanded && playbackHistoryEnabled,
   });
@@ -976,7 +979,7 @@ export function ArticleReaderModal({
             ) : null}
 
             <div className="space-y-4">
-              {!showRatingHero && !isComicReaderContent ? (
+              {!showRatingHero && !isComicReaderContent && !isNovelReading ? (
                 <div className={`flex items-start gap-3 ${isExpanded ? "pr-20" : "pr-8"}`}>
                   <h2
                     id="article-reader-modal-title"

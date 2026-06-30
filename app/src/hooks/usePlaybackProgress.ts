@@ -111,6 +111,10 @@ export function usePlaybackProgress({
   ]);
   const historyActive = historyEnabled ?? config.history;
   const shouldClientSync = historyActive;
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+  const shouldClientSyncRef = useRef(shouldClientSync);
+  shouldClientSyncRef.current = shouldClientSync;
 
   const lastProgressKeyRef = useRef("");
   const lastProgressRef = useRef<PlaybackProgress | undefined>(undefined);
@@ -324,6 +328,9 @@ export function usePlaybackProgress({
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("beforeunload", onUnload);
+      // When page detail closes, `enabled` flips false first; avoid writing a stale
+      // fallback chapter during cleanup for that disable transition.
+      if (!enabledRef.current || !shouldClientSyncRef.current) return;
       captureProgressSnapshot();
       void flush();
     };
