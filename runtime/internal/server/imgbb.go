@@ -291,5 +291,5 @@ func (r *imgbbResponse) pickResult(httpStatus int) (*imgbbUploadResult, error) {
 	if msg == "" {
 		msg = fmt.Sprintf("imgbb upload failed, status=%d", httpStatus)
 	}
-	return nil, fmt.Errorf(msg)
+	return nil, fmt.Errorf("%s", msg)
 }

@@ -90,12 +90,14 @@ have_zig() {
 
 build_one() {
   local name="$1"
-  local goos goarch out_name zig_target out_file
+  local goos goarch out_name zig_target out_file runtime_version ldflags
   goos="$(target_goos "$name")"
   goarch="$(target_goarch "$name")"
   out_name="$(target_out "$name")"
   zig_target="$(target_zig "$name")"
   out_file="$BINARIES_DIR/$out_name"
+  runtime_version="$(app_version)"
+  ldflags="-s -w -X github.com/orbit-tauri-tools/runtime/internal/server.Version=${runtime_version}"
 
   mkdir -p "$BINARIES_DIR"
 
@@ -116,7 +118,7 @@ build_one() {
 
   (
     cd "$RUNTIME_DIR"
-    go build -ldflags="-s -w" -o "$out_file" ./cmd/orbit-runtime
+    go build -ldflags="$ldflags" -o "$out_file" ./cmd/orbit-runtime
   )
 
   if [[ "$goos" == "darwin" ]]; then

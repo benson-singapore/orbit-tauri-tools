@@ -326,6 +326,9 @@ func TestExtractOrbitPackage_MarketPackage(t *testing.T) {
 
 func TestLoadWasmBinary_Brotli(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "docs", "插件", "掘金", "掘金", "main.wasm.br")
+	if _, err := os.Stat(root); err != nil {
+		t.Skipf("test data not found: %s", root)
+	}
 	data, err := loadWasmBinary(root)
 	if err != nil {
 		t.Fatalf("loadWasmBinary: %v", err)

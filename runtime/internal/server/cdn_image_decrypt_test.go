@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"testing"
 )
 
@@ -46,6 +47,9 @@ func TestLbupupImageReferer(t *testing.T) {
 
 func TestDecryptUforxkImageFixture(t *testing.T) {
 	t.Parallel()
+	if os.Getenv("RUN_CDN_TEST") == "" {
+		t.Skip("set RUN_CDN_TEST=1 to run")
+	}
 
 	const encryptedURL = "https://pic.uforxk.cn/upload_01/xiao/20260616/2026061617372799575.jpeg"
 	req, err := http.NewRequest(http.MethodGet, encryptedURL, nil)
@@ -81,6 +85,9 @@ func TestDecryptUforxkImageFixture(t *testing.T) {
 
 func TestDecryptLbupupImageFixture(t *testing.T) {
 	t.Parallel()
+	if os.Getenv("RUN_CDN_TEST") == "" {
+		t.Skip("set RUN_CDN_TEST=1 to run")
+	}
 
 	const encryptedURL = "https://pic.lbupup.cn/upload_01/xiao/20260616/2026061613094752170.jpeg"
 	req, err := http.NewRequest(http.MethodGet, encryptedURL, nil)

@@ -10,8 +10,6 @@ import (
 	"github.com/orbit-tauri-tools/runtime/internal/store"
 )
 
-const Version = "1.0.0"
-
 type Server struct {
 	store    *store.Store
 	registry *plugin.Registry
