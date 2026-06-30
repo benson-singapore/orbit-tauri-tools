@@ -20,6 +20,32 @@ export function resolveActiveChapterIndex(
   return chapterItems.findIndex(item => item.id === activeChapterId);
 }
 
+export function resolveSerialChapterNeighbors(options: {
+  chapterItems: Article[];
+  activeChapterId: string | null | undefined;
+  hasMoreChapters?: boolean;
+}): {
+  prev: Article | null;
+  next: Article | null;
+  activeIndex: number | null;
+  canLoadMoreNext: boolean;
+} {
+  if (!options.activeChapterId) {
+    return { prev: null, next: null, activeIndex: null, canLoadMoreNext: false };
+  }
+  const idx = resolveActiveChapterIndex(options.chapterItems, options.activeChapterId);
+  if (idx < 0) {
+    return { prev: null, next: null, activeIndex: null, canLoadMoreNext: false };
+  }
+  const hasMore = Boolean(options.hasMoreChapters);
+  return {
+    prev: idx > 0 ? options.chapterItems[idx - 1] : null,
+    next: idx < options.chapterItems.length - 1 ? options.chapterItems[idx + 1] : null,
+    activeIndex: idx,
+    canLoadMoreNext: idx >= options.chapterItems.length - 1 && hasMore,
+  };
+}
+
 export function isNovelIntroChapter(
   mediaType: PluginMediaType | undefined,
   chapterItems: Article[],

@@ -30,6 +30,19 @@ export function shouldOpenChaptersForArticle(
   return capabilities.hasChapters || channelHasChapters(pluginMeta, channelId);
 }
 
+function mergeChapterItems(prev: Article[], nextItems: Article[]): Article[] {
+  if (nextItems.length === 0) return prev;
+  const existing = new Set(prev.map(item => item.id));
+  const merged = [...prev];
+  for (const item of nextItems) {
+    if (!existing.has(item.id)) {
+      existing.add(item.id);
+      merged.push(item);
+    }
+  }
+  return merged;
+}
+
 interface UseArticleChaptersOptions {
   parent: Article | null;
   activeChannel: string;
@@ -70,8 +83,14 @@ export function useArticleChapters({
   const [activeChapter, setActiveChapter] = useState<Article | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const resumeSeekLockRef = useRef(false);
+  const itemsRef = useRef<Article[]>([]);
+  const hasMoreRef = useRef(false);
+  const loadingMoreRef = useRef(false);
   const activeChapterRef = useRef<Article | null>(null);
   activeChapterRef.current = activeChapter;
+  itemsRef.current = items;
+  hasMoreRef.current = hasMore;
+  loadingMoreRef.current = loadingMore;
   const onChapterDetailRef = useRef(onChapterDetail);
   onChapterDetailRef.current = onChapterDetail;
   const onChapterDetailLoadedRef = useRef(onChapterDetailLoaded);
@@ -115,8 +134,11 @@ export function useArticleChapters({
   const applyRefreshResult = useCallback(
     (result: { items?: Article[]; hasMore?: boolean; title?: string }) => {
       const nextItems = result.items ?? [];
+      itemsRef.current = nextItems;
       setItems(nextItems);
-      setHasMore(Boolean(result.hasMore));
+      const nextHasMore = Boolean(result.hasMore);
+      hasMoreRef.current = nextHasMore;
+      setHasMore(nextHasMore);
       if (result.title) {
         setTitle(result.title);
       }
@@ -139,6 +161,8 @@ export function useArticleChapters({
 
   useEffect(() => {
     if (!enabled || !parent) {
+      itemsRef.current = [];
+      hasMoreRef.current = false;
       setItems([]);
       setTitle("");
       setHasMore(false);
@@ -150,6 +174,8 @@ export function useArticleChapters({
     if (
       !shouldOpenChaptersForArticle(parent, pluginMeta, activeChannel, capabilities, storedChannel)
     ) {
+      itemsRef.current = [];
+      hasMoreRef.current = false;
       setItems([]);
       setTitle("");
       setHasMore(false);
@@ -159,6 +185,8 @@ export function useArticleChapters({
 
     let cancelled = false;
     const channelId = resolveChannelId(parent);
+    itemsRef.current = [];
+    hasMoreRef.current = false;
     setItems([]);
     setTitle("");
     setHasMore(false);
@@ -187,8 +215,11 @@ export function useArticleChapters({
       .then(result => {
         if (cancelled) return;
         const nextItems = result.items ?? [];
+        itemsRef.current = nextItems;
         setItems(nextItems);
-        setHasMore(Boolean(result.hasMore));
+        const nextHasMore = Boolean(result.hasMore);
+        hasMoreRef.current = nextHasMore;
+        setHasMore(nextHasMore);
         setTitle(result.title ?? capabilities.chaptersLabel ?? "目录");
         const first = nextItems[0];
         if (!first) {
@@ -270,6 +301,7 @@ export function useArticleChapters({
     const run = async () => {
       try {
         const channelId = resolveChannelId(parent);
+        let merged = [...itemsRef.current];
         // Avoid runaway loops if a plugin returns inconsistent pagination.
         for (let i = 0; i < 25; i += 1) {
           if (cancelled) return;
@@ -278,32 +310,20 @@ export function useArticleChapters({
           const nextItems = result.items ?? [];
 
           if (nextItems.length > 0) {
-            setItems(prev => {
-              const existing = new Set(prev.map(item => item.id));
-              const merged = [...prev];
-              for (const item of nextItems) {
-                if (!existing.has(item.id)) {
-                  existing.add(item.id);
-                  merged.push(item);
-                }
-              }
-              return merged;
-            });
+            merged = mergeChapterItems(merged, nextItems);
+            itemsRef.current = merged;
+            setItems(merged);
           }
           if (result.title) {
             setTitle(result.title);
           }
-          setHasMore(Boolean(result.hasMore));
+          const nextHasMore = Boolean(result.hasMore);
+          hasMoreRef.current = nextHasMore;
+          setHasMore(nextHasMore);
 
-          if (nextItems.some(item => item.id === initialChapterId)) {
-            // Wait for state to flush then jump using the merged list.
-            window.requestAnimationFrame(() => {
-              if (cancelled) return;
-              const target = [...items, ...nextItems].find(item => item.id === initialChapterId);
-              if (target) {
-                void loadChapterDetail(target, parent);
-              }
-            });
+          const target = merged.find(item => item.id === initialChapterId);
+          if (target) {
+            void loadChapterDetail(target, parent);
             return;
           }
 
@@ -345,22 +365,73 @@ export function useArticleChapters({
     [parent, loadChapterDetail],
   );
 
-  const loadMore = useCallback(() => {
-    if (!parent || loadingMore || !hasMore) return;
+  const loadMore = useCallback((): Promise<Article[]> => {
+    if (!parent || loadingMoreRef.current || !hasMoreRef.current) {
+      return Promise.resolve([]);
+    }
     const channelId = resolveChannelId(parent);
+    loadingMoreRef.current = true;
     setLoadingMore(true);
-    void runtimeLoadMoreChapters(parent.pluginId, channelId, parent.id)
+    return runtimeLoadMoreChapters(parent.pluginId, channelId, parent.id)
       .then(result => {
         const nextItems = result.items ?? [];
-        setItems(prev => [...prev, ...nextItems]);
-        setHasMore(Boolean(result.hasMore));
+        if (nextItems.length > 0) {
+          const merged = mergeChapterItems(itemsRef.current, nextItems);
+          itemsRef.current = merged;
+          setItems(merged);
+        }
+        const nextHasMore = Boolean(result.hasMore);
+        hasMoreRef.current = nextHasMore;
+        setHasMore(nextHasMore);
         if (result.title) {
           setTitle(result.title);
         }
+        return nextItems;
       })
-      .catch(err => console.error("load more chapters failed", err))
-      .finally(() => setLoadingMore(false));
-  }, [parent, loadingMore, hasMore, resolveChannelId]);
+      .catch(err => {
+        console.error("load more chapters failed", err);
+        return [];
+      })
+      .finally(() => {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      });
+  }, [parent, resolveChannelId]);
+
+  const resolveRelativeChapter = useCallback(async (
+    fromChapterId: string,
+    offset: -1 | 1,
+  ): Promise<Article | null> => {
+    if (!parent) return null;
+
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const list = itemsRef.current;
+      const idx = list.findIndex(item => item.id === fromChapterId);
+      if (idx < 0) return null;
+
+      const targetIdx = idx + offset;
+      if (targetIdx >= 0 && targetIdx < list.length) {
+        return list[targetIdx];
+      }
+      if (offset < 0 || !hasMoreRef.current || !capabilities.canLoadMoreChapters) {
+        return null;
+      }
+
+      const appended = await loadMore();
+      if (appended.length === 0) return null;
+    }
+    return null;
+  }, [parent, capabilities.canLoadMoreChapters, loadMore]);
+
+  const selectRelativeChapter = useCallback((offset: -1 | 1) => {
+    if (!parent) return Promise.resolve(null);
+    const current = activeChapterRef.current;
+    if (!current) return Promise.resolve(null);
+    return resolveRelativeChapter(current.id, offset).then(target => {
+      if (!target) return null;
+      return loadChapterDetail(target, parent);
+    });
+  }, [parent, resolveRelativeChapter, loadChapterDetail]);
 
   const refresh = useCallback(() => {
     if (!parent || refreshing) return;
@@ -399,6 +470,7 @@ export function useArticleChapters({
     activeChapter,
     detailLoading,
     selectChapter,
+    selectRelativeChapter,
     loadMore,
     refresh,
     clearAndRefresh,

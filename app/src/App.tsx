@@ -113,6 +113,7 @@ import { isPlaybackHistoryEnabled, resolveEffectivePlayback } from "@/lib/playba
 import {
   isSerialIntroPage,
   resolveSerialChapterItemLabel,
+  resolveSerialChapterNeighbors,
   shouldShowSerialChapterPager,
 } from "@/lib/serialMedia";
 import { waitForRuntimeReady } from "@/lib/runtime";
@@ -820,6 +821,8 @@ export default function App() {
   });
 
   const novelChapterStreamActive = canUseNovelChapterStream && novelStream.slots.length > 0;
+  const serialStreamContentReady = canUseNovelChapterStream
+    || (useComicChapterStreamMode && comicStream.slots.length > 0);
 
   useEffect(() => {
     const isNovelMode = chaptersPluginMeta?.mediaType === "novel"
@@ -1084,21 +1087,25 @@ export default function App() {
 
   const chapterNeighbors = useMemo(() => {
     if (!chapters.isActive) {
-      return { prev: null as Article | null, next: null as Article | null, activeIndex: null as number | null };
+      return {
+        prev: null as Article | null,
+        next: null as Article | null,
+        activeIndex: null as number | null,
+        canLoadMoreNext: false,
+      };
     }
-    if (!activeChapterId) {
-      return { prev: null, next: null, activeIndex: null };
-    }
-    const idx = chapters.items.findIndex(item => item.id === activeChapterId);
-    if (idx < 0) {
-      return { prev: null, next: null, activeIndex: null as number | null };
-    }
-    return {
-      prev: idx > 0 ? chapters.items[idx - 1] : null,
-      next: idx < chapters.items.length - 1 ? chapters.items[idx + 1] : null,
-      activeIndex: idx,
-    };
-  }, [chapters.isActive, chapters.items, activeChapterId]);
+    return resolveSerialChapterNeighbors({
+      chapterItems: chapters.items,
+      activeChapterId,
+      hasMoreChapters: chapters.hasMore && channelCapabilities.canLoadMoreChapters,
+    });
+  }, [
+    chapters.isActive,
+    chapters.items,
+    chapters.hasMore,
+    channelCapabilities.canLoadMoreChapters,
+    activeChapterId,
+  ]);
 
   const pageDetailSubtitle = useMemo(() => {
     if (!isPageDetailView && !(chapters.isActive && chaptersParent)) return null;
@@ -1138,17 +1145,57 @@ export default function App() {
   const goToChapter = useCallback((chapter: Article) => {
     setDetailResumeIntent(undefined);
     detailResumeAppliedRef.current = true;
+    if (
+      canUseNovelChapterStream
+      && novelStream.slots.some(slot => slot.chapter.id === chapter.id)
+      && novelStream.scrollToChapterInStream(chapter.id)
+    ) {
+      return;
+    }
     if (readerPanelRef.current) {
       readerPanelRef.current.scrollTop = 0;
     }
     void chapters.selectChapter(chapter);
-  }, [chapters.selectChapter]);
+  }, [canUseNovelChapterStream, novelStream.slots, novelStream.scrollToChapterInStream, chapters.selectChapter]);
+
+  const goToNextChapter = useCallback(() => {
+    setDetailResumeIntent(undefined);
+    detailResumeAppliedRef.current = true;
+    if (chapterNeighbors.next) {
+      if (
+        canUseNovelChapterStream
+        && novelStream.slots.some(slot => slot.chapter.id === chapterNeighbors.next!.id)
+        && novelStream.scrollToChapterInStream(chapterNeighbors.next.id)
+      ) {
+        return;
+      }
+      if (readerPanelRef.current) {
+        readerPanelRef.current.scrollTop = 0;
+      }
+      void chapters.selectChapter(chapterNeighbors.next);
+      return;
+    }
+    if (readerPanelRef.current) {
+      readerPanelRef.current.scrollTop = 0;
+    }
+    if (chapterNeighbors.canLoadMoreNext) {
+      void chapters.selectRelativeChapter(1);
+    }
+  }, [
+    chapterNeighbors.next,
+    chapterNeighbors.canLoadMoreNext,
+    canUseNovelChapterStream,
+    novelStream.slots,
+    novelStream.scrollToChapterInStream,
+    chapters.selectChapter,
+    chapters.selectRelativeChapter,
+  ]);
 
   const chapterNavButtonClass = isDarkTheme(theme)
     ? "border-neutral-700 text-neutral-300 hover:bg-neutral-800"
     : "border-neutral-200 text-neutral-600 hover:bg-neutral-50";
 
-  const chapterToolbarNav = chapters.isActive && (chapterNeighbors.prev || chapterNeighbors.next) ? (
+  const chapterToolbarNav = chapters.isActive && (chapterNeighbors.prev || chapterNeighbors.next || chapterNeighbors.canLoadMoreNext) ? (
     <>
       {chapterNeighbors.prev ? (
         <button
@@ -1161,12 +1208,14 @@ export default function App() {
           <span>上一{serialChapterItemLabel}</span>
         </button>
       ) : null}
-      {chapterNeighbors.next ? (
+      {chapterNeighbors.next || chapterNeighbors.canLoadMoreNext ? (
         <button
           type="button"
-          onClick={() => goToChapter(chapterNeighbors.next!)}
+          onClick={goToNextChapter}
           className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors align-middle ${chapterNavButtonClass}`}
-          title={`下一${serialChapterItemLabel}：${chapterNeighbors.next.title}`}
+          title={chapterNeighbors.next
+            ? `下一${serialChapterItemLabel}：${chapterNeighbors.next.title}`
+            : `加载更多${serialChapterItemLabel}`}
         >
           <span>下一{serialChapterItemLabel}</span>
           <Icon name="arrow-left" className="w-3.5 h-3.5 rotate-180" />
@@ -1205,8 +1254,8 @@ export default function App() {
     })) {
       return null;
     }
-    const { prev, next } = chapterNeighbors;
-    if (!prev && !next) return null;
+    const { prev, next, canLoadMoreNext } = chapterNeighbors;
+    if (!prev && !next && !canLoadMoreNext) return null;
 
     return (
       <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800">
@@ -1224,12 +1273,14 @@ export default function App() {
             <span />
           )}
 
-          {next ? (
+          {next || canLoadMoreNext ? (
             <button
               type="button"
-              onClick={() => goToChapter(next)}
+              onClick={goToNextChapter}
               className="px-4 py-2 rounded-xl text-sm font-semibold border border-neutral-200 dark:border-neutral-700 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
-              title={`下一${serialChapterItemLabel}：${next.title}`}
+              title={next
+                ? `下一${serialChapterItemLabel}：${next.title}`
+                : `加载更多${serialChapterItemLabel}`}
             >
               下一{serialChapterItemLabel}
             </button>
@@ -1243,6 +1294,7 @@ export default function App() {
     chaptersPluginMeta?.mediaType,
     chapterNeighbors,
     goToChapter,
+    goToNextChapter,
     isComicReaderContent,
     comicChapterStreamActive,
     novelChapterStreamActive,
@@ -1252,23 +1304,44 @@ export default function App() {
 
   const introStartReading = useMemo(() => {
     if (!chapters.isActive || !isMangaIntroPage) return null;
-    const { next } = chapterNeighbors;
-    if (!next) return null;
+    const activeId = chapters.activeChapter?.id ?? null;
+    if (!activeId) return null;
+    const { next, canLoadMoreNext } = resolveSerialChapterNeighbors({
+      chapterItems: chapters.items,
+      activeChapterId: activeId,
+      hasMoreChapters: chapters.hasMore && channelCapabilities.canLoadMoreChapters,
+    });
+    if (!next && !canLoadMoreNext) return null;
 
     return (
       <div className="mt-8 pt-6 border-t border-neutral-100 dark:border-neutral-800 flex justify-center">
         <button
           type="button"
-          onClick={() => goToChapter(next)}
+          onClick={() => {
+            if (next) {
+              goToChapter(next);
+              return;
+            }
+            goToNextChapter();
+          }}
           className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:hover:bg-indigo-400 transition-colors"
-          title={`开始阅读：${next.title}`}
+          title={next ? `开始阅读：${next.title}` : "开始阅读"}
         >
           开始阅读
           <Icon name="arrow-left" className="w-4 h-4 rotate-180" />
         </button>
       </div>
     );
-  }, [chapters.isActive, isMangaIntroPage, chapterNeighbors, goToChapter]);
+  }, [
+    chapters.isActive,
+    chapters.items,
+    chapters.hasMore,
+    chapters.activeChapter?.id,
+    channelCapabilities.canLoadMoreChapters,
+    isMangaIntroPage,
+    goToChapter,
+    goToNextChapter,
+  ]);
 
   const handleItemSelect = useCallback((
     item: Article,
@@ -3668,7 +3741,7 @@ export default function App() {
                 ) : null}
 
                 {/* Content body */}
-                {showContentLoading ? (
+                {showContentLoading && !serialStreamContentReady ? (
                   <div className="mt-6 flex items-center gap-2 text-sm text-neutral-400">
                     <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
                     加载正文中…
@@ -3681,7 +3754,7 @@ export default function App() {
                     runtimeBase={runtimeBase}
                     reachedEnd={comicStream.reachedEnd}
                   />
-                ) : novelChapterStreamActive ? (
+                ) : canUseNovelChapterStream ? (
                   <>
                     <NovelChapterStream
                       slots={novelStream.slots}

@@ -8,7 +8,11 @@ import {
 } from "react";
 import { prepareArticleHtmlContent } from "@/lib/articleContent";
 import { enhanceNovelChapterDisplayContent } from "@/lib/novelChapterContent";
-import { isNearComicChapterEnd } from "@/lib/comicChapterContent";
+import {
+  COMIC_CHAPTER_PREFETCH_DISTANCE_PX,
+  isNearComicChapterEnd,
+} from "@/lib/comicChapterContent";
+import { findArticleScrollParent } from "@/lib/playbackResume";
 import { runtimeOpenChapterDetail } from "@/lib/runtimeV2";
 import { isDarkTheme } from "@/lib/themeMode";
 import type { Article, ThemeMode } from "@/types";
@@ -24,6 +28,29 @@ const NOVEL_STREAM_PREFETCH_BOTTOM_DISTANCE_PX = 1200;
 
 function isNovelStreamSlotReady(content: NovelStreamSlotContent): boolean {
   return content.html.trim().length > 0;
+}
+
+function resolveStreamScrollRoot(
+  streamContainer: HTMLElement | null,
+  scrollRootRef: RefObject<HTMLElement | null>,
+): HTMLElement | null {
+  return findArticleScrollParent(streamContainer) ?? scrollRootRef.current;
+}
+
+function resolveReaderStickyOffset(scrollRoot: HTMLElement): number {
+  const sticky = scrollRoot.querySelector<HTMLElement>(".sticky.top-0");
+  if (!sticky) return 0;
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const stickyRect = sticky.getBoundingClientRect();
+  if (stickyRect.bottom <= rootRect.top || stickyRect.top >= rootRect.bottom) return 0;
+  return Math.max(0, stickyRect.bottom - rootRect.top);
+}
+
+function alignChapterBlockInScrollRoot(scrollRoot: HTMLElement, block: HTMLElement): void {
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const blockRect = block.getBoundingClientRect();
+  const stickyOffset = resolveReaderStickyOffset(scrollRoot);
+  scrollRoot.scrollTop += blockRect.top - (rootRect.top + stickyOffset);
 }
 
 export interface NovelStreamSlot {
@@ -48,7 +75,7 @@ export interface UseNovelChapterStreamOptions {
   detailLoading?: boolean;
   canLoadMoreChapters?: boolean;
   hasMoreChapters?: boolean;
-  loadMoreChapters?: () => Promise<unknown> | void;
+  loadMoreChapters?: () => Promise<Article[] | void>;
   channelId: string;
   runtimeBase: string | null;
   theme: ThemeMode;
@@ -96,6 +123,7 @@ export function useNovelChapterStream({
   const seedGenerationRef = useRef(0);
   const visibleChapterRef = useRef<Article | null>(null);
   const loadingMoreChaptersRef = useRef(false);
+  const schedulePrefetchNextRef = useRef<() => void>(() => {});
   const onVisibleChapterChangeRef = useRef(onVisibleChapterChange);
   onVisibleChapterChangeRef.current = onVisibleChapterChange;
   const onChapterDetailFetchedRef = useRef(onChapterDetailFetched);
@@ -194,6 +222,8 @@ export function useNovelChapterStream({
   activeChapterDetailRef.current = activeChapterDetail;
   const detailLoadingRef = useRef(detailLoading);
   detailLoadingRef.current = detailLoading;
+  const hasMoreChaptersRef = useRef(hasMoreChapters);
+  hasMoreChaptersRef.current = hasMoreChapters;
 
   const resolveLastReadySlotIndex = useCallback((items: NovelStreamSlot[]): number => {
     for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -202,36 +232,54 @@ export function useNovelChapterStream({
     return -1;
   }, []);
 
-  const resolveNextChapter = useCallback((): Article | null => {
+  const resolveNextChapterFromItems = useCallback((items: Article[]): Article | null => {
     const currentSlots = slotsRef.current;
-    if (currentSlots.length === 0) return null;
+    if (currentSlots.length === 0 || items.length === 0) return null;
     const lastReadyIdx = resolveLastReadySlotIndex(currentSlots);
     if (lastReadyIdx < 0) return null;
     const lastSlot = currentSlots[lastReadyIdx];
-    const items = chapterItemsRef.current;
     const lastIdx = items.findIndex(item => item.id === lastSlot.chapter.id);
     if (lastIdx < 0) return null;
     if (lastIdx >= items.length - 1) return null;
     return items[lastIdx + 1];
   }, [resolveLastReadySlotIndex]);
 
-  const ensureMoreChapters = useCallback(async (): Promise<boolean> => {
-    if (!enabled || !parent) return false;
-    if (!canLoadMoreChapters || !hasMoreChapters) return false;
-    if (!loadMoreChapters) return false;
-    if (loadingMoreChaptersRef.current) return false;
+  const resolveNextChapter = useCallback((): Article | null => {
+    return resolveNextChapterFromItems(chapterItemsRef.current);
+  }, [resolveNextChapterFromItems]);
+
+  const mergeChapterListItems = useCallback((appended: Article[]) => {
+    if (appended.length === 0) return;
+    const existing = new Set(chapterItemsRef.current.map(item => item.id));
+    const merged = [...chapterItemsRef.current];
+    for (const item of appended) {
+      if (!existing.has(item.id)) {
+        existing.add(item.id);
+        merged.push(item);
+      }
+    }
+    chapterItemsRef.current = merged;
+  }, []);
+
+  const ensureMoreChapters = useCallback(async (): Promise<Article[]> => {
+    if (!enabled || !parent) return [];
+    if (!canLoadMoreChapters || !hasMoreChaptersRef.current) return [];
+    if (!loadMoreChapters) return [];
+    if (loadingMoreChaptersRef.current) return [];
     loadingMoreChaptersRef.current = true;
     try {
-      await loadMoreChapters();
-      return true;
+      const result = await loadMoreChapters();
+      const appended = Array.isArray(result) ? result : [];
+      mergeChapterListItems(appended);
+      return appended;
     } finally {
       loadingMoreChaptersRef.current = false;
     }
-  }, [enabled, parent, canLoadMoreChapters, hasMoreChapters, loadMoreChapters]);
+  }, [enabled, parent, canLoadMoreChapters, loadMoreChapters, mergeChapterListItems]);
 
   const tryTrimLeadingSlot = useCallback(() => {
-    const scrollRoot = scrollRootRef.current;
     const streamContainer = streamContainerRef.current;
+    const scrollRoot = resolveStreamScrollRoot(streamContainer, scrollRootRef);
     const currentSlots = slotsRef.current;
     if (!scrollRoot || !streamContainer || currentSlots.length <= 1) return;
 
@@ -277,14 +325,15 @@ export function useNovelChapterStream({
 
       const items = chapterItemsRef.current;
       const idx = items.findIndex(item => item.id === detail.id);
-      if (idx >= items.length - 1) {
+      if (idx >= items.length - 1 && !hasMoreChaptersRef.current) {
         setReachedEnd(true);
       }
 
       appendLockRef.current = false;
-      prefetchCooldownUntilRef.current = Date.now() + 800;
+      prefetchCooldownUntilRef.current = 0;
       notifyChapterDetailFetchedRef.current(detail);
       tryTrimLeadingSlot();
+      schedulePrefetchNextRef.current();
       return true;
     },
     [enabled, parent, tryTrimLeadingSlot, updateChapterSlot],
@@ -311,33 +360,38 @@ export function useNovelChapterStream({
     [tryAppendReadyChapter],
   );
 
-  const tryPrefetchNextChapter = useCallback(async () => {
+  const tryPrefetchNextChapter = useCallback(async (options?: { fromScrollBottom?: boolean }) => {
     if (!enabled || !parent) return;
     if (prefetchLockRef.current || appendLockRef.current) return;
     if (Date.now() < prefetchCooldownUntilRef.current) return;
 
     const currentSlots = slotsRef.current;
-    const visibleId = visibleChapterRef.current?.id;
-    if (!visibleId) return;
-
-    const visibleIdx = currentSlots.findIndex(slot => slot.chapter.id === visibleId);
-    if (visibleIdx < 0) return;
     const lastReadyIdx = resolveLastReadySlotIndex(currentSlots);
-    if (lastReadyIdx < 0 || visibleIdx !== lastReadyIdx) return;
+    if (lastReadyIdx < 0) return;
+
+    if (!options?.fromScrollBottom) {
+      const visibleId = visibleChapterRef.current?.id;
+      if (!visibleId) return;
+
+      const visibleIdx = currentSlots.findIndex(slot => slot.chapter.id === visibleId);
+      if (visibleIdx < 0 || visibleIdx !== lastReadyIdx) return;
+    }
 
     prefetchLockRef.current = true;
     let targetChapterId: string | null = null;
     try {
       let nextChapter = resolveNextChapter();
       if (!nextChapter) {
-        const requestedMore = await ensureMoreChapters();
-        if (requestedMore) {
-          // Wait for chapterItems to update; a scroll tick will retry prefetch.
-          prefetchCooldownUntilRef.current = Date.now() + 400;
+        const appended = await ensureMoreChapters();
+        if (appended.length > 0) {
+          nextChapter = resolveNextChapterFromItems(chapterItemsRef.current);
+        }
+        if (!nextChapter) {
+          if (appended.length === 0 && !hasMoreChaptersRef.current) {
+            setReachedEnd(true);
+          }
           return;
         }
-        setReachedEnd(true);
-        return;
       }
       targetChapterId = nextChapter.id;
 
@@ -404,15 +458,46 @@ export function useNovelChapterStream({
     parent,
     resolveLastReadySlotIndex,
     resolveNextChapter,
+    resolveNextChapterFromItems,
     ensureMoreChapters,
     fetchChapterDetail,
     prepareStreamContent,
     tryAppendPrefetchedChapter,
   ]);
 
-  const syncVisibleChapter = useCallback(() => {
-    const scrollRoot = scrollRootRef.current;
+  const tryPrefetchNextChapterRef = useRef(tryPrefetchNextChapter);
+  tryPrefetchNextChapterRef.current = tryPrefetchNextChapter;
+
+  const schedulePrefetchNext = useCallback(() => {
+    prefetchCooldownUntilRef.current = 0;
+    window.requestAnimationFrame(() => {
+      void tryPrefetchNextChapterRef.current({ fromScrollBottom: true });
+    });
+  }, []);
+
+  schedulePrefetchNextRef.current = schedulePrefetchNext;
+
+  const scrollToChapterInStream = useCallback((chapterId: string) => {
     const streamContainer = streamContainerRef.current;
+    const scrollRoot = resolveStreamScrollRoot(streamContainer, scrollRootRef);
+    if (!scrollRoot || !streamContainer) return false;
+
+    const block = streamContainer.querySelector(`[data-novel-chapter="${chapterId}"]`);
+    if (!(block instanceof HTMLElement)) return false;
+
+    alignChapterBlockInScrollRoot(scrollRoot, block);
+    streamInteractedRef.current = true;
+
+    const slot = slotsRef.current.find(item => item.chapter.id === chapterId);
+    if (slot?.status === "ready") {
+      notifyVisibleChapterRef.current(slot.chapter);
+    }
+    return true;
+  }, [scrollRootRef, notifyVisibleChapter]);
+
+  const syncVisibleChapter = useCallback(() => {
+    const streamContainer = streamContainerRef.current;
+    const scrollRoot = resolveStreamScrollRoot(streamContainer, scrollRootRef);
     if (!scrollRoot || !streamContainer) return;
 
     const blocks = Array.from(
@@ -460,24 +545,38 @@ export function useNovelChapterStream({
   }, [scrollRootRef, notifyVisibleChapter]);
 
   const checkStreamOnScroll = useCallback(() => {
-    syncVisibleChapter();
-
-    const scrollRoot = scrollRootRef.current;
     const streamContainer = streamContainerRef.current;
+    const scrollRoot = resolveStreamScrollRoot(streamContainer, scrollRootRef);
     const currentSlots = slotsRef.current;
     if (!scrollRoot || !streamContainer || currentSlots.length === 0) return;
 
+    syncVisibleChapter();
+
+    const lastReadyIdx = resolveLastReadySlotIndex(currentSlots);
+    const remaining = scrollRoot.scrollHeight - (scrollRoot.scrollTop + scrollRoot.clientHeight);
+    if (lastReadyIdx >= 0 && remaining <= NOVEL_STREAM_PREFETCH_BOTTOM_DISTANCE_PX) {
+      void tryPrefetchNextChapter({ fromScrollBottom: true });
+    }
+
     const visibleId = visibleChapterRef.current?.id;
-    if (!visibleId) return;
+    if (!visibleId) {
+      tryTrimLeadingSlot();
+      return;
+    }
 
     const visibleIdx = currentSlots.findIndex(slot => slot.chapter.id === visibleId);
-    if (visibleIdx < 0) return;
-    const lastReadyIdx = resolveLastReadySlotIndex(currentSlots);
+    if (visibleIdx < 0) {
+      tryTrimLeadingSlot();
+      return;
+    }
 
     const visibleBlock = streamContainer.querySelector(
       `[data-novel-chapter="${visibleId}"]`,
     );
-    if (!(visibleBlock instanceof HTMLElement)) return;
+    if (!(visibleBlock instanceof HTMLElement)) {
+      tryTrimLeadingSlot();
+      return;
+    }
 
     const visibleSlot = currentSlots[visibleIdx];
     if (
@@ -485,13 +584,6 @@ export function useNovelChapterStream({
       && visibleIdx === lastReadyIdx
       && isNearComicChapterEnd(visibleBlock, scrollRoot)
     ) {
-      void tryPrefetchNextChapter();
-    }
-
-    // Fallback for resume-entry paths where visible chapter detection can lag:
-    // if reader is near the overall bottom, still attempt to prefetch/load more.
-    const remaining = scrollRoot.scrollHeight - (scrollRoot.scrollTop + scrollRoot.clientHeight);
-    if (remaining <= NOVEL_STREAM_PREFETCH_BOTTOM_DISTANCE_PX) {
       void tryPrefetchNextChapter();
     }
 
@@ -504,7 +596,7 @@ export function useNovelChapterStream({
     resolveLastReadySlotIndex,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!enabled || !parent || !activeChapter) {
       setSlots([]);
       setReachedEnd(false);
@@ -525,14 +617,27 @@ export function useNovelChapterStream({
     const parentId = parent.id;
     const chapterId = activeChapter.id;
     const items = chapterItemsRef.current;
-    const hasReadyActiveSlot = slotsRef.current.some(
-      slot => slot.chapter.id === chapterId && slot.status === "ready",
-    );
-    const streamAlreadySeeded = lastSeedChapterIdRef.current === chapterId
-      && lastSeedParentIdRef.current === parentId
-      && hasReadyActiveSlot;
+    const shouldReseed = lastSeedChapterIdRef.current !== chapterId
+      || lastSeedParentIdRef.current !== parentId;
 
-    if (streamAlreadySeeded) {
+    if (shouldReseed) {
+      const existingIdx = slotsRef.current.findIndex(slot => slot.chapter.id === chapterId);
+      if (
+        existingIdx >= 0
+        && lastSeedParentIdRef.current === parentId
+        && slotsRef.current.length > 0
+      ) {
+        lastSeedChapterIdRef.current = chapterId;
+        pendingScrollToChapterRef.current = chapterId;
+        pendingScrollGenerationRef.current = seedGenerationRef.current;
+        streamInteractedRef.current = false;
+        const slot = slotsRef.current[existingIdx];
+        if (slot.status === "ready") {
+          notifyVisibleChapterRef.current(slot.chapter);
+        }
+        return;
+      }
+    } else {
       return;
     }
 
@@ -601,9 +706,7 @@ export function useNovelChapterStream({
       return;
     }
 
-    pendingScrollToChapterRef.current = resolvedChapter.id;
-    pendingScrollGenerationRef.current = generation;
-    setReachedEnd(idx >= items.length - 1);
+    setReachedEnd(idx >= items.length - 1 && !hasMoreChapters);
     appendLockRef.current = false;
     prefetchLockRef.current = false;
     prefetchRef.current = null;
@@ -628,6 +731,7 @@ export function useNovelChapterStream({
     notifyVisibleChapterRef.current(activeDetail);
     if (isNovelStreamSlotReady(activeContent)) {
       notifyChapterDetailFetchedRef.current(activeDetail);
+      schedulePrefetchNextRef.current();
     }
 
     if (!isNovelStreamSlotReady(activeContent) && !detailLoadingRef.current) {
@@ -651,7 +755,23 @@ export function useNovelChapterStream({
           );
         });
     }
-  }, [enabled, parent?.id, activeChapter?.id, chapterItems.length]);
+  }, [enabled, parent?.id, activeChapter?.id, chapterItems.length, hasMoreChapters]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const currentSlots = slotsRef.current;
+    if (currentSlots.length === 0) return;
+
+    const lastReadyIdx = resolveLastReadySlotIndex(currentSlots);
+    if (lastReadyIdx < 0) return;
+
+    const lastReadyId = currentSlots[lastReadyIdx].chapter.id;
+    const idx = chapterItemsRef.current.findIndex(item => item.id === lastReadyId);
+    if (idx < 0) return;
+
+    const atLoadedListEnd = idx >= chapterItemsRef.current.length - 1;
+    setReachedEnd(atLoadedListEnd && !hasMoreChapters);
+  }, [enabled, chapterItems.length, hasMoreChapters, resolveLastReadySlotIndex]);
 
   useEffect(() => {
     if (!enabled || !activeChapter || !activeChapterDetail) return;
@@ -677,13 +797,14 @@ export function useNovelChapterStream({
     );
     const idx = chapterItemsRef.current.findIndex(item => item.id === activeChapter.id);
     if (idx >= 0) {
-      setReachedEnd(idx >= chapterItemsRef.current.length - 1);
+      setReachedEnd(idx >= chapterItemsRef.current.length - 1 && !hasMoreChapters);
     }
   }, [
     enabled,
     activeChapter?.id,
     activeChapterDetail?.content,
     activeChapterDetail?.id,
+    hasMoreChapters,
     prepareStreamContent,
   ]);
 
@@ -802,15 +923,13 @@ export function useNovelChapterStream({
 
     pendingScrollToChapterRef.current = null;
     pendingScrollGenerationRef.current = 0;
-    const scrollRoot = scrollRootRef.current;
-    const rootRect = scrollRoot.getBoundingClientRect();
-    const blockRect = block.getBoundingClientRect();
-    scrollRoot.scrollTop += blockRect.top - rootRect.top;
+    alignChapterBlockInScrollRoot(scrollRootRef.current, block);
   }, [slots, scrollRootRef]);
 
   useEffect(() => {
-    if (!isActive) return;
-    const root = scrollRootRef.current;
+    if (!enabled) return;
+    const streamContainer = streamContainerRef.current;
+    const root = resolveStreamScrollRoot(streamContainer, scrollRootRef);
     if (!root) return;
 
     let raf = 0;
@@ -831,23 +950,84 @@ export function useNovelChapterStream({
       root.removeEventListener("scroll", onScroll);
       window.cancelAnimationFrame(raf);
     };
-  }, [isActive, checkStreamOnScroll, scrollRootRef, slots.length]);
+  }, [enabled, checkStreamOnScroll, scrollRootRef, slots.length]);
 
   useEffect(() => {
-    if (!isActive) return;
+    if (!enabled) return;
     window.requestAnimationFrame(() => {
       checkStreamOnScroll();
     });
-  }, [isActive, slots, checkStreamOnScroll]);
+  }, [enabled, slots, checkStreamOnScroll]);
 
   useEffect(() => {
-    if (!isActive) return;
+    if (!enabled) return;
     // After chapter list expands via loadMore, retry prefetch without requiring
     // an extra user scroll event.
     window.requestAnimationFrame(() => {
       checkStreamOnScroll();
     });
-  }, [isActive, chapterItems.length, checkStreamOnScroll]);
+  }, [enabled, chapterItems.length, checkStreamOnScroll]);
+
+  useEffect(() => {
+    if (!enabled || detailLoading) return;
+    window.requestAnimationFrame(() => {
+      checkStreamOnScroll();
+    });
+  }, [enabled, detailLoading, checkStreamOnScroll]);
+
+  useLayoutEffect(() => {
+    if (!enabled || slots.length === 0) return;
+    checkStreamOnScroll();
+  }, [enabled, slots.length, checkStreamOnScroll]);
+
+  useEffect(() => {
+    if (!enabled || reachedEnd) return;
+    const lastReadyIdx = resolveLastReadySlotIndex(slots);
+    if (lastReadyIdx < 0 || slots[lastReadyIdx].status !== "ready") return;
+    schedulePrefetchNextRef.current();
+  }, [enabled, slots, reachedEnd, resolveLastReadySlotIndex]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const streamContainer = streamContainerRef.current;
+    if (!streamContainer) return;
+
+    const lastReadyIdx = resolveLastReadySlotIndex(slotsRef.current);
+    if (lastReadyIdx < 0) return;
+
+    const lastReadyId = slotsRef.current[lastReadyIdx].chapter.id;
+    const sentinel = streamContainer.querySelector(
+      `[data-novel-chapter-end="${lastReadyId}"]`,
+    );
+    if (!(sentinel instanceof HTMLElement)) return;
+
+    const scrollRoot = resolveStreamScrollRoot(streamContainer, scrollRootRef);
+    if (!scrollRoot) return;
+
+    const observer = new IntersectionObserver(
+      entries => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            void tryPrefetchNextChapter({ fromScrollBottom: true });
+          }
+        }
+      },
+      {
+        root: scrollRoot,
+        rootMargin: `0px 0px ${COMIC_CHAPTER_PREFETCH_DISTANCE_PX}px 0px`,
+        threshold: 0,
+      },
+    );
+
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [
+    enabled,
+    slots,
+    tryPrefetchNextChapter,
+    scrollRootRef,
+    resolveLastReadySlotIndex,
+  ]);
 
   return {
     isActive,
@@ -855,5 +1035,6 @@ export function useNovelChapterStream({
     reachedEnd,
     visibleChapter,
     streamContainerRef,
+    scrollToChapterInStream,
   };
 }

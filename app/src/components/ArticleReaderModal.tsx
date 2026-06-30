@@ -54,6 +54,7 @@ import { resolveEffectivePlayback, isPlaybackHistoryEnabled } from "@/lib/playba
 import {
   isSerialIntroPage,
   resolveSerialChapterItemLabel,
+  resolveSerialChapterNeighbors,
   shouldShowSerialChapterPager,
 } from "@/lib/serialMedia";
 import { NovelReaderSettingsButton } from "@/components/NovelReaderSettingsButton";
@@ -393,6 +394,8 @@ export function ArticleReaderModal({
   });
 
   const novelChapterStreamActive = canUseNovelChapterStream && novelStream.slots.length > 0;
+  const serialStreamContentReady = canUseNovelChapterStream
+    || (useComicChapterStreamMode && comicStream.slots.length > 0);
 
   useEffect(() => {
     if (pluginMeta?.mediaType !== "novel") {
@@ -762,10 +765,46 @@ export function ArticleReaderModal({
 
   const goToChapter = (chapter: Article) => {
     resumeAppliedRef.current = true;
+    if (
+      canUseNovelChapterStream
+      && novelStream.slots.some(slot => slot.chapter.id === chapter.id)
+      && novelStream.scrollToChapterInStream(chapter.id)
+    ) {
+      return;
+    }
     if (scrollRootRef.current) {
       scrollRootRef.current.scrollTop = 0;
     }
     void chapters.selectChapter(chapter);
+  };
+
+  const goToNextChapter = () => {
+    resumeAppliedRef.current = true;
+    const neighbors = resolveSerialChapterNeighbors({
+      chapterItems: chapters.items,
+      activeChapterId,
+      hasMoreChapters: chapters.hasMore && channelCapabilities.canLoadMoreChapters,
+    });
+    if (neighbors.next) {
+      if (
+        canUseNovelChapterStream
+        && novelStream.slots.some(slot => slot.chapter.id === neighbors.next!.id)
+        && novelStream.scrollToChapterInStream(neighbors.next.id)
+      ) {
+        return;
+      }
+      if (scrollRootRef.current) {
+        scrollRootRef.current.scrollTop = 0;
+      }
+      void chapters.selectChapter(neighbors.next);
+      return;
+    }
+    if (scrollRootRef.current) {
+      scrollRootRef.current.scrollTop = 0;
+    }
+    if (neighbors.canLoadMoreNext) {
+      void chapters.selectRelativeChapter(1);
+    }
   };
 
   const chaptersList = chapters.isActive && chaptersParent ? (
@@ -805,11 +844,12 @@ export function ArticleReaderModal({
       return null;
     }
     if (!activeChapterId) return null;
-    const idx = chapters.items.findIndex(item => item.id === activeChapterId);
-    if (idx < 0) return null;
-    const prev = idx > 0 ? chapters.items[idx - 1] : null;
-    const next = idx < chapters.items.length - 1 ? chapters.items[idx + 1] : null;
-    if (!prev && !next) return null;
+    const { prev, next, canLoadMoreNext } = resolveSerialChapterNeighbors({
+      chapterItems: chapters.items,
+      activeChapterId,
+      hasMoreChapters: chapters.hasMore && channelCapabilities.canLoadMoreChapters,
+    });
+    if (!prev && !next && !canLoadMoreNext) return null;
 
     return (
       <div className="mt-8 pt-6 border-t orbit-detail-divider">
@@ -827,12 +867,14 @@ export function ArticleReaderModal({
             <span />
           )}
 
-          {next ? (
+          {next || canLoadMoreNext ? (
             <button
               type="button"
-              onClick={() => goToChapter(next)}
+              onClick={goToNextChapter}
               className="px-4 py-2 rounded-xl text-sm font-semibold border orbit-detail-divider hover:bg-[color-mix(in_srgb,var(--orbit-accent)_8%,transparent)] transition-colors"
-              title={`下一${serialChapterItemLabel}：${next.title}`}
+              title={next
+                ? `下一${serialChapterItemLabel}：${next.title}`
+                : `加载更多${serialChapterItemLabel}`}
             >
               下一{serialChapterItemLabel}
             </button>
@@ -848,31 +890,40 @@ export function ArticleReaderModal({
     comicChapterStreamActive,
     novelChapterStreamActive,
     serialChapterItemLabel,
+    channelCapabilities.canLoadMoreChapters,
   ]);
 
   const introStartReading = useMemo(() => {
     if (!chapters.isActive || !isMangaIntroPage) return null;
     const activeId = chapters.activeChapter?.id ?? null;
     if (!activeId) return null;
-    const idx = chapters.items.findIndex(item => item.id === activeId);
-    if (idx < 0) return null;
-    const next = idx < chapters.items.length - 1 ? chapters.items[idx + 1] : null;
-    if (!next) return null;
+    const { next, canLoadMoreNext } = resolveSerialChapterNeighbors({
+      chapterItems: chapters.items,
+      activeChapterId: activeId,
+      hasMoreChapters: chapters.hasMore && channelCapabilities.canLoadMoreChapters,
+    });
+    if (!next && !canLoadMoreNext) return null;
 
     return (
       <div className="mt-8 pt-6 border-t orbit-detail-divider flex justify-center">
         <button
           type="button"
-          onClick={() => goToChapter(next)}
+          onClick={() => {
+            if (next) {
+              goToChapter(next);
+              return;
+            }
+            goToNextChapter();
+          }}
           className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold text-neutral-950 bg-[var(--orbit-accent)] hover:opacity-90 transition-opacity"
-          title={`开始阅读：${next.title}`}
+          title={next ? `开始阅读：${next.title}` : "开始阅读"}
         >
           开始阅读
           <Icon name="arrow-left" className="w-4 h-4 rotate-180" />
         </button>
       </div>
     );
-  }, [chapters, isMangaIntroPage]);
+  }, [chapters, isMangaIntroPage, channelCapabilities.canLoadMoreChapters]);
 
   const modal = (
     <div
@@ -1030,7 +1081,7 @@ export function ArticleReaderModal({
               </div>
             ) : null}
 
-            {showContentLoading ? (
+            {showContentLoading && !serialStreamContentReady ? (
               <div className="mt-6 flex items-center gap-2 text-sm orbit-detail-meta">
                 <span className="inline-block w-4 h-4 border-2 border-[color-mix(in_srgb,var(--orbit-accent)_35%,transparent)] border-t-[var(--orbit-accent)] rounded-full animate-spin" />
                 加载正文中…
@@ -1043,7 +1094,7 @@ export function ArticleReaderModal({
                   runtimeBase={runtimeBase}
                   reachedEnd={comicStream.reachedEnd}
                 />
-            ) : novelChapterStreamActive ? (
+            ) : canUseNovelChapterStream ? (
                 <>
                   <NovelChapterStream
                     slots={novelStream.slots}

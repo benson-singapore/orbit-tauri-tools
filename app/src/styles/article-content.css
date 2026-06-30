@@ -867,6 +867,12 @@
   position: relative;
 }
 
+.article-reader--novel .novel-chapter-end-sentinel {
+  height: 1px;
+  width: 100%;
+  pointer-events: none;
+}
+
 .article-reader--novel .novel-chapter-block--continued {
   margin-top: 0.5rem;
   padding-top: 0.25rem;

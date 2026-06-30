@@ -45,11 +45,18 @@ export function NovelChapterStream({
           ) : slot.status === "error" || !slot.contentHtml ? (
             <p className="py-6 text-sm text-neutral-400">本章内容加载失败</p>
           ) : (
-            <div
-              data-theme={articleContentTheme(theme)}
-              className="article-content novel-chapter-pages mt-6"
-              dangerouslySetInnerHTML={{ __html: slot.contentHtml }}
-            />
+            <>
+              <div
+                data-theme={articleContentTheme(theme)}
+                className="article-content novel-chapter-pages mt-6"
+                dangerouslySetInnerHTML={{ __html: slot.contentHtml }}
+              />
+              <div
+                data-novel-chapter-end={slot.chapter.id}
+                className="novel-chapter-end-sentinel"
+                aria-hidden
+              />
+            </>
           )}
         </section>
       ))}
