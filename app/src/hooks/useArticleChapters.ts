@@ -69,6 +69,7 @@ export function useArticleChapters({
   const [hasMore, setHasMore] = useState(false);
   const [activeChapter, setActiveChapter] = useState<Article | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const resumeSeekLockRef = useRef(false);
   const activeChapterRef = useRef<Article | null>(null);
   activeChapterRef.current = activeChapter;
   const onChapterDetailRef = useRef(onChapterDetail);
@@ -221,6 +222,117 @@ export function useArticleChapters({
     capabilities.chaptersLabel,
     capabilities.canRefreshChapters,
     storedChannel,
+    resolveChannelId,
+    loadChapterDetail,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !parent) return;
+    if (!initialChapterId) return;
+    if (items.length === 0) return;
+    if (loading || detailLoading) return;
+    if (activeChapter?.id === initialChapterId) return;
+
+    const target = items.find(item => item.id === initialChapterId);
+    if (!target) return;
+
+    void loadChapterDetail(target, parent);
+  }, [
+    enabled,
+    parent,
+    initialChapterId,
+    items,
+    loading,
+    detailLoading,
+    activeChapter?.id,
+    loadChapterDetail,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !parent) return;
+    if (!initialChapterId) return;
+    if (items.length === 0) return;
+    if (loading || loadingMore || refreshing || detailLoading) return;
+    if (!capabilities.canLoadMoreChapters) return;
+    if (!hasMore) return;
+    if (resumeSeekLockRef.current) return;
+    if (activeChapter?.id === initialChapterId) return;
+
+    const firstId = items[0]?.id;
+    const autoSeekAllowed = !activeChapter?.id || activeChapter.id === firstId;
+    if (!autoSeekAllowed) return;
+
+    if (items.some(item => item.id === initialChapterId)) return;
+
+    resumeSeekLockRef.current = true;
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const channelId = resolveChannelId(parent);
+        // Avoid runaway loops if a plugin returns inconsistent pagination.
+        for (let i = 0; i < 25; i += 1) {
+          if (cancelled) return;
+
+          const result = await runtimeLoadMoreChapters(parent.pluginId, channelId, parent.id);
+          const nextItems = result.items ?? [];
+
+          if (nextItems.length > 0) {
+            setItems(prev => {
+              const existing = new Set(prev.map(item => item.id));
+              const merged = [...prev];
+              for (const item of nextItems) {
+                if (!existing.has(item.id)) {
+                  existing.add(item.id);
+                  merged.push(item);
+                }
+              }
+              return merged;
+            });
+          }
+          if (result.title) {
+            setTitle(result.title);
+          }
+          setHasMore(Boolean(result.hasMore));
+
+          if (nextItems.some(item => item.id === initialChapterId)) {
+            // Wait for state to flush then jump using the merged list.
+            window.requestAnimationFrame(() => {
+              if (cancelled) return;
+              const target = [...items, ...nextItems].find(item => item.id === initialChapterId);
+              if (target) {
+                void loadChapterDetail(target, parent);
+              }
+            });
+            return;
+          }
+
+          if (!result.hasMore || nextItems.length === 0) return;
+        }
+      } catch (err) {
+        console.error("seek resume chapter failed", err);
+      }
+    };
+
+    void run().finally(() => {
+      resumeSeekLockRef.current = false;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    enabled,
+    parent,
+    initialChapterId,
+    items,
+    loading,
+    loadingMore,
+    refreshing,
+    detailLoading,
+    capabilities.canLoadMoreChapters,
+    hasMore,
+    activeChapter?.id,
     resolveChannelId,
     loadChapterDetail,
   ]);

@@ -18,6 +18,7 @@ export function defaultPlaybackMode(mediaType?: string): PlaybackMode {
     case "manga":
       return "manga";
     case "article":
+    case "novel":
     default:
       return "article";
   }
@@ -38,6 +39,10 @@ function resolveChannel(plugin: Plugin | undefined, channelId: string) {
 
 function hasPlaybackCapability(plugin: Plugin | undefined): boolean {
   return Boolean(plugin?.capabilities?.includes("playback"));
+}
+
+export function isClientManagedPlayback(managedBy: string | undefined): boolean {
+  return managedBy === "runtime" || managedBy === "plugin";
 }
 
 function mergePlayback(
@@ -86,15 +91,65 @@ export function resolvePlaybackConfig(
   return resolved;
 }
 
+export function resolveChapterReadingPlayback(
+  plugin: Plugin | undefined,
+  detailChannelId: string,
+  feedChannelId: string,
+  feedChannelCapabilities?: Pick<ChannelCapabilities, "playback">,
+): ResolvedPlaybackConfig {
+  const fromDetail = resolvePlaybackConfig(plugin, detailChannelId);
+  const fromFeedManifest = feedChannelId.trim() && feedChannelId !== detailChannelId
+    ? resolvePlaybackConfig(plugin, feedChannelId)
+    : null;
+
+  let resolved: ResolvedPlaybackConfig = fromDetail;
+  if (fromFeedManifest) {
+    resolved = {
+      ...resolved,
+      history: resolved.history || fromFeedManifest.history,
+      progress: resolved.progress || fromFeedManifest.progress,
+      mode: fromFeedManifest.mode || resolved.mode,
+      managedBy: isClientManagedPlayback(fromFeedManifest.managedBy)
+        ? fromFeedManifest.managedBy
+        : resolved.managedBy,
+    };
+  }
+
+  if (!feedChannelCapabilities?.playback) {
+    return resolved;
+  }
+
+  const merged = mergePlayback(resolved, feedChannelCapabilities.playback);
+  return {
+    ...merged,
+    history: resolved.history || merged.history,
+    progress: resolved.progress || merged.progress,
+    managedBy: isClientManagedPlayback(merged.managedBy)
+      ? merged.managedBy
+      : resolved.managedBy,
+  };
+}
+
+export function resolvePlaybackCapabilitiesForChannel(
+  channelId: string,
+  activeChannelId: string,
+  channelCapabilities?: Pick<ChannelCapabilities, "playback">,
+): Pick<ChannelCapabilities, "playback"> | undefined {
+  if (!channelCapabilities?.playback) return undefined;
+  if (channelId.trim() !== activeChannelId.trim()) return undefined;
+  return channelCapabilities;
+}
+
 export function resolveEffectivePlayback(
   plugin: Plugin | undefined,
   channelId: string,
   channelCapabilities?: Pick<ChannelCapabilities, "playback">,
 ): ResolvedPlaybackConfig {
-  if (channelCapabilities?.playback) {
-    return channelCapabilities.playback;
+  const fromConfig = resolvePlaybackConfig(plugin, channelId);
+  if (!channelCapabilities?.playback) {
+    return fromConfig;
   }
-  return resolvePlaybackConfig(plugin, channelId);
+  return mergePlayback(fromConfig, channelCapabilities.playback);
 }
 
 export function isPlaybackHistoryEnabled(

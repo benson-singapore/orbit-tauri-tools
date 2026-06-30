@@ -65,7 +65,7 @@ func ValidateManifest(m *Manifest) error {
 		m.MediaType = MediaArticle
 	}
 	switch m.MediaType {
-	case MediaArticle, MediaManga, MediaImage, MediaVideo, MediaAudio, MediaRating, MediaSocial:
+	case MediaArticle, MediaManga, MediaImage, MediaVideo, MediaAudio, MediaRating, MediaSocial, MediaNovel:
 	default:
 		return fmt.Errorf("unsupported manifest.mediaType %q", m.MediaType)
 	}

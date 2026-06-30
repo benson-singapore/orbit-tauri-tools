@@ -55,10 +55,13 @@ function readLegacyValue(): GridCoverAspectRatio | null {
   return null;
 }
 
-export function getStoredGridCoverAspectRatio(pluginId: string): GridCoverAspectRatio {
+export function getStoredGridCoverAspectRatio(
+  pluginId: string,
+  fallback: GridCoverAspectRatio = DEFAULT_GRID_COVER_ASPECT_RATIO,
+): GridCoverAspectRatio {
   const stored = readMemory()[pluginId];
   if (stored != null) return stored;
-  return readLegacyValue() ?? DEFAULT_GRID_COVER_ASPECT_RATIO;
+  return readLegacyValue() ?? fallback;
 }
 
 export function persistGridCoverAspectRatio(pluginId: string, ratio: GridCoverAspectRatio): void {

@@ -8,7 +8,7 @@ func DefaultIncludeInAll(mediaType, contentRating string) bool {
 	if IsMatureContentRating(contentRating) {
 		return false
 	}
-	return strings.TrimSpace(mediaType) == MediaArticle
+	return strings.TrimSpace(mediaType) == MediaArticle || strings.TrimSpace(mediaType) == MediaNovel
 }
 
 func pluginIncludesInAllFeed(rec *PluginRecord) bool {

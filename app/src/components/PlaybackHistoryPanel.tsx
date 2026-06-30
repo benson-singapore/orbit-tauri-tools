@@ -4,7 +4,7 @@ import { ProxiedImage } from "@/components/ProxiedImage";
 import { deleteAllPlayback, deletePlayback, listPlayback } from "@/lib/playback";
 import { resolveEffectivePlayback } from "@/lib/playbackConfig";
 import { formatPlaybackProgressLabel } from "@/lib/playbackResume";
-import type { PlaybackRecord, Plugin, ThemeMode } from "@/types";
+import type { ChannelCapabilities, PlaybackRecord, Plugin, ThemeMode } from "@/types";
 import { isDarkTheme } from "@/lib/themeMode";
 
 interface PlaybackHistoryPanelProps {
@@ -12,6 +12,7 @@ interface PlaybackHistoryPanelProps {
   onClose: () => void;
   plugin: Plugin;
   channelId: string;
+  channelCapabilities?: Pick<ChannelCapabilities, "playback">;
   runtimeBase: string | null;
   theme: ThemeMode;
   onSelect: (record: PlaybackRecord) => void;
@@ -22,6 +23,7 @@ export function PlaybackHistoryPanel({
   onClose,
   plugin,
   channelId,
+  channelCapabilities,
   runtimeBase,
   theme,
   onSelect,
@@ -29,7 +31,7 @@ export function PlaybackHistoryPanel({
   const [items, setItems] = useState<PlaybackRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const config = resolveEffectivePlayback(plugin, channelId);
+  const config = resolveEffectivePlayback(plugin, channelId, channelCapabilities);
   const isDark = isDarkTheme(theme);
 
   const reload = useCallback(async () => {
@@ -82,7 +84,7 @@ export function PlaybackHistoryPanel({
   };
 
   const handleClearAll = async () => {
-    if (!window.confirm("确定清空全部播放历史？")) return;
+    if (!window.confirm("确定清空全部历史记录？")) return;
     try {
       await deleteAllPlayback(plugin.id, channelId);
       setItems([]);
@@ -98,7 +100,7 @@ export function PlaybackHistoryPanel({
       <button
         type="button"
         className="absolute inset-0 bg-black/30"
-        aria-label="关闭播放历史"
+        aria-label="关闭历史记录"
         onClick={onClose}
       />
       <aside
@@ -110,7 +112,7 @@ export function PlaybackHistoryPanel({
       >
         <div className="flex items-center justify-between px-4 py-3 border-b border-inherit">
           <div>
-            <h2 className="text-sm font-semibold">播放历史</h2>
+            <h2 className="text-sm font-semibold">历史记录</h2>
             <p className="text-[11px] text-neutral-400 mt-0.5">{plugin.name}</p>
           </div>
           <div className="flex items-center gap-1">
@@ -152,7 +154,7 @@ export function PlaybackHistoryPanel({
           ) : error ? (
             <p className="text-sm text-rose-500 text-center py-8">{error}</p>
           ) : items.length === 0 ? (
-            <p className="text-sm text-neutral-400 text-center py-8">暂无播放历史</p>
+            <p className="text-sm text-neutral-400 text-center py-8">暂无历史记录</p>
           ) : (
             items.map(record => {
               const mode = record.mode ?? config.mode;

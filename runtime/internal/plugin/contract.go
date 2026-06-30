@@ -18,6 +18,7 @@ const (
 	MediaAudio   = "audio"
 	MediaRating  = "rating"
 	MediaSocial  = "social"
+	MediaNovel   = "novel"
 
 	CapFeed     = "feed"
 	CapSearch   = "search"

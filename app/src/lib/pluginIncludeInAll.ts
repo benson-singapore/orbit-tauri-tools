@@ -6,7 +6,7 @@ export function defaultPluginIncludeInAll(
   if (plugin.contentRating === "mature") {
     return false;
   }
-  return plugin.mediaType === "article";
+  return plugin.mediaType === "article" || plugin.mediaType === "novel";
 }
 
 export function resolvePluginIncludeInAll(

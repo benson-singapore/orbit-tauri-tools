@@ -7,6 +7,7 @@ import {
 } from "@/lib/splitPaneRatio";
 import type { GridColumnCount } from "@/lib/gridColumnCount";
 import type { GridCoverAspectRatio } from "@/lib/gridCoverAspectRatio";
+import type { NovelReaderSettings } from "@/lib/novelReaderSettings";
 import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
 
 interface SplitGridDetailViewProps {
@@ -21,6 +22,7 @@ interface SplitGridDetailViewProps {
   onSplitRatioChange: (ratio: number) => void;
   readerFontScale: number;
   comicPageWidth?: number;
+  novelReaderSettings?: NovelReaderSettings;
   hasDetail: boolean;
   activeChannel: string;
   pluginMeta?: Plugin;
@@ -50,6 +52,7 @@ export function SplitGridDetailView({
   onSplitRatioChange,
   readerFontScale,
   comicPageWidth,
+  novelReaderSettings,
   hasDetail,
   activeChannel,
   pluginMeta,
@@ -142,6 +145,7 @@ export function SplitGridDetailView({
             article={selectedArticle}
             readerFontScale={readerFontScale}
             comicPageWidth={comicPageWidth}
+            novelReaderSettings={novelReaderSettings}
             hasDetail={hasDetail}
             activeChannel={activeChannel}
             pluginMeta={pluginMeta}

@@ -62,17 +62,20 @@ import { type AppUpdateSummary } from "@/lib/appUpdates";
 import type { PluginSidebarGroup } from "@/lib/pluginGroups";
 import { DEFAULT_PLUGIN_GROUP_ID } from "@/lib/pluginGroups";
 import { SystemInfoPanel } from "@/components/SystemInfoPanel";
-import type {
-  InstallRSSPluginRequest,
-  MarketPluginContentRating,
-  MarketPluginItem,
-  MarketPluginRequiresConfigFilter,
-  MarketPluginSort,
-  Plugin,
-  PluginContentType,
-  PluginManagerTab,
-  PluginMarketCategory,
-  ThemeMode,
+import {
+  isPluginMediaType,
+  PLUGIN_MEDIA_TYPES,
+  type InstallRSSPluginRequest,
+  type MarketPluginContentRating,
+  type MarketPluginItem,
+  type MarketPluginRequiresConfigFilter,
+  type MarketPluginSort,
+  type Plugin,
+  type PluginContentType,
+  type PluginManagerTab,
+  type PluginMarketCategory,
+  type PluginMediaType,
+  type ThemeMode,
 } from "@/types";
 
 const MODAL_HEIGHT = "h-[660px]";
@@ -948,7 +951,7 @@ function WasmManifestEditorModal({
   const [isEditingJson, setIsEditingJson] = useState(false);
 
   const [pluginName, setPluginName] = useState("");
-  const [mediaType, setMediaType] = useState<NonNullable<InstallRSSPluginRequest["mediaType"]>>("article");
+  const [mediaType, setMediaType] = useState<PluginMediaType>("article");
   const [contentRating, setContentRating] = useState<MarketPluginContentRating>(() =>
     normalizeMarketPluginContentRating(plugin.contentRating),
   );
@@ -986,15 +989,7 @@ function WasmManifestEditorModal({
 
     setPluginName(typeof raw.name === "string" ? raw.name : "");
     const nextMediaType = typeof raw.mediaType === "string" ? raw.mediaType : "article";
-    if (
-      nextMediaType === "article" ||
-      nextMediaType === "manga" ||
-      nextMediaType === "image" ||
-      nextMediaType === "video" ||
-      nextMediaType === "audio" ||
-      nextMediaType === "rating" ||
-      nextMediaType === "social"
-    ) {
+    if (isPluginMediaType(nextMediaType)) {
       setMediaType(nextMediaType);
     }
 
@@ -1905,19 +1900,15 @@ function WasmManifestEditorModal({
                             <StyledSelect
                               value={mediaType}
                               onChange={e =>
-                                setMediaType(
-                                  e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>,
-                                )
+                                setMediaType(e.target.value as PluginMediaType)
                               }
                               className={`${inputBg} ${inputBorder} ${inputText}`}
                             >
-                              <option value="article">article</option>
-                              <option value="manga">manga</option>
-                              <option value="image">image</option>
-                              <option value="video">video</option>
-                              <option value="audio">audio</option>
-                              <option value="rating">rating</option>
-                              <option value="social">social</option>
+                              {PLUGIN_MEDIA_TYPES.map(type => (
+                                <option key={type} value={type}>
+                                  {type}
+                                </option>
+                              ))}
                             </StyledSelect>
                           </div>
                         </div>
@@ -2389,7 +2380,7 @@ function ImportPluginModal({
   const [pluginName, setPluginName] = useState("");
   const [marketCategory, setMarketCategory] = useState<Exclude<PluginMarketCategory, "all">>("blog");
   const [icon, setIcon] = useState<PluginContentType>("text");
-  const [mediaType, setMediaType] = useState<NonNullable<InstallRSSPluginRequest["mediaType"]>>("article");
+  const [mediaType, setMediaType] = useState<PluginMediaType>("article");
   const [channels, setChannels] = useState<ChannelFormRow[]>([
     createChannelRow({ label: "全部" }, { idAuto: true }),
   ]);
@@ -2452,15 +2443,7 @@ function ImportPluginModal({
     }
     setRefreshInterval(String(initialPlugin.refreshInterval ?? 3600));
     setUserAgent(initialPlugin.userAgent ?? "");
-    if (
-      initialPlugin.mediaType === "article" ||
-      initialPlugin.mediaType === "manga" ||
-      initialPlugin.mediaType === "image" ||
-      initialPlugin.mediaType === "video" ||
-      initialPlugin.mediaType === "audio" ||
-      initialPlugin.mediaType === "rating" ||
-      initialPlugin.mediaType === "social"
-    ) {
+    if (initialPlugin.mediaType && isPluginMediaType(initialPlugin.mediaType)) {
       setMediaType(initialPlugin.mediaType);
     }
     setCategoryTag(initialPlugin.categoryTag ?? "NEWS");
@@ -2569,15 +2552,7 @@ function ImportPluginModal({
 
       setPluginId(nextId);
       setPluginName(nextName);
-      if (
-        nextMediaType === "article" ||
-        nextMediaType === "manga" ||
-        nextMediaType === "image" ||
-        nextMediaType === "video" ||
-        nextMediaType === "audio" ||
-        nextMediaType === "rating" ||
-        nextMediaType === "social"
-      ) {
+      if (nextMediaType && isPluginMediaType(nextMediaType)) {
         setMediaType(nextMediaType);
       }
       setChannels(nextChannels);
@@ -3141,19 +3116,15 @@ function ImportPluginModal({
                         <StyledSelect
                           value={mediaType}
                           onChange={e =>
-                            setMediaType(
-                              e.target.value as NonNullable<InstallRSSPluginRequest["mediaType"]>,
-                            )
+                            setMediaType(e.target.value as PluginMediaType)
                           }
                           className={`${inputBg} ${inputBorder} ${inputText}`}
                         >
-                          <option value="article">article</option>
-                          <option value="manga">manga</option>
-                          <option value="image">image</option>
-                          <option value="video">video</option>
-                          <option value="audio">audio</option>
-                          <option value="rating">rating</option>
-                          <option value="social">social</option>
+                          {PLUGIN_MEDIA_TYPES.map(type => (
+                            <option key={type} value={type}>
+                              {type}
+                            </option>
+                          ))}
                         </StyledSelect>
                       </div>
                       <div className="space-y-1.5">
@@ -3929,8 +3900,15 @@ export function PluginManagerModal({
 
   const loadMarketCategoryCounts = useCallback(async () => {
     try {
-      const data = await fetchPluginCategoryCounts();
-      setMarketCategoryCounts(data);
+      const [data, { total: deduplicatedTotal }] = await Promise.all([
+        fetchPluginCategoryCounts(),
+        // category-counts.total sums per-category rows; plugins can belong to multiple categories.
+        fetchMarketPlugins({ category: "all", pageSize: 1 }),
+      ]);
+      setMarketCategoryCounts({
+        total: deduplicatedTotal,
+        counts: data.counts,
+      });
     } catch (err) {
       console.error("load plugin category counts failed", err);
       setMarketCategoryCounts(null);

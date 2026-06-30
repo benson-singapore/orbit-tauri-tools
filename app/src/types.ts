@@ -76,6 +76,23 @@ export interface ChannelFeatures {
 
 export type PlaybackMode = "video" | "audio" | "article" | "manga";
 
+export const PLUGIN_MEDIA_TYPES = [
+  "article",
+  "manga",
+  "image",
+  "video",
+  "audio",
+  "rating",
+  "social",
+  "novel",
+] as const;
+
+export type PluginMediaType = (typeof PLUGIN_MEDIA_TYPES)[number];
+
+export function isPluginMediaType(value: string): value is PluginMediaType {
+  return (PLUGIN_MEDIA_TYPES as readonly string[]).includes(value);
+}
+
 export interface PlaybackConfig {
   history?: boolean;
   progress?: boolean;
@@ -309,7 +326,7 @@ export interface Plugin {
   id: string;
   name: string;
   icon: PluginContentType | string;
-  mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating" | "social";
+  mediaType?: PluginMediaType;
   active?: boolean;
   /** When true, plugin content appears in Today 全部 aggregate feed */
   includeInAll?: boolean;
@@ -366,7 +383,7 @@ export interface InstallRSSPluginRequest {
   defaultChannel?: string;
   name?: string;
   id?: string;
-  mediaType?: "article" | "manga" | "image" | "video" | "audio" | "rating" | "social";
+  mediaType?: PluginMediaType;
   refreshInterval?: number;
   userAgent?: string;
   icon?: PluginContentType;

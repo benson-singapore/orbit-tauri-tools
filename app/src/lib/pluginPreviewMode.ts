@@ -18,6 +18,8 @@ export function defaultPluginPreviewMode(
   switch (plugin?.mediaType) {
     case "article":
       return "reader";
+    case "novel":
+      return "grid";
     case "image":
       return "waterfall";
     case "social":
@@ -52,9 +54,6 @@ export function resolvePluginPreviewMode(
   const mode = stored ?? defaultPluginPreviewMode(plugin);
   if (!isPreviewModeAllowedForPlugin(mode, plugin)) {
     return defaultPluginPreviewMode(plugin);
-  }
-  if (mode === "videoWall") {
-    return "grid";
   }
   return mode;
 }

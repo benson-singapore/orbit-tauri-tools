@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, type RefObject } from "react";
 import { putPlayback } from "@/lib/playback";
-import { resolveEffectivePlayback } from "@/lib/playbackConfig";
+import { resolveChapterReadingPlayback, resolveEffectivePlayback } from "@/lib/playbackConfig";
 import { syncComicLazyImages, syncComicStreamVisibleChapterImages } from "@/lib/comicChapterContent";
 import {
   collectArticleScrollProgress,
@@ -12,14 +12,26 @@ import {
   isComicContentRoot,
 } from "@/lib/playbackResume";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
-import type { Article, ChannelCapabilities, PlaybackProgress, PlaybackRecord, Plugin } from "@/types";
+import type {
+  Article,
+  ChannelCapabilities,
+  PlaybackProgress,
+  PlaybackRecord,
+  Plugin,
+  ProgressArticle,
+} from "@/types";
 
 const SYNC_INTERVAL_MS = 5000;
 
 export interface UsePlaybackProgressOptions {
   pluginMeta?: Plugin;
   channelId: string;
+  /** Channel id stored on playback records; defaults to `channelId`. */
+  recordChannelId?: string;
   channelCapabilities?: Pick<ChannelCapabilities, "playback">;
+  /** When reading serial chapters, merge feed-channel playback with detail channel. */
+  feedChannelId?: string;
+  feedChannelCapabilities?: Pick<ChannelCapabilities, "playback">;
   parentArticle: Article | null;
   article: Article | null;
   sessionId?: string;
@@ -28,13 +40,34 @@ export interface UsePlaybackProgressOptions {
   runtimeBase?: string | null;
   /** True once article HTML is mounted (not loading). Re-binds scroll tracking. */
   contentReady?: boolean;
+  /** Changes when the mounted content surface switches (article vs stream). */
+  contentSurfaceKey?: string;
+  /** Novel stream: chapter to record in history (updated when chapter detail is fetched). */
+  novelChapterRecord?: Article | null;
+  /** When set, overrides resolved playback config for history sync. */
+  historyEnabled?: boolean;
   enabled?: boolean;
+}
+
+function shouldPersistPlaybackProgress(
+  record: PlaybackRecord,
+  parentArticle: Article | null,
+  trackProgress: boolean,
+): boolean {
+  if (hasMeaningfulProgress(record.progress)) return true;
+  if (parentArticle && record.chapterId) return true;
+  if (record.mode !== "article" || !parentArticle || !record.chapterId) return false;
+  if (!trackProgress) return true;
+  const progress = record.progress as ProgressArticle | undefined;
+  if (!progress) return true;
+  return (progress.total ?? 0) > 0 || progress.offset === 0;
 }
 
 function shouldTrackScrollProgress(
   mode: string,
   contentRoot: HTMLElement | null,
 ): boolean {
+  if (contentRoot?.dataset.novelStream === "true") return false;
   if (mode === "manga" || mode === "article") return true;
   return isComicContentRoot(contentRoot);
 }
@@ -42,7 +75,10 @@ function shouldTrackScrollProgress(
 export function usePlaybackProgress({
   pluginMeta,
   channelId,
+  recordChannelId,
   channelCapabilities,
+  feedChannelId,
+  feedChannelCapabilities,
   parentArticle,
   article,
   sessionId,
@@ -50,17 +86,39 @@ export function usePlaybackProgress({
   scrollRootRef,
   runtimeBase,
   contentReady = true,
+  contentSurfaceKey = "article",
+  novelChapterRecord,
+  historyEnabled,
   enabled = true,
 }: UsePlaybackProgressOptions): void {
-  const config = useMemo(
-    () => resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities),
-    [pluginMeta, channelId, channelCapabilities],
-  );
+  const config = useMemo(() => {
+    if (parentArticle && feedChannelId) {
+      return resolveChapterReadingPlayback(
+        pluginMeta,
+        channelId,
+        feedChannelId,
+        feedChannelCapabilities ?? channelCapabilities,
+      );
+    }
+    return resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities);
+  }, [
+    pluginMeta,
+    channelId,
+    channelCapabilities,
+    feedChannelId,
+    feedChannelCapabilities,
+    parentArticle,
+  ]);
+  const historyActive = historyEnabled ?? config.history;
+  const shouldClientSync = historyActive;
+
   const lastProgressKeyRef = useRef("");
   const lastProgressRef = useRef<PlaybackProgress | undefined>(undefined);
   const playbackEngagedRef = useRef(false);
   const articleRef = useRef(article);
   articleRef.current = article;
+  const novelChapterRecordRef = useRef(novelChapterRecord);
+  novelChapterRecordRef.current = novelChapterRecord;
 
   useEffect(() => {
     lastProgressRef.current = undefined;
@@ -85,21 +143,30 @@ export function usePlaybackProgress({
     return () => root.removeEventListener("play", onPlay, true);
   }, [enabled, config.mode, config.progress, contentRef, article?.id]);
 
+  const resolvedRecordChannelId = recordChannelId ?? channelId;
+
   const buildRecord = useCallback((): PlaybackRecord | null => {
     const currentArticle = articleRef.current;
-    if (!currentArticle || !config.history || config.managedBy !== "runtime") return null;
+    if (!currentArticle || !shouldClientSync) return null;
 
     const parentId = parentArticle?.id ?? currentArticle.id;
     const parentTitle = parentArticle?.title ?? currentArticle.title;
     const cover = parentArticle?.image ?? currentArticle.image;
-    const scrollRoot = scrollRootRef?.current ?? null;
     const root = contentRef.current;
+    const scrollRoot = scrollRootRef?.current
+      ?? (root ? findArticleScrollParent(root) : null);
 
     let chapterId = parentArticle ? currentArticle.id : undefined;
     let chapterTitle = parentArticle ? currentArticle.title : undefined;
     let progress: PlaybackProgress | undefined;
     const isComic = isComicContentRoot(root);
+    const isNovelStream = root?.dataset.novelStream === "true";
     const progressMode = isComic ? "manga" : config.mode;
+
+    if (isNovelStream && novelChapterRecordRef.current && parentArticle) {
+      chapterId = novelChapterRecordRef.current.id;
+      chapterTitle = novelChapterRecordRef.current.title;
+    }
 
     if (config.progress) {
       switch (progressMode) {
@@ -108,7 +175,11 @@ export function usePlaybackProgress({
           progress = collectTimeProgress(sessionId, root);
           break;
         case "article":
-          progress = collectArticleScrollProgress(root);
+          if (isNovelStream) {
+            break;
+          } else {
+            progress = collectArticleScrollProgress(root, scrollRoot);
+          }
           break;
         case "manga":
           if (root?.dataset.comicStream === "true") {
@@ -123,6 +194,17 @@ export function usePlaybackProgress({
           break;
         default:
           break;
+      }
+
+      if (
+        progressMode === "article"
+        && parentArticle
+        && chapterId
+        && !isNovelStream
+        && !hasMeaningfulProgress(progress)
+        && (!progress || (progress as ProgressArticle).offset == null)
+      ) {
+        progress = { offset: 0, ...(progress as ProgressArticle) };
       }
 
       if (hasMeaningfulProgress(progress)) {
@@ -143,10 +225,25 @@ export function usePlaybackProgress({
       }
     }
 
+    if (chapterId && parentArticle && root?.dataset.novelStream === "true") {
+      const recordChapter = novelChapterRecordRef.current;
+      if (recordChapter?.id === chapterId) {
+        chapterTitle = recordChapter.title;
+      } else {
+        const block = root.querySelector<HTMLElement>(`[data-novel-chapter="${chapterId}"]`);
+        const title = block?.getAttribute("aria-label");
+        if (title) {
+          chapterTitle = title;
+        } else if (chapterId === currentArticle.id) {
+          chapterTitle = currentArticle.title;
+        }
+      }
+    }
+
     return {
       parentId,
       chapterId,
-      channelId,
+      channelId: resolvedRecordChannelId,
       parentTitle,
       chapterTitle,
       cover,
@@ -155,9 +252,8 @@ export function usePlaybackProgress({
       updatedAt: Math.floor(Date.now() / 1000),
     };
   }, [
-    channelId,
-    config.history,
-    config.managedBy,
+    resolvedRecordChannelId,
+    shouldClientSync,
     config.mode,
     config.progress,
     contentRef,
@@ -168,9 +264,11 @@ export function usePlaybackProgress({
 
   const flush = useCallback(async () => {
     const record = buildRecord();
-    const pluginId = articleRef.current?.pluginId ?? parentArticle?.pluginId;
+    const pluginId = parentArticle?.pluginId
+      ?? articleRef.current?.pluginId
+      ?? pluginMeta?.id;
     if (!record || !pluginId) return;
-    if (config.progress && !hasMeaningfulProgress(record.progress)) return;
+    if (historyActive && !shouldPersistPlaybackProgress(record, parentArticle, config.progress)) return;
     if (
       config.progress
       && (config.mode === "video" || config.mode === "audio")
@@ -192,7 +290,7 @@ export function usePlaybackProgress({
     } catch (err) {
       console.error("playback sync failed", err);
     }
-  }, [buildRecord, config.mode, config.progress, parentArticle?.pluginId]);
+  }, [buildRecord, config.mode, config.progress, historyActive, parentArticle, pluginMeta?.id]);
 
   const captureProgressSnapshot = useCallback(() => {
     if (!config.progress || !sessionId) return;
@@ -202,7 +300,7 @@ export function usePlaybackProgress({
   }, [config.mode, config.progress, contentRef, sessionId]);
 
   useEffect(() => {
-    if (!enabled || !config.history || config.managedBy !== "runtime") return;
+    if (!enabled || !shouldClientSync) return;
 
     const interval = window.setInterval(() => {
       void flush();
@@ -231,14 +329,14 @@ export function usePlaybackProgress({
     };
   }, [
     enabled,
-    config.history,
-    config.managedBy,
+    shouldClientSync,
     captureProgressSnapshot,
     flush,
   ]);
 
   useEffect(() => {
-    if (!enabled || !config.progress || !config.history || config.managedBy !== "runtime") return;
+    if (!enabled || !shouldClientSync) return;
+    if (!config.progress && !parentArticle) return;
 
     const resolveScrollTargets = (): Array<HTMLElement | Window> => {
       const targets: Array<HTMLElement | Window> = [];
@@ -297,20 +395,43 @@ export function usePlaybackProgress({
     };
   }, [
     enabled,
+    shouldClientSync,
     config.progress,
-    config.history,
-    config.managedBy,
     config.mode,
     contentRef,
     scrollRootRef,
     runtimeBase,
     contentReady,
+    contentSurfaceKey,
     flush,
     article?.id,
+    parentArticle?.id,
   ]);
 
   useEffect(() => {
-    if (!enabled || !config.history || config.managedBy !== "runtime") return;
+    if (!enabled || !shouldClientSync || !novelChapterRecord?.id) return;
+    void flush();
+  }, [
+    enabled,
+    shouldClientSync,
+    novelChapterRecord?.id,
+    flush,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !shouldClientSync || !article?.id) return;
+    void flush();
+  }, [
+    enabled,
+    shouldClientSync,
+    article?.id,
+    parentArticle?.id,
+    resolvedRecordChannelId,
+    flush,
+  ]);
+
+  useEffect(() => {
+    if (!enabled || !shouldClientSync) return;
     if (!article?.id || !contentReady) return;
 
     const root = contentRef.current;
@@ -322,11 +443,11 @@ export function usePlaybackProgress({
     return () => window.cancelAnimationFrame(raf);
   }, [
     enabled,
-    config.history,
-    config.managedBy,
+    shouldClientSync,
     config.mode,
     article?.id,
     contentReady,
+    contentSurfaceKey,
     contentRef,
     flush,
   ]);

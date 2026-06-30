@@ -12,6 +12,8 @@ func TestDefaultIncludeInAll(t *testing.T) {
 		{MediaArticle, ContentRatingUnder18, true},
 		{MediaArticle, ContentRatingMature, false},
 		{MediaArticle, "", true},
+		{MediaNovel, ContentRatingGeneral, true},
+		{MediaNovel, ContentRatingMature, false},
 		{MediaVideo, ContentRatingGeneral, false},
 		{MediaImage, "", false},
 		{MediaManga, "", false},

@@ -45,7 +45,7 @@ func DefaultPlaybackMode(mediaType string) string {
 		return PlaybackModeAudio
 	case MediaManga:
 		return PlaybackModeManga
-	case MediaArticle:
+	case MediaArticle, MediaNovel:
 		return PlaybackModeArticle
 	default:
 		return PlaybackModeArticle

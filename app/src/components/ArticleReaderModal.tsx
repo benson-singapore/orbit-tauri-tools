@@ -22,9 +22,11 @@ import {
 } from "@/lib/comicChapterContent";
 import { comicPageWidthCssValue } from "@/lib/comicPageWidth";
 import { ComicChapterStream } from "@/components/ComicChapterStream";
+import { NovelChapterStream } from "@/components/NovelChapterStream";
 import { ComicPagesView } from "@/components/ComicPagesView";
 import { useComicArticleDisplay } from "@/hooks/useComicArticleDisplay";
 import { useComicChapterStream } from "@/hooks/useComicChapterStream";
+import { useNovelChapterStream } from "@/hooks/useNovelChapterStream";
 import {
   bindArticleContentPlayers,
   destroyArticleContentPlayers,
@@ -46,8 +48,21 @@ import {
   fetchResumeIntentForArticle,
   hasMeaningfulProgress,
   seedPlaybackResumeSnapshot,
+  shouldApplyPlaybackResumeIntent,
 } from "@/lib/playbackResume";
-import { resolveEffectivePlayback } from "@/lib/playbackConfig";
+import { resolveEffectivePlayback, isPlaybackHistoryEnabled } from "@/lib/playbackConfig";
+import {
+  isSerialIntroPage,
+  resolveSerialChapterItemLabel,
+  shouldShowSerialChapterPager,
+} from "@/lib/serialMedia";
+import { NovelReaderSettingsButton } from "@/components/NovelReaderSettingsButton";
+import { enhanceNovelChapterDisplayContent } from "@/lib/novelChapterContent";
+import {
+  novelReaderSettingsToStyle,
+  readStoredNovelReaderSettings,
+  type NovelReaderSettings,
+} from "@/lib/novelReaderSettings";
 import type { PlaybackResumeIntent, PlaybackProgress } from "@/types";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
@@ -63,6 +78,8 @@ interface ArticleReaderModalProps {
   readerFontScale: number;
   comicPageWidth?: number;
   onComicPageWidthChange?: (width: number) => void;
+  novelReaderSettings?: NovelReaderSettings;
+  onNovelReaderSettingsChange?: (settings: NovelReaderSettings) => void;
   hasDetail: boolean;
   activeChannel: string;
   pluginMeta?: Plugin;
@@ -91,6 +108,8 @@ export function ArticleReaderModal({
   readerFontScale,
   comicPageWidth = 70,
   onComicPageWidthChange,
+  novelReaderSettings = readStoredNovelReaderSettings(),
+  onNovelReaderSettingsChange,
   hasDetail,
   activeChannel,
   pluginMeta,
@@ -112,6 +131,7 @@ export function ArticleReaderModal({
   const [loading, setLoading] = useState(false);
   const [coverImageFailed, setCoverImageFailed] = useState(false);
   const [chaptersDrawerOpen, setChaptersDrawerOpen] = useState(false);
+  const [novelPlaybackChapter, setNovelPlaybackChapter] = useState<Article | null>(null);
   const [chaptersParent] = useState<Article | null>(() =>
     shouldOpenChaptersForArticle(
       initialArticle,
@@ -317,29 +337,11 @@ export function ArticleReaderModal({
     isComicReader: isComicReaderContent,
   } = useComicArticleDisplay(article, runtimeBase, theme);
 
-  const selectedItemHasComicReader = isComicHtml;
-
   const baseDisplayContent = useMemo(() => {
     if (!comicHtml) return "";
     if (!hasSessionVideoMedia) return comicHtml;
     return stripEmbeddedVideosFromContent(comicHtml);
   }, [comicHtml, hasSessionVideoMedia]);
-
-  const isMangaIntroPage = Boolean(
-    chapters.isActive
-    && chaptersParent
-    && pluginMeta?.mediaType === "manga"
-    && !isComicReaderContent
-    && !selectedItemHasComicReader
-    && baseDisplayContent,
-  );
-
-  const displayContent = useMemo(() => {
-    if (!baseDisplayContent) return "";
-    return isMangaIntroPage
-      ? prepareMangaIntroDisplayContent(baseDisplayContent)
-      : baseDisplayContent;
-  }, [baseDisplayContent, isMangaIntroPage]);
 
   const canUseComicChapterStream = Boolean(
     isComicReaderContent
@@ -365,6 +367,36 @@ export function ArticleReaderModal({
 
   const comicChapterStreamActive = useComicChapterStreamMode && comicStream.slots.length > 0;
 
+  const canUseNovelChapterStream = Boolean(
+    pluginMeta?.mediaType === "novel"
+    && chapters.isActive
+    && chaptersParent
+    && chapters.activeChapter
+    && chapters.items.findIndex(item => item.id === chapters.activeChapter?.id) > 0,
+  );
+
+  const novelStream = useNovelChapterStream({
+    enabled: canUseNovelChapterStream,
+    parent: chaptersParent,
+    chapterItems: chapters.items,
+    activeChapter: chapters.activeChapter,
+    activeChapterDetail: article,
+    detailLoading: chapters.detailLoading,
+    channelId,
+    runtimeBase,
+    theme,
+    scrollRootRef,
+    onChapterDetailFetched: setNovelPlaybackChapter,
+  });
+
+  const novelChapterStreamActive = canUseNovelChapterStream && novelStream.slots.length > 0;
+
+  useEffect(() => {
+    if (!novelChapterStreamActive) {
+      setNovelPlaybackChapter(null);
+    }
+  }, [novelChapterStreamActive]);
+
   const articleImagePreviewEnabled = shouldEnableArticleImagePreview({
     isComicReaderContent,
     comicChapterStreamActive,
@@ -373,11 +405,14 @@ export function ArticleReaderModal({
 
   const comicToolbarChapter = comicStream.isActive
     ? (comicStream.visibleChapter ?? chapters.activeChapter ?? article)
-    : (chapters.activeChapter ?? article);
+    : novelStream.isActive
+      ? (novelStream.visibleChapter ?? chapters.activeChapter ?? article)
+      : (chapters.activeChapter ?? article);
 
   const toolbarNavChapterId = useMemo(() => {
     if (!chapters.isActive) return null;
     const candidates = [
+      novelStream.visibleChapter?.id,
       comicStream.visibleChapter?.id,
       chapters.activeChapter?.id,
       article?.id,
@@ -390,6 +425,7 @@ export function ArticleReaderModal({
     chapters.isActive,
     chapters.items,
     chapters.activeChapter?.id,
+    novelStream.visibleChapter?.id,
     comicStream.visibleChapter?.id,
     article?.id,
   ]);
@@ -399,9 +435,59 @@ export function ArticleReaderModal({
     ?? chapters.activeChapter?.id
     ?? article.id;
 
-  const playbackContentRef = comicChapterStreamActive
-    ? comicStream.streamContainerRef
-    : contentRef;
+  const isMangaIntroPage = Boolean(
+    isSerialIntroPage({
+      mediaType: pluginMeta?.mediaType,
+      chaptersActive: chapters.isActive && Boolean(chaptersParent),
+      chapterItems: chapters.items,
+      activeChapterId,
+      isComicReaderContent,
+      hasDisplayContent: Boolean(baseDisplayContent),
+    }),
+  );
+
+  const displayContent = useMemo(() => {
+    if (!baseDisplayContent) return "";
+    if (isMangaIntroPage) {
+      return prepareMangaIntroDisplayContent(baseDisplayContent);
+    }
+    if (pluginMeta?.mediaType === "novel") {
+      return enhanceNovelChapterDisplayContent(baseDisplayContent, article.title);
+    }
+    return baseDisplayContent;
+  }, [baseDisplayContent, isMangaIntroPage, pluginMeta?.mediaType, article.title]);
+
+  const isNovelReading = pluginMeta?.mediaType === "novel";
+  const novelReaderStyle = isNovelReading
+    ? novelReaderSettingsToStyle(novelReaderSettings)
+    : undefined;
+
+  const serialChapterItemLabel = resolveSerialChapterItemLabel(
+    pluginMeta?.mediaType,
+    channelCapabilities.chaptersItemLabel,
+  );
+
+  const playbackContentRef = novelChapterStreamActive
+    ? novelStream.streamContainerRef
+    : comicChapterStreamActive
+      ? comicStream.streamContainerRef
+      : contentRef;
+
+  const playbackArticle = article;
+  const resumeChapterId = chapters.activeChapter?.id ?? article.id;
+  const playbackContentSurfaceKey = novelChapterStreamActive
+    ? "novel-stream"
+    : comicChapterStreamActive
+      ? "comic-stream"
+      : isMangaIntroPage
+        ? "novel-intro"
+        : "article";
+
+  const playbackHistoryEnabled = isPlaybackHistoryEnabled(
+    pluginMeta,
+    chaptersParent ? activeChannel : channelId,
+    channelCapabilities,
+  );
 
   const showContentLoading = loading
     || chapters.detailLoading
@@ -410,35 +496,46 @@ export function ArticleReaderModal({
   usePlaybackProgress({
     pluginMeta,
     channelId,
-    channelCapabilities,
+    recordChannelId: chaptersParent ? activeChannel : channelId,
+    feedChannelId: chaptersParent ? activeChannel : undefined,
+    feedChannelCapabilities: chaptersParent ? channelCapabilities : undefined,
     parentArticle: chaptersParent,
-    article,
+    article: playbackArticle,
     sessionId,
     contentRef: playbackContentRef,
     scrollRootRef,
     runtimeBase,
     contentReady: (
-      comicChapterStreamActive
-        ? comicStream.slots.some(slot => slot.status === "ready")
-        : Boolean(comicPageUrls?.length || displayContent)
+      novelChapterStreamActive
+        ? novelStream.slots.some(slot => slot.status === "ready")
+        : comicChapterStreamActive
+          ? comicStream.slots.some(slot => slot.status === "ready")
+          : Boolean(comicPageUrls?.length || displayContent)
     ) && !showContentLoading,
-    enabled: isExpanded,
+    contentSurfaceKey: playbackContentSurfaceKey,
+    novelChapterRecord: novelChapterStreamActive ? novelPlaybackChapter : undefined,
+    historyEnabled: playbackHistoryEnabled,
+    enabled: isExpanded && playbackHistoryEnabled,
   });
 
   useEffect(() => {
-    const contentRoot = comicChapterStreamActive
-      ? comicStream.streamContainerRef.current
-      : contentRef.current;
+    const contentRoot = novelChapterStreamActive
+      ? novelStream.streamContainerRef.current
+      : comicChapterStreamActive
+        ? comicStream.streamContainerRef.current
+        : contentRef.current;
     if (!contentRoot) return;
 
-    const hasComicContent = comicChapterStreamActive
-      ? comicStream.slots.some(slot => slot.status === "ready")
-      : Boolean(comicPageUrls?.length || comicHtml);
-    if (!hasComicContent && !displayContent) return;
+    const hasStreamContent = novelChapterStreamActive
+      ? novelStream.slots.some(slot => slot.status === "ready")
+      : comicChapterStreamActive
+        ? comicStream.slots.some(slot => slot.status === "ready")
+        : Boolean(comicPageUrls?.length || comicHtml);
+    if (!hasStreamContent && !displayContent) return;
 
     let unbindContentImages = () => {};
 
-    if (!isComicReaderContent) {
+    if (!isComicReaderContent && !novelChapterStreamActive) {
       highlightArticleCode(contentRoot);
       unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
         onImagePreview: openImagePreview,
@@ -449,22 +546,28 @@ export function ArticleReaderModal({
       unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
         previewEnabled: false,
       });
+    } else if (novelChapterStreamActive) {
+      highlightArticleCode(contentRoot);
+      unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
+        onImagePreview: openImagePreview,
+        previewEnabled: articleImagePreviewEnabled,
+      });
     }
 
     if (
       isExpanded
       && !hasSessionVideoMedia
-      && resolvedResumeIntent?.progress
+      && shouldApplyPlaybackResumeIntent(resolvedResumeIntent, resumeChapterId)
       && !resumeAppliedRef.current
       && !showContentLoading
     ) {
       resumeAppliedRef.current = true;
-      const mode = resolvedResumeIntent.mode ?? resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities).mode;
-      applyPlaybackResume(mode, resolvedResumeIntent.progress, {
+      const mode = resolvedResumeIntent!.mode ?? resolveEffectivePlayback(pluginMeta, channelId, channelCapabilities).mode;
+      applyPlaybackResume(mode, resolvedResumeIntent!.progress, {
         sessionId,
         contentRoot,
         scrollRoot: scrollRootRef.current,
-        chapterId: resolvedResumeIntent.chapterId,
+        chapterId: resolvedResumeIntent!.chapterId,
         runtimeBase,
       });
       onResumeApplied?.();
@@ -472,7 +575,7 @@ export function ArticleReaderModal({
 
     return () => {
       unbindContentImages();
-      if (!isComicReaderContent) {
+      if (!isComicReaderContent && !novelChapterStreamActive) {
         destroyArticleContentPlayers(contentRoot);
       }
     };
@@ -483,9 +586,12 @@ export function ArticleReaderModal({
     isComicHtml,
     isComicReaderContent,
     comicChapterStreamActive,
+    novelChapterStreamActive,
     useComicChapterStreamMode,
     comicStream.slots,
     comicStream.streamContainerRef,
+    novelStream.slots,
+    novelStream.streamContainerRef,
     runtimeBase,
     theme,
     sessionId,
@@ -499,6 +605,8 @@ export function ArticleReaderModal({
     onResumeApplied,
     openImagePreview,
     articleImagePreviewEnabled,
+    chapters.activeChapter?.id,
+    article.id,
   ]);
 
   useEffect(() => {
@@ -644,8 +752,18 @@ export function ArticleReaderModal({
       theme={theme}
       open={chaptersDrawerOpen}
       onClick={toggleChaptersDrawer}
+      variant="icon"
+      className={headerButtonClass}
     />
   ) : null;
+
+  const goToChapter = (chapter: Article) => {
+    resumeAppliedRef.current = true;
+    if (scrollRootRef.current) {
+      scrollRootRef.current.scrollTop = 0;
+    }
+    void chapters.selectChapter(chapter);
+  };
 
   const chaptersList = chapters.isActive && chaptersParent ? (
     <ChaptersList
@@ -664,8 +782,7 @@ export function ArticleReaderModal({
       itemLabel={channelCapabilities.chaptersItemLabel}
       onSelect={chapter => {
         setChaptersDrawerOpen(false);
-        scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-        void chapters.selectChapter(chapter);
+        goToChapter(chapter);
       }}
       onLoadMore={chapters.loadMore}
       onRefresh={chapters.refresh}
@@ -674,7 +791,16 @@ export function ArticleReaderModal({
   ) : null;
 
   const chapterPager = useMemo(() => {
-    if (!chapters.isActive || !isComicReaderContent) return null;
+    if (!shouldShowSerialChapterPager({
+      mediaType: pluginMeta?.mediaType,
+      chaptersActive: chapters.isActive,
+      chapterItems: chapters.items,
+      activeChapterId,
+      isComicReaderContent,
+      streamActive: comicChapterStreamActive || novelChapterStreamActive,
+    })) {
+      return null;
+    }
     if (!activeChapterId) return null;
     const idx = chapters.items.findIndex(item => item.id === activeChapterId);
     if (idx < 0) return null;
@@ -688,14 +814,11 @@ export function ArticleReaderModal({
           {prev ? (
             <button
               type="button"
-              onClick={() => {
-                scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                void chapters.selectChapter(prev);
-              }}
+              onClick={() => goToChapter(prev)}
               className="px-4 py-2 rounded-xl text-sm font-semibold border orbit-detail-divider hover:bg-[color-mix(in_srgb,var(--orbit-accent)_8%,transparent)] transition-colors"
-              title={`上一话：${prev.title}`}
+              title={`上一${serialChapterItemLabel}：${prev.title}`}
             >
-              上一话
+              上一{serialChapterItemLabel}
             </button>
           ) : (
             <span />
@@ -704,23 +827,28 @@ export function ArticleReaderModal({
           {next ? (
             <button
               type="button"
-              onClick={() => {
-                scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-                void chapters.selectChapter(next);
-              }}
+              onClick={() => goToChapter(next)}
               className="px-4 py-2 rounded-xl text-sm font-semibold border orbit-detail-divider hover:bg-[color-mix(in_srgb,var(--orbit-accent)_8%,transparent)] transition-colors"
-              title={`下一话：${next.title}`}
+              title={`下一${serialChapterItemLabel}：${next.title}`}
             >
-              下一话
+              下一{serialChapterItemLabel}
             </button>
           ) : null}
         </div>
       </div>
     );
-  }, [chapters, isComicReaderContent, activeChapterId]);
+  }, [
+    chapters,
+    pluginMeta?.mediaType,
+    isComicReaderContent,
+    activeChapterId,
+    comicChapterStreamActive,
+    novelChapterStreamActive,
+    serialChapterItemLabel,
+  ]);
 
   const introStartReading = useMemo(() => {
-    if (!chapters.isActive || pluginMeta?.mediaType !== "manga" || isComicReaderContent) return null;
+    if (!chapters.isActive || !isMangaIntroPage) return null;
     const activeId = chapters.activeChapter?.id ?? null;
     if (!activeId) return null;
     const idx = chapters.items.findIndex(item => item.id === activeId);
@@ -732,10 +860,7 @@ export function ArticleReaderModal({
       <div className="mt-8 pt-6 border-t orbit-detail-divider flex justify-center">
         <button
           type="button"
-          onClick={() => {
-            scrollRootRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-            void chapters.selectChapter(next);
-          }}
+          onClick={() => goToChapter(next)}
           className="inline-flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-semibold text-neutral-950 bg-[var(--orbit-accent)] hover:opacity-90 transition-opacity"
           title={`开始阅读：${next.title}`}
         >
@@ -744,7 +869,7 @@ export function ArticleReaderModal({
         </button>
       </div>
     );
-  }, [chapters, isComicReaderContent, pluginMeta?.mediaType]);
+  }, [chapters, isMangaIntroPage]);
 
   const modal = (
     <div
@@ -765,6 +890,15 @@ export function ArticleReaderModal({
       >
         {isExpanded ? (
           <div className="absolute top-3 right-3 z-10 flex items-center gap-1">
+            {isNovelReading && onNovelReaderSettingsChange ? (
+              <NovelReaderSettingsButton
+                theme={theme}
+                settings={novelReaderSettings}
+                onChange={onNovelReaderSettingsChange}
+                variant="icon"
+                className={headerButtonClass}
+              />
+            ) : null}
             {isComicReaderContent && onComicPageWidthChange ? (
               <div className="rounded-full px-2 py-1 bg-[color-mix(in_srgb,var(--orbit-bg)_55%,transparent)]">
                 <ComicPageWidthSlider
@@ -817,10 +951,12 @@ export function ArticleReaderModal({
 
         <div
           ref={scrollRootRef}
-          className={`flex-1 min-h-0 overflow-y-auto article-reader px-5 sm:px-8 py-6 sm:py-8${isComicReaderContent ? " article-reader--comic" : ""}${isMangaIntroPage ? " article-reader--manga-intro" : ""}`}
+          className={`flex-1 min-h-0 overflow-y-auto article-reader px-5 sm:px-8 py-6 sm:py-8${isComicReaderContent ? " article-reader--comic" : ""}${isMangaIntroPage ? " article-reader--manga-intro" : ""}${isNovelReading ? " article-reader--novel" : ""}`}
+          data-novel-background={isNovelReading ? novelReaderSettings.background : undefined}
           style={{
             "--reader-scale": readerFontScale,
             "--comic-page-width": comicPageWidthCssValue(comicPageWidth),
+            ...novelReaderStyle,
           } as React.CSSProperties}
         >
           <div className="space-y-6">
@@ -904,6 +1040,16 @@ export function ArticleReaderModal({
                   runtimeBase={runtimeBase}
                   reachedEnd={comicStream.reachedEnd}
                 />
+            ) : novelChapterStreamActive ? (
+                <>
+                  <NovelChapterStream
+                    slots={novelStream.slots}
+                    streamContainerRef={novelStream.streamContainerRef}
+                    theme={theme}
+                    reachedEnd={novelStream.reachedEnd}
+                  />
+                  {chapterPager}
+                </>
             ) : comicPageUrls?.length ? (
               <ComicPagesView
                 ref={contentRef}
@@ -917,7 +1063,7 @@ export function ArticleReaderModal({
                 <div
                   ref={contentRef}
                   data-theme={articleContentTheme(theme)}
-                  className={`article-content mt-6${isMangaIntroPage ? " article-content--manga-intro" : ""}`}
+                  className={`article-content mt-6${isMangaIntroPage ? " article-content--manga-intro" : ""}${isNovelReading && !isMangaIntroPage ? " article-content--novel" : ""}`}
                   dangerouslySetInnerHTML={{ __html: displayContent }}
                 />
                 {introStartReading}

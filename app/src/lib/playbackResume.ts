@@ -160,14 +160,47 @@ export function applyAudioResume(contentRoot: HTMLElement | null, position: numb
   }
 }
 
-export function collectArticleScrollProgress(root: HTMLElement | null): ProgressArticle {
+export function collectArticleScrollProgress(
+  root: HTMLElement | null,
+  scrollRoot?: HTMLElement | null,
+): ProgressArticle {
   if (!root) return {};
-  const scrollParent = findScrollParent(root) ?? root;
+  const scrollParent = scrollRoot ?? findScrollParent(root) ?? root;
   const total = countTextCharacters(root);
   const offset = estimateCharOffsetFromScroll(root, scrollParent);
   return {
     offset,
     total: total > 0 ? total : undefined,
+  };
+}
+
+export function collectArticleStreamProgress(
+  streamRoot: HTMLElement | null,
+  scrollRoot?: HTMLElement | null,
+): {
+  progress: ProgressArticle;
+  chapterId?: string;
+} {
+  if (!streamRoot || !scrollRoot) return { progress: {} };
+  const visibleBlock = findVisibleSerialChapterBlock(streamRoot, scrollRoot);
+  const contentRoot = visibleBlock?.querySelector<HTMLElement>(".article-content") ?? null;
+  if (!visibleBlock || !contentRoot) return { progress: {} };
+
+  const blockRect = visibleBlock.getBoundingClientRect();
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const blockTopInScroll = blockRect.top - rootRect.top + scrollRoot.scrollTop;
+  const viewportFocus = scrollRoot.scrollTop + scrollRoot.clientHeight * 0.35;
+  const relativeScroll = viewportFocus - blockTopInScroll;
+  const blockHeight = visibleBlock.offsetHeight;
+  const ratio = blockHeight > 0 ? Math.min(1, Math.max(0, relativeScroll / blockHeight)) : 0;
+  const total = countTextCharacters(contentRoot);
+
+  return {
+    progress: {
+      offset: Math.round(total * ratio),
+      total: total > 0 ? total : undefined,
+    },
+    chapterId: readSerialChapterId(visibleBlock),
   };
 }
 
@@ -181,6 +214,51 @@ export function applyArticleResume(root: HTMLElement | null, progress: ProgressA
   if (progress.offset != null && progress.offset > 0) {
     scrollToCharOffset(root, progress.offset);
   }
+}
+
+export function applyArticleStreamResume(
+  streamRoot: HTMLElement | null,
+  progress: ProgressArticle,
+  scrollRoot?: HTMLElement | null,
+  chapterId?: string,
+): void {
+  if (!streamRoot || !scrollRoot) return;
+
+  let targetBlock: HTMLElement | null = null;
+  if (chapterId) {
+    targetBlock = streamRoot.querySelector<HTMLElement>(
+      `[data-novel-chapter="${chapterId}"], [data-comic-chapter="${chapterId}"]`,
+    );
+  }
+  if (!targetBlock) {
+    targetBlock = findVisibleSerialChapterBlock(streamRoot, scrollRoot);
+  }
+  if (!targetBlock) return;
+
+  const contentRoot = targetBlock.querySelector<HTMLElement>(".article-content");
+  if (!contentRoot) return;
+
+  const rootRect = scrollRoot.getBoundingClientRect();
+  const blockRect = targetBlock.getBoundingClientRect();
+  scrollRoot.scrollTop += blockRect.top - rootRect.top;
+
+  if (progress.anchor) {
+    const anchor = contentRoot.querySelector(`#${CSS.escape(progress.anchor)}`);
+    anchor?.scrollIntoView({ block: "start" });
+    return;
+  }
+  if (progress.offset != null && progress.offset > 0) {
+    scrollToCharOffset(contentRoot, progress.offset);
+  }
+}
+
+export function shouldApplyPlaybackResumeIntent(
+  intent: PlaybackResumeIntent | undefined,
+  currentChapterId: string | null | undefined,
+): boolean {
+  if (!intent?.progress) return false;
+  if (!intent.chapterId || !currentChapterId) return true;
+  return intent.chapterId === currentChapterId;
 }
 
 function resolveViewportMetrics(scrollRoot?: HTMLElement | null): {
@@ -200,6 +278,39 @@ function resolveViewportMetrics(scrollRoot?: HTMLElement | null): {
     focusLine,
     isInViewport: rect => rect.bottom > 0 && rect.top < window.innerHeight,
   };
+}
+
+const SERIAL_CHAPTER_SELECTOR = "[data-comic-chapter], [data-novel-chapter]";
+
+function readSerialChapterId(block: HTMLElement): string | undefined {
+  return block.dataset.novelChapter ?? block.dataset.comicChapter;
+}
+
+function findVisibleSerialChapterBlock(
+  streamRoot: HTMLElement,
+  scrollRoot?: HTMLElement | null,
+): HTMLElement | null {
+  const blocks = Array.from(
+    streamRoot.querySelectorAll<HTMLElement>(SERIAL_CHAPTER_SELECTOR),
+  );
+  if (blocks.length === 0) return null;
+
+  const { focusLine, isInViewport } = resolveViewportMetrics(scrollRoot);
+  let bestBlock: HTMLElement | null = null;
+  let bestDistance = Infinity;
+
+  for (const block of blocks) {
+    const rect = block.getBoundingClientRect();
+    if (!isInViewport(rect)) continue;
+    const mid = (rect.top + rect.bottom) / 2;
+    const distance = Math.abs(mid - focusLine);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      bestBlock = block;
+    }
+  }
+
+  return bestBlock ?? blocks[blocks.length - 1] ?? null;
 }
 
 function findVisibleComicChapterBlock(
@@ -496,6 +607,15 @@ export function applyPlaybackResume(
     return;
   }
   if (mode === "article" && isProgressArticle(progress)) {
+    if (options.contentRoot?.dataset.novelStream === "true") {
+      applyArticleStreamResume(
+        options.contentRoot,
+        progress,
+        options.scrollRoot,
+        options.chapterId,
+      );
+      return;
+    }
     applyArticleResume(options.contentRoot, progress);
     return;
   }
@@ -573,7 +693,13 @@ export async function fetchResumeIntentForArticle(
 ): Promise<PlaybackResumeIntent | undefined> {
   try {
     const record = await getPlayback(pluginId, parentId, channelId);
-    if (!record?.progress || !hasMeaningfulProgress(record.progress)) {
+    if (!record) return undefined;
+    // For serial reading (novel/manga/article chapters), chapterId alone is enough to resume.
+    // Progress can be empty/0 (e.g. just opened the chapter) but we still want to jump back.
+    if (record.chapterId) {
+      return playbackRecordToResumeIntent(record);
+    }
+    if (!record.progress || !hasMeaningfulProgress(record.progress)) {
       return undefined;
     }
     return playbackRecordToResumeIntent(record);

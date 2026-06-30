@@ -22,7 +22,7 @@ export function PlaybackHistoryButton({
       type="button"
       onClick={onClick}
       className={className}
-      title="播放历史"
+      title="历史记录"
     >
       <span className="inline-flex">
         <Icon name="history" className="w-3.5 h-3.5" />
