@@ -30,6 +30,8 @@ export interface PaginationFeature {
   idFrom?: string;
   sizeParam?: string;
   defaultSize?: number;
+  /** Extra param keys from fetch `next` merged on load-more (e.g. seenIds). */
+  carryParams?: string[];
 }
 
 export interface SearchFeature {

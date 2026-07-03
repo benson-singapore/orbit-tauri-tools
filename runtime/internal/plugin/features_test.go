@@ -62,12 +62,13 @@ func TestValidateChannelFeaturesMutualExclusion(t *testing.T) {
 
 func TestParamsForRefreshResetsPagination(t *testing.T) {
 	ch := &FeedChannel{
-		Params: map[string]string{"page": "5"},
+		Params: map[string]string{"page": "5", "seenIds": ""},
 		Features: ChannelFeatures{
 			Pagination: &PaginationFeature{
-				Style:   PaginationStyleOffset,
-				Param:   "page",
-				Default: "1",
+				Style:       PaginationStyleOffset,
+				Param:       "page",
+				Default:     "1",
+				CarryParams: []string{"seenIds"},
 			},
 		},
 	}
@@ -75,6 +76,67 @@ func TestParamsForRefreshResetsPagination(t *testing.T) {
 	params := ParamsForRefresh(ch, f)
 	if params["page"] != "1" {
 		t.Fatalf("expected page=1, got %q", params["page"])
+	}
+	if params["seenIds"] != "" {
+		t.Fatalf("expected seenIds cleared, got %q", params["seenIds"])
+	}
+}
+
+func TestParamsForLoadMoreJimengSeenIDs(t *testing.T) {
+	ch := &FeedChannel{
+		ID:    "trending",
+		Route: "/jimeng/explore",
+		Params: map[string]string{
+			"categoryId": "11222",
+			"workType":   "image",
+			"page":       "1",
+			"seenIds":    "",
+		},
+		Features: ChannelFeatures{
+			Pagination: &PaginationFeature{
+				Style:       PaginationStyleOffset,
+				Param:       "page",
+				Default:     "1",
+				CarryParams: []string{"seenIds"},
+			},
+		},
+	}
+	features := ResolveFeatures(ch)
+	refreshParams := ParamsForRefresh(ch, features)
+
+	firstPage := &FetchResult{
+		Next: map[string]string{
+			"categoryId": "11222",
+			"workType":   "image",
+			"page":       "2",
+			"seenIds":    "7627090507965009202,7651742291727600906",
+		},
+	}
+	loadMoreParams, err := ParamsForLoadMore(ch, features, refreshParams, firstPage, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loadMoreParams["page"] != "2" {
+		t.Fatalf("page = %q, want 2", loadMoreParams["page"])
+	}
+	if loadMoreParams["seenIds"] != "7627090507965009202,7651742291727600906" {
+		t.Fatalf("seenIds = %q", loadMoreParams["seenIds"])
+	}
+
+	partialNext := &FetchResult{
+		Next: map[string]string{
+			"seenIds": "7627090507965009202,7651742291727600906",
+		},
+	}
+	partialParams, err := ParamsForLoadMore(ch, features, refreshParams, partialNext, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if partialParams["page"] != "2" {
+		t.Fatalf("partial next page = %q, want 2", partialParams["page"])
+	}
+	if partialParams["seenIds"] != "7627090507965009202,7651742291727600906" {
+		t.Fatalf("partial next seenIds = %q", partialParams["seenIds"])
 	}
 }
 

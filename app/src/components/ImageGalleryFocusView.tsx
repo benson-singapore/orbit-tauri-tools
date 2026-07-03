@@ -37,6 +37,7 @@ function articleToGalleryItem(article: Article): GalleryImageItem | null {
     url,
     title: article.title,
     author: article.author,
+    content: article.content,
   };
 }
 

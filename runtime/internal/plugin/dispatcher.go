@@ -390,7 +390,7 @@ func (d *FeatureDispatcher) dispatch(
 
 	if !features.Feed.Persist {
 		d.sessions.SetEphemeral(pluginID, channelID, result.Items, hasMore)
-		return DispatchResult{Items: result.Items, HasMore: hasMore, Title: result.Title}, nil
+		return DispatchResult{Items: result.Items, HasMore: hasMore, Title: result.Title, Next: result.Next}, nil
 	}
 
 	now := time.Now().Unix()

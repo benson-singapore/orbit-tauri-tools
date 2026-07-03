@@ -22,12 +22,13 @@ type FeedFeature struct {
 }
 
 type PaginationFeature struct {
-	Style       string `json:"style"`
-	Param       string `json:"param,omitempty"`
-	Default     string `json:"default,omitempty"`
-	IDFrom      string `json:"idFrom,omitempty"`
-	SizeParam   string `json:"sizeParam,omitempty"`
-	DefaultSize *int   `json:"defaultSize,omitempty"`
+	Style       string   `json:"style"`
+	Param       string   `json:"param,omitempty"`
+	Default     string   `json:"default,omitempty"`
+	IDFrom      string   `json:"idFrom,omitempty"`
+	SizeParam   string   `json:"sizeParam,omitempty"`
+	DefaultSize *int     `json:"defaultSize,omitempty"`
+	CarryParams []string `json:"carryParams,omitempty"`
 }
 
 type SearchFeature struct {
@@ -539,6 +540,43 @@ func ParamsFromClient(ch *FeedChannel, clientParams map[string]string) map[strin
 	return params
 }
 
+func resetPaginationCarryParams(params map[string]string, ch *FeedChannel, pag *PaginationFeature) {
+	if pag == nil || len(pag.CarryParams) == 0 {
+		return
+	}
+	defaults := baseParams(ch)
+	for _, key := range pag.CarryParams {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if v, ok := defaults[key]; ok {
+			params[key] = v
+		} else {
+			params[key] = ""
+		}
+	}
+}
+
+func mergePaginationCarryParams(
+	params map[string]string,
+	pag *PaginationFeature,
+	next map[string]string,
+) {
+	if pag == nil || len(pag.CarryParams) == 0 || len(next) == 0 {
+		return
+	}
+	for _, key := range pag.CarryParams {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if v, ok := next[key]; ok {
+			params[key] = v
+		}
+	}
+}
+
 func ParamsForRefresh(ch *FeedChannel, features ResolvedFeatures) map[string]string {
 	params := baseParams(ch)
 	if pag := features.Pagination; pag != nil {
@@ -550,6 +588,7 @@ func ParamsForRefresh(ch *FeedChannel, features ResolvedFeatures) map[string]str
 		if pag.Default == "" {
 			delete(params, key)
 		}
+		resetPaginationCarryParams(params, ch, pag)
 	}
 	return params
 }
@@ -591,6 +630,9 @@ func ParamsForLoadMore(
 
 	switch pag.Style {
 	case PaginationStyleCursor:
+		if lastResponse != nil {
+			mergePaginationCarryParams(params, pag, lastResponse.Next)
+		}
 		return nil, fmt.Errorf("missing pagination cursor")
 	case PaginationStyleOffset:
 		current, _ := strconv.Atoi(params[paramKey])
@@ -602,6 +644,9 @@ func ParamsForLoadMore(
 			current = def
 		}
 		params[paramKey] = strconv.Itoa(current + 1)
+		if lastResponse != nil {
+			mergePaginationCarryParams(params, pag, lastResponse.Next)
+		}
 	case PaginationStyleLastID:
 		var last *FeedItem
 		if len(dbItems) > 0 {
@@ -640,6 +685,7 @@ func ParamsForSearch(ch *FeedChannel, features ResolvedFeatures, query string) m
 		if pag.Default == "" {
 			delete(params, key)
 		}
+		resetPaginationCarryParams(params, ch, pag)
 	}
 	return params
 }

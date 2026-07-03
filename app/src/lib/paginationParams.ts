@@ -4,6 +4,51 @@ function defaultPaginationParam(style: PaginationFeature["style"]): string {
   return style === "lastId" ? "lastId" : "page";
 }
 
+function carryParamKeys(pagination: PaginationFeature): string[] {
+  return pagination.carryParams?.map(key => key.trim()).filter(Boolean) ?? [];
+}
+
+/** Merge plugin `next` into channel params for load-more (page + carryParams like seenIds). */
+export function mergePaginationNextParams(
+  channelParams: Record<string, string> | undefined,
+  nextParams: Record<string, string>,
+  pagination: PaginationFeature,
+): Record<string, string> {
+  const param = pagination.param?.trim() || defaultPaginationParam(pagination.style);
+  const carryKeys = new Set(carryParamKeys(pagination));
+  const params: Record<string, string> = { ...(channelParams ?? {}) };
+
+  for (const [key, value] of Object.entries(nextParams)) {
+    if (carryKeys.has(key)) {
+      params[key] = value ?? "";
+    } else if (value.trim()) {
+      params[key] = value.trim();
+    }
+  }
+
+  const page = nextParams[param]?.trim();
+  if (page) {
+    params[param] = page;
+  }
+
+  return params;
+}
+
+/** Reset pagination + carryParams (e.g. seenIds) for refresh / first page. */
+export function buildFeedRefreshParams(options: {
+  pagination: PaginationFeature;
+  channelParams?: Record<string, string>;
+}): Record<string, string> {
+  const { pagination, channelParams } = options;
+  const param = pagination.param?.trim() || defaultPaginationParam(pagination.style);
+  const params: Record<string, string> = { ...(channelParams ?? {}) };
+  params[param] = pagination.default?.trim() || (pagination.style === "lastId" ? "" : "1");
+  for (const key of carryParamKeys(pagination)) {
+    params[key] = channelParams?.[key] ?? "";
+  }
+  return params;
+}
+
 /** Mirrors runtime extractThirdPartyFeedID for WASM list items. */
 export function extractArticleNativeId(
   article: Pick<Article, "id" | "pluginId" | "channelId">,
@@ -40,6 +85,19 @@ export function extractArticleNativeId(
   return rest;
 }
 
+function mergeCarryParamsFromNext(
+  params: Record<string, string>,
+  pagination: PaginationFeature,
+  nextParams?: Record<string, string> | null,
+): void {
+  if (!nextParams) return;
+  for (const key of carryParamKeys(pagination)) {
+    if (key in nextParams) {
+      params[key] = nextParams[key] ?? "";
+    }
+  }
+}
+
 export function buildFeedLoadMoreParams(options: {
   pagination: PaginationFeature;
   articles: Article[];
@@ -58,19 +116,20 @@ export function buildFeedLoadMoreParams(options: {
   const param = pagination.param?.trim() || defaultPaginationParam(pagination.style);
   const sizeParam = pagination.sizeParam?.trim();
   const defaultSize = pagination.defaultSize ?? pageSize;
-  const params: Record<string, string> = { ...(channelParams ?? {}) };
 
   if (nextParams) {
-    const explicit = nextParams[param]?.trim();
-    if (explicit) {
-      for (const [key, value] of Object.entries(nextParams)) {
-        if (value.trim()) {
-          params[key] = value.trim();
-        }
+    const explicitPage = nextParams[param]?.trim();
+    const hasCarry = carryParamKeys(pagination).some(key => key in nextParams);
+    if (explicitPage || hasCarry) {
+      const merged = mergePaginationNextParams(channelParams, nextParams, pagination);
+      if (sizeParam && !merged[sizeParam]?.trim()) {
+        merged[sizeParam] = String(defaultSize);
       }
-      return params;
+      return merged;
     }
   }
+
+  const params: Record<string, string> = { ...(channelParams ?? {}) };
 
   switch (pagination.style) {
     case "lastId": {
@@ -92,6 +151,7 @@ export function buildFeedLoadMoreParams(options: {
             params[key] = value.trim();
           }
         }
+        mergeCarryParamsFromNext(params, pagination, nextParams);
         if (params[param]?.trim()) {
           break;
         }
@@ -101,6 +161,7 @@ export function buildFeedLoadMoreParams(options: {
     case "offset": {
       const loadedPages = Math.max(1, Math.floor(articles.length / pageSize));
       params[param] = String(loadedPages + 1);
+      mergeCarryParamsFromNext(params, pagination, nextParams);
       break;
     }
     default:
