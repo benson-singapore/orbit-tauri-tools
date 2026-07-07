@@ -7,7 +7,7 @@ WEB_URL           ?= http://127.0.0.1:5173
 MACOS_ARCH        ?=
 LINUX_ARCH        ?=
 BUNDLES           ?=
-VERSION           ?=1.1.2
+VERSION           ?=1.1.3
 
 .DEFAULT_GOAL := help
 
