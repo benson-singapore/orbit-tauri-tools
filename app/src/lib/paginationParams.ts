@@ -98,6 +98,18 @@ function mergeCarryParamsFromNext(
   }
 }
 
+/** Check if nextParams contains any meaningful pagination data (page param or carry params). */
+function hasValidPaginationNext(
+  nextParams: Record<string, string> | null | undefined,
+  pagination: PaginationFeature,
+): boolean {
+  if (!nextParams) return false;
+  const param = pagination.param?.trim() || defaultPaginationParam(pagination.style);
+  const explicitPage = nextParams[param]?.trim();
+  const hasCarry = carryParamKeys(pagination).some(key => key in nextParams);
+  return Boolean(explicitPage) || hasCarry;
+}
+
 export function buildFeedLoadMoreParams(options: {
   pagination: PaginationFeature;
   articles: Article[];
@@ -117,16 +129,13 @@ export function buildFeedLoadMoreParams(options: {
   const sizeParam = pagination.sizeParam?.trim();
   const defaultSize = pagination.defaultSize ?? pageSize;
 
-  if (nextParams) {
-    const explicitPage = nextParams[param]?.trim();
-    const hasCarry = carryParamKeys(pagination).some(key => key in nextParams);
-    if (explicitPage || hasCarry) {
-      const merged = mergePaginationNextParams(channelParams, nextParams, pagination);
-      if (sizeParam && !merged[sizeParam]?.trim()) {
-        merged[sizeParam] = String(defaultSize);
-      }
-      return merged;
+  // Prioritize nextParams if it contains valid pagination data (page or carry params like seenIds)
+  if (hasValidPaginationNext(nextParams, pagination)) {
+    const merged = mergePaginationNextParams(channelParams, nextParams, pagination);
+    if (sizeParam && !merged[sizeParam]?.trim()) {
+      merged[sizeParam] = String(defaultSize);
     }
+    return merged;
   }
 
   const params: Record<string, string> = { ...(channelParams ?? {}) };
