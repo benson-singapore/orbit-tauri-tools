@@ -23,6 +23,7 @@ import { NovelReaderSettingsButton } from "@/components/NovelReaderSettingsButto
 import { ComicPagesView } from "@/components/ComicPagesView";
 import { ComicPageWidthSlider } from "@/components/ComicPageWidthSlider";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
+import { ExperienceModeUnlockModal } from "@/components/ExperienceModeUnlockModal";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { PlaybackHistoryButton } from "@/components/PlaybackHistoryButton";
 import { PlaybackHistoryPanel } from "@/components/PlaybackHistoryPanel";
@@ -34,13 +35,12 @@ import { usePlaybackProgress } from "@/hooks/usePlaybackProgress";
 import { useOrbitData } from "@/hooks/useOrbitData";
 import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { useAppUpdateSummary } from "@/hooks/useAppUpdateSummary";
+import { useExperienceModeShortcut } from "@/hooks/useExperienceModeShortcut";
 import { mergeArticleListWithDetail } from "@/lib/articleContent";
 import { filterArticlesWithAudio } from "@/lib/articleAudioPlaylist";
 import {
-  AVAILABLE_EXPERIENCE_MODES,
-  EXPERIENCE_MODE_LABELS,
-  FULL_EXPERIENCE_ENABLED,
   filterGroupedPluginsForExperienceMode,
+  EXPERIENCE_MODE_SHORTCUT_LABEL,
   isMaturePlugin,
   normalizeExperienceMode,
   persistExperienceMode,
@@ -275,6 +275,23 @@ export default function App() {
 
   const [theme, setTheme] = useState<ThemeMode>(readStoredThemeMode);
   const [experienceMode, setExperienceMode] = useState<ExperienceMode>(readStoredExperienceMode);
+  const lockExperienceMode = useCallback(() => {
+    setExperienceMode("safe");
+    persistExperienceMode("safe");
+  }, []);
+  const unlockExperienceMode = useCallback(() => {
+    setExperienceMode("full");
+    persistExperienceMode("full");
+  }, []);
+  const {
+    unlockModalOpen,
+    closeUnlockModal,
+    handleUnlock,
+  } = useExperienceModeShortcut({
+    experienceMode,
+    onLock: lockExperienceMode,
+    onRequestUnlock: unlockExperienceMode,
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [feedPanelVisible, setFeedPanelVisible] = useState(true);
   const [chaptersDrawerOpen, setChaptersDrawerOpen] = useState(false);
@@ -2283,43 +2300,31 @@ export default function App() {
             </span>
           </button>
 
-          {FULL_EXPERIENCE_ENABLED ? (
-            <div className="relative shrink-0" aria-label="体验模式">
-              <select
-                value={experienceMode}
-                onChange={e => {
-                  const mode = normalizeExperienceMode(e.target.value as ExperienceMode);
-                  setExperienceMode(mode);
-                  persistExperienceMode(mode);
-                }}
-                className={
+          {experienceMode === "full" ? (
+            <div
+              className="relative shrink-0"
+              aria-label="系统级别标识"
+              title={`使用 ${EXPERIENCE_MODE_SHORTCUT_LABEL} 切换级别`}
+            >
+              <span
+                className={`inline-flex items-center gap-2 px-2 py-1 rounded-lg border text-[11px] font-semibold ${
                   isDarkTheme(theme)
-                    ? "orbit-titlebar-select"
-                    : "orbit-titlebar-select orbit-titlebar-select-light"
-                }
-              >
-                {AVAILABLE_EXPERIENCE_MODES.map(mode => (
-                  <option key={mode} value={mode}>
-                    {EXPERIENCE_MODE_LABELS[mode]}
-                  </option>
-                ))}
-              </select>
-              <svg
-                className={`pointer-events-none absolute right-2 top-1/2 h-3 w-3 -translate-y-1/2 ${
-                  isDarkTheme(theme) ? "orbit-titlebar-select-chevron" : "text-neutral-400"
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+                    : "bg-amber-500/10 border-amber-500/30 text-amber-700"
                 }`}
-                viewBox="0 0 12 12"
-                fill="none"
-                aria-hidden
               >
-                <path
-                  d="M2.5 4.5L6 8l3.5-3.5"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
+                <Icon name="sparkles" className="w-3.5 h-3.5 shrink-0" />
+                完整级
+                <span
+                  className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+                    isDarkTheme(theme)
+                      ? "bg-amber-500/15 text-amber-200"
+                      : "bg-amber-500/15 text-amber-800"
+                  }`}
+                >
+                  18+
+                </span>
+              </span>
             </div>
           ) : null}
 
@@ -2606,10 +2611,6 @@ export default function App() {
             <PluginManagerModal
               theme={theme}
               experienceMode={experienceMode}
-              onExperienceModeChange={mode => {
-                setExperienceMode(mode);
-                persistExperienceMode(mode);
-              }}
               myPlugins={myPlugins}
               pluginGroups={pluginGroups}
               groupedPluginsForManage={managePluginGroups}
@@ -3962,6 +3963,14 @@ export default function App() {
       />
 
       {previewLightbox}
+
+      {unlockModalOpen ? (
+        <ExperienceModeUnlockModal
+          theme={theme}
+          onClose={closeUnlockModal}
+          onUnlock={handleUnlock}
+        />
+      ) : null}
 
     </div>
     </VideoSessionMountProvider>

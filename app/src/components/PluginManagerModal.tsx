@@ -138,7 +138,6 @@ function formatPrettyJson(input: string): string {
 interface PluginManagerModalProps {
   theme: ThemeMode;
   experienceMode?: ExperienceMode;
-  onExperienceModeChange?: (mode: ExperienceMode) => void;
   myPlugins: Plugin[];
   pluginGroups: PluginSidebarGroup[];
   groupedPluginsForManage: { group: PluginSidebarGroup; plugins: Plugin[] }[];
@@ -3718,7 +3717,6 @@ function PluginGroupManagerModal({
 export function PluginManagerModal({
   theme,
   experienceMode = "safe",
-  onExperienceModeChange,
   myPlugins,
   pluginGroups,
   groupedPluginsForManage,
@@ -4267,7 +4265,6 @@ export function PluginManagerModal({
             <SystemInfoPanel
               theme={theme}
               experienceMode={experienceMode}
-              onExperienceModeChange={onExperienceModeChange}
               installedPluginCount={installedPlugins.length}
               runningPluginCount={runningCount}
               updateSummary={systemUpdateSummary}

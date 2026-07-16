@@ -25,6 +25,18 @@ export const EXPERIENCE_MODE_LABELS: Record<ExperienceMode, string> = {
   full: "完整级",
 };
 
+export const EXPERIENCE_MODE_UNLOCK_PASSWORD = "0000";
+
+export const EXPERIENCE_MODE_SHORTCUT_LABEL = "⌘⇧L";
+
+export function isExperienceModeShortcut(event: KeyboardEvent): boolean {
+  return event.metaKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === "l";
+}
+
+export function verifyExperienceModePassword(password: string): boolean {
+  return password.trim() === EXPERIENCE_MODE_UNLOCK_PASSWORD;
+}
+
 export function normalizeExperienceMode(mode: ExperienceMode): ExperienceMode {
   if (mode === "full" && !FULL_EXPERIENCE_ENABLED) {
     return "safe";

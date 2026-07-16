@@ -2,9 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import { marked } from "marked";
 import { isDarkTheme } from "@/lib/themeMode";
 import {
-  AVAILABLE_EXPERIENCE_MODES,
-  EXPERIENCE_MODE_LABELS,
-  normalizeExperienceMode,
+  EXPERIENCE_MODE_SHORTCUT_LABEL,
   type ExperienceMode,
 } from "@/lib/experienceMode";
 import { Icon } from "@/components/Icon";
@@ -186,13 +184,11 @@ function LinkRow({
 function ExperienceModeRow({
   value,
   isDark,
-  onChange,
 }: {
   value: ExperienceMode;
   isDark: boolean;
-  onChange?: (mode: ExperienceMode) => void;
 }) {
-  const modes = AVAILABLE_EXPERIENCE_MODES;
+  const isFull = value === "full";
 
   return (
     <div
@@ -200,42 +196,37 @@ function ExperienceModeRow({
         isDark ? "border-neutral-800" : "border-neutral-100"
       }`}
     >
-      <span className={`shrink-0 text-xs ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
-        系统级别
-      </span>
-      {onChange ? (
-        <div
-          className={`inline-flex rounded-lg border p-0.5 ${
-            isDark ? "border-neutral-800 bg-neutral-900/50" : "border-neutral-200 bg-neutral-50"
+      <div className="min-w-0">
+        <span className={`shrink-0 text-xs ${isDark ? "text-neutral-500" : "text-neutral-400"}`}>
+          系统级别
+        </span>
+        <p className={`mt-1 text-[11px] leading-relaxed ${
+          isDark ? "text-neutral-600" : "text-neutral-400"
+        }`}>
+          使用 {EXPERIENCE_MODE_SHORTCUT_LABEL} 切换级别
+        </p>
+      </div>
+      {isFull ? (
+        <span
+          className={`inline-flex items-center gap-2 px-2 py-1 rounded-lg border text-[11px] font-semibold ${
+            isDark
+              ? "bg-amber-500/10 border-amber-500/30 text-amber-300"
+              : "bg-amber-500/10 border-amber-500/30 text-amber-700"
           }`}
-          role="radiogroup"
-          aria-label="系统级别"
         >
-          {modes.map(mode => {
-            const selected = value === mode;
-            return (
-              <button
-                key={mode}
-                type="button"
-                role="radio"
-                aria-checked={selected}
-                onClick={() => onChange(normalizeExperienceMode(mode))}
-                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                  selected
-                    ? "bg-[#5856D6] text-white shadow-sm"
-                    : isDark
-                      ? "text-neutral-400 hover:text-neutral-200"
-                      : "text-neutral-500 hover:text-neutral-800"
-                }`}
-              >
-                {EXPERIENCE_MODE_LABELS[mode]}
-              </button>
-            );
-          })}
-        </div>
+          <Icon name="sparkles" className="w-3.5 h-3.5 shrink-0" />
+          完整级
+          <span
+            className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-bold ${
+              isDark ? "bg-amber-500/15 text-amber-200" : "bg-amber-500/15 text-amber-800"
+            }`}
+          >
+            18+
+          </span>
+        </span>
       ) : (
-        <span className={`text-xs ${isDark ? "text-neutral-200" : "text-neutral-800"}`}>
-          {EXPERIENCE_MODE_LABELS[value]}
+        <span className={`shrink-0 text-xs font-medium ${isDark ? "text-neutral-200" : "text-neutral-800"}`}>
+          安全级
         </span>
       )}
     </div>
@@ -297,7 +288,6 @@ function SectionCard({
 interface SystemInfoPanelProps {
   theme: ThemeMode;
   experienceMode?: ExperienceMode;
-  onExperienceModeChange?: (mode: ExperienceMode) => void;
   installedPluginCount: number;
   runningPluginCount: number;
   updateSummary?: AppUpdateSummary | null;
@@ -307,7 +297,6 @@ interface SystemInfoPanelProps {
 export function SystemInfoPanel({
   theme,
   experienceMode = "safe",
-  onExperienceModeChange,
   installedPluginCount,
   runningPluginCount,
   updateSummary,
@@ -636,7 +625,6 @@ export function SystemInfoPanel({
         <ExperienceModeRow
           value={experienceMode}
           isDark={isDark}
-          onChange={onExperienceModeChange}
         />
       </SectionCard>
 

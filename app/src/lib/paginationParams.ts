@@ -131,7 +131,13 @@ export function buildFeedLoadMoreParams(options: {
 
   // Prioritize nextParams if it contains valid pagination data (page or carry params like seenIds)
   if (hasValidPaginationNext(nextParams, pagination)) {
-    const merged = mergePaginationNextParams(channelParams, nextParams, pagination);
+    // `hasValidPaginationNext` guarantees `nextParams` has usable pagination/carry data,
+    // but TS can't infer non-null here.
+    const merged = mergePaginationNextParams(
+      channelParams,
+      nextParams as Record<string, string>,
+      pagination,
+    );
     if (sizeParam && !merged[sizeParam]?.trim()) {
       merged[sizeParam] = String(defaultSize);
     }
