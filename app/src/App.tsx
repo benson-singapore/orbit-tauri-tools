@@ -44,7 +44,6 @@ import {
   isMaturePlugin,
   normalizeExperienceMode,
   persistExperienceMode,
-  readStoredExperienceMode,
   type ExperienceMode,
 } from "@/lib/experienceMode";
 import {
@@ -274,14 +273,13 @@ export default function App() {
   const onTitlebarMouseDown = useTitlebarDrag();
 
   const [theme, setTheme] = useState<ThemeMode>(readStoredThemeMode);
-  const [experienceMode, setExperienceMode] = useState<ExperienceMode>(readStoredExperienceMode);
+  const [experienceMode, setExperienceMode] = useState<ExperienceMode>("safe");
   const lockExperienceMode = useCallback(() => {
     setExperienceMode("safe");
     persistExperienceMode("safe");
   }, []);
   const unlockExperienceMode = useCallback(() => {
     setExperienceMode("full");
-    persistExperienceMode("full");
   }, []);
   const {
     unlockModalOpen,
@@ -381,10 +379,17 @@ export default function App() {
   }, [experienceMode, activePlugin, pluginById]);
 
   useEffect(() => {
+    // Always reset to safe on reload / app restart.
+    persistExperienceMode("safe");
+  }, []);
+
+  useEffect(() => {
     const normalized = normalizeExperienceMode(experienceMode);
     if (normalized !== experienceMode) {
       setExperienceMode(normalized);
-      persistExperienceMode(normalized);
+      if (normalized === "safe") {
+        persistExperienceMode("safe");
+      }
     }
   }, [experienceMode]);
 
