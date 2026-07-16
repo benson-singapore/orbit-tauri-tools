@@ -465,7 +465,7 @@ export function ArticleDetailPanel({
         onImagePreview: openImagePreview,
         previewEnabled: articleImagePreviewEnabled,
       });
-      bindArticleContentPlayers(contentRoot, { sessionId });
+      bindArticleContentPlayers(contentRoot, { sessionId, runtimeBase });
     } else if (isComicHtml) {
       unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
         previewEnabled: false,

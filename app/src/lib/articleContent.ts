@@ -4,6 +4,12 @@ import {
   extractRycjPlayerScripts,
   normalizeContentSourceButtons,
 } from "@/lib/articleContentPlayer";
+import {
+  applyYouTubeIframeAttributes,
+  extractYouTubeVideoId,
+  isYouTubeEmbedIframeSrc,
+  resolveYouTubeRelayEmbedSrc,
+} from "@/lib/youtube";
 
 const LAZY_IMAGE_ATTRS = ["data-original", "data-src", "data-lazy-src"] as const;
 
@@ -200,6 +206,43 @@ export function normalizeContentTagPills(html: string): string {
   return normalizeInlineTagPills(doc.body) ? doc.body.innerHTML : html;
 }
 
+function normalizeYouTubeIframes(
+  root: ParentNode,
+  runtimeBase: string | null | undefined,
+): boolean {
+  let changed = false;
+
+  for (const el of root.querySelectorAll("iframe")) {
+    const iframe = el as HTMLIFrameElement;
+    const src = iframe.getAttribute("src")?.trim() ?? "";
+    if (!src || !isYouTubeEmbedIframeSrc(src)) continue;
+    if (src.includes("/v1/embed/youtube")) continue;
+
+    const videoId = extractYouTubeVideoId(src);
+    if (!videoId) continue;
+
+    const relaySrc = resolveYouTubeRelayEmbedSrc(runtimeBase, videoId, {
+      title: iframe.getAttribute("title") ?? undefined,
+    });
+    if (relaySrc && relaySrc !== src) {
+      iframe.setAttribute("src", relaySrc);
+      changed = true;
+    }
+
+    const prevReferrer = iframe.getAttribute("referrerpolicy");
+    const prevAllow = iframe.getAttribute("allow");
+    applyYouTubeIframeAttributes(iframe);
+    if (
+      prevReferrer !== iframe.getAttribute("referrerpolicy")
+      || prevAllow !== iframe.getAttribute("allow")
+    ) {
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 function normalizeArticleTables(root: ParentNode): boolean {
   let changed = false;
 
@@ -288,6 +331,7 @@ export function prepareArticleHtmlContent(
   if (extractRycjPlayerScripts(doc.body)) changed = true;
   if (normalizeInlineTagPills(doc.body)) changed = true;
   if (normalizeContentSourceButtons(doc.body)) changed = true;
+  if (normalizeYouTubeIframes(doc.body, runtimeBase)) changed = true;
   if (normalizeArticleTables(doc.body)) changed = true;
 
   let result = changed ? doc.body.innerHTML : rewritten;

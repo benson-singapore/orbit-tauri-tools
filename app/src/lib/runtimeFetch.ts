@@ -46,6 +46,20 @@ function bodyToString(init?: RequestInit): string | undefined {
   return undefined;
 }
 
+/** Binary/multipart bodies must use plugin-http; rust runtime_http only accepts strings. */
+function needsPluginHttp(init?: RequestInit): boolean {
+  const body = init?.body;
+  if (body == null) {
+    return false;
+  }
+  return (
+    body instanceof FormData
+    || body instanceof Blob
+    || body instanceof ArrayBuffer
+    || ArrayBuffer.isView(body)
+  );
+}
+
 async function resolvePluginFetch(): Promise<FetchFn> {
   if (!tauriPluginFetch) {
     const mod = await import("@tauri-apps/plugin-http");
@@ -86,7 +100,7 @@ export async function runtimeFetch(
   const isLocalRuntime =
     url.startsWith("http://127.0.0.1:") || url.startsWith("http://localhost:");
 
-  if (isLocalRuntime && !(init?.body instanceof FormData)) {
+  if (isLocalRuntime && !needsPluginHttp(init)) {
     return rustRuntimeFetch(input, init);
   }
 

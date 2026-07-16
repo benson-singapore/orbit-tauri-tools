@@ -6,6 +6,38 @@ import { runtimeFetch } from "@/lib/runtimeFetch";
 const YOUTUBE_ID_RE = /^[a-zA-Z0-9_-]{11}$/;
 const YOUTUBE_HOST_RE = /(?:youtube\.com|youtu\.be|youtube-nocookie\.com)/i;
 
+export const YOUTUBE_IFRAME_ALLOW =
+  "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share; fullscreen";
+
+/** Tauri production uses `tauri://localhost`, which cannot send a valid HTTP Referer to YouTube. */
+export function needsYouTubeEmbedRelay(): boolean {
+  if (typeof window === "undefined") return false;
+  const protocol = window.location.protocol;
+  return protocol !== "http:" && protocol !== "https:";
+}
+
+export function isYouTubeEmbedIframeSrc(src: string): boolean {
+  return extractYouTubeVideoId(src) != null;
+}
+
+export function applyYouTubeIframeAttributes(iframe: HTMLIFrameElement): void {
+  iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+  iframe.setAttribute("allow", YOUTUBE_IFRAME_ALLOW);
+  iframe.setAttribute("allowfullscreen", "");
+}
+
+/** Rewrite direct YouTube embeds through the local runtime relay when required. */
+export function resolveYouTubeRelayEmbedSrc(
+  runtimeBase: string | null | undefined,
+  videoId: string,
+  options?: { startSeconds?: number; enableJsApi?: boolean; title?: string },
+): string | null {
+  if (!needsYouTubeEmbedRelay()) return null;
+  const base = resolveRuntimeBaseForEmbed(runtimeBase);
+  if (!base) return null;
+  return youtubeRuntimeEmbedUrl(base, videoId, options);
+}
+
 export function extractYouTubeVideoId(input: string): string | null {
   const value = input.trim();
   if (!value) return null;

@@ -13,7 +13,9 @@ import {
 } from "@/lib/sessionVideoProgress";
 import {
   fetchYouTubeStream,
+  needsYouTubeEmbedRelay,
   resolveYouTubeEmbedSrc,
+  resolveYouTubeRelayEmbedSrc,
   youtubeSimpleEmbedUrl,
   type YouTubeStreamInfo,
 } from "@/lib/youtube";
@@ -113,9 +115,17 @@ export function YouTubeEmbed({ sessionId, runtimeBase, videoId, title }: YouTube
       const start = sessionId ? getSessionPlaybackSnapshot(sessionId)?.currentTime ?? 0 : 0;
 
       if (preferIframe) {
+        const relaySrc =
+          needsYouTubeEmbedRelay() && embedBase.status === "ready"
+            ? resolveYouTubeRelayEmbedSrc(embedBase.base, videoId, {
+                startSeconds: start,
+                enableJsApi,
+                title,
+              })
+            : null;
         setPlayback({
           kind: "iframe",
-          src: youtubeSimpleEmbedUrl(videoId, start),
+          src: relaySrc ?? youtubeSimpleEmbedUrl(videoId, start),
         });
         return;
       }

@@ -1,6 +1,14 @@
 import Hls from "hls.js";
 import { isHlsVideoUrl, resolveVideoElementSourceUrl } from "@/lib/articleVideoUrl";
 import {
+  applyYouTubeIframeAttributes,
+  extractYouTubeVideoId,
+  isYouTubeEmbedIframeSrc,
+  needsYouTubeEmbedRelay,
+  resolveRuntimeBaseForEmbed,
+  resolveYouTubeRelayEmbedSrc,
+} from "@/lib/youtube";
+import {
   bindEmbeddedVideoTheater,
   destroyEmbeddedVideoTheater,
   exitEmbeddedVideoTheater,
@@ -206,6 +214,7 @@ export function destroyEmbeddedVideoHls(video: HTMLVideoElement): void {
 
 export interface BindArticleContentPlayersOptions {
   sessionId?: string;
+  runtimeBase?: string | null;
 }
 
 function resolveEmbeddedResumeTime(
@@ -393,12 +402,45 @@ function bindRycjPlayer(article: HTMLElement, sessionId?: string): void {
   });
 }
 
+function bindYouTubeContentIframes(
+  root: HTMLElement,
+  runtimeBase?: string | null,
+): void {
+  if (!needsYouTubeEmbedRelay()) return;
+
+  const base = resolveRuntimeBaseForEmbed(runtimeBase);
+  if (!base) return;
+
+  for (const el of root.querySelectorAll("iframe")) {
+    const iframe = el as HTMLIFrameElement;
+    const src = iframe.getAttribute("src")?.trim() ?? "";
+    if (!src || !isYouTubeEmbedIframeSrc(src)) continue;
+    if (src.includes("/v1/embed/youtube")) {
+      applyYouTubeIframeAttributes(iframe);
+      continue;
+    }
+
+    const videoId = extractYouTubeVideoId(src);
+    if (!videoId) continue;
+
+    const relaySrc = resolveYouTubeRelayEmbedSrc(base, videoId, {
+      title: iframe.getAttribute("title") ?? undefined,
+    });
+    if (relaySrc) {
+      iframe.src = relaySrc;
+    }
+    applyYouTubeIframeAttributes(iframe);
+  }
+}
+
 export function bindArticleContentPlayers(
   root: HTMLElement | null,
   options?: BindArticleContentPlayersOptions,
 ): void {
   if (!root) return;
   const sessionId = options?.sessionId;
+
+  bindYouTubeContentIframes(root, options?.runtimeBase);
 
   for (const article of root.querySelectorAll<HTMLElement>("article.rycjapi-player")) {
     if (article.dataset.orbitPlayerBound === "1") continue;

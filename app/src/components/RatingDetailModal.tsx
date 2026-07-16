@@ -82,7 +82,7 @@ export function RatingDetailModal({
       const unbindContentImages = bindArticleContentImagesWithPreview(contentRef.current, runtimeBase, {
         onImagePreview: openImagePreview,
       });
-      bindArticleContentPlayers(contentRef.current);
+      bindArticleContentPlayers(contentRef.current, { runtimeBase });
       return () => {
         unbindContentImages();
         destroyArticleContentPlayers(contentRef.current);

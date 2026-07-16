@@ -1005,7 +1005,7 @@ export default function App() {
         onImagePreview: openImagePreview,
         previewEnabled: selectedItemImagePreviewEnabled,
       });
-      bindArticleContentPlayers(contentRoot, { sessionId: inlineSessionId });
+      bindArticleContentPlayers(contentRoot, { sessionId: inlineSessionId, runtimeBase });
     } else if (isComicHtml) {
       unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
         previewEnabled: false,
