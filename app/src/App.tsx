@@ -127,6 +127,12 @@ import {
   persistPluginChannel,
 } from "@/lib/pluginChannelMemory";
 import {
+  dockInlinePlaybackToReaderSession,
+  dockPlayingExpandedSessions,
+  hasInlinePlayableMedia,
+  isInlineMediaPlaying,
+} from "@/lib/autoDockPlayback";
+import {
   getPluginBrowseSession,
   savePluginBrowseSession,
 } from "@/lib/pluginBrowseSession";
@@ -455,6 +461,7 @@ export default function App() {
   const novelPlaybackChapterRef = useRef<Article | null>(null);
   const pendingPluginRestoreRef = useRef<string | null>(null);
   const restoringBrowseSessionRef = useRef(false);
+  const suppressAutoSelectRef = useRef(false);
   const articleContentRef = useRef<HTMLDivElement>(null);
   const [runtimeBase, setRuntimeBase] = useState<string | null>(null);
   const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
@@ -1006,6 +1013,48 @@ export default function App() {
   const inlineSessionId = playbackArticle
     ? `inline:${playbackArticle.pluginId}:${chaptersParent?.id ?? playbackArticle.id}`
     : undefined;
+
+  const resolveInlineDockTarget = useCallback(() => {
+    if (isSplitDetailMode && splitDetailArticle) {
+      return {
+        article: splitDetailArticle,
+        parentArticle: null as Article | null,
+        channel: splitDetailActiveChannel,
+        inlineSessionId: splitDetailSessionId(splitDetailArticle),
+        contentRoot:
+          readerPanelRef.current?.querySelector<HTMLElement>(".orbit-detail-panel .article-reader")
+          ?? null,
+      };
+    }
+
+    const article = playbackArticle;
+    if (!article) return null;
+
+    return {
+      article,
+      parentArticle: chaptersParent,
+      channel: activeChannel,
+      inlineSessionId:
+        inlineSessionId ?? `inline:${article.pluginId}:${chaptersParent?.id ?? article.id}`,
+      contentRoot: articleContentRef.current,
+    };
+  }, [
+    isSplitDetailMode,
+    splitDetailArticle,
+    splitDetailActiveChannel,
+    playbackArticle,
+    chaptersParent,
+    activeChannel,
+    inlineSessionId,
+  ]);
+
+  const canDockCurrentPage = activePlugin !== "all"
+    && !isPluginFocusMode
+    && (
+      isPageDetailView
+      || (isReaderPreviewMode && Boolean(playbackArticle))
+      || (isSplitDetailMode && Boolean(splitDetailArticle))
+    );
   const showContentLoading = contentLoading
     || chapters.detailLoading
     || (chapters.isActive && chapters.loading);
@@ -1485,6 +1534,10 @@ export default function App() {
     if (pendingPluginRestoreRef.current === activePlugin) return;
     if (isGridPageMode && !gridPageDetailOpen) return;
     if (chaptersParent) return;
+    if (suppressAutoSelectRef.current) {
+      suppressAutoSelectRef.current = false;
+      return;
+    }
     if (visibleArticles.length === 0) {
       if (selectedItemRef.current?.pluginId === activePlugin) return;
       setSelectedItem(null);
@@ -1788,11 +1841,14 @@ export default function App() {
     selectChannel,
   ]);
 
-  const captureCurrentPluginBrowseSession = (pluginId: string) => {
+  const captureCurrentPluginBrowseSession = (
+    pluginId: string,
+    options?: { closePageDetail?: boolean },
+  ) => {
     if (pluginId === "all") return;
     savePluginBrowseSession(pluginId, {
       selectedItem: selectedItemRef.current,
-      gridPageDetailOpen,
+      gridPageDetailOpen: options?.closePageDetail ? false : gridPageDetailOpen,
       chaptersParent: chaptersParentRef.current,
       splitDetailArticle: splitDetailArticleRef.current,
       splitDetailFeedChannel,
@@ -1801,6 +1857,49 @@ export default function App() {
       scrollTop: readerPanelRef.current?.scrollTop ?? 0,
     });
   };
+
+  const autoDockPlaybackBeforePluginLeave = useCallback((leavingPluginId: string): boolean => {
+    let closePageDetail = false;
+
+    setReaderSessions(prev => {
+      let next = dockPlayingExpandedSessions(prev, leavingPluginId);
+      const target = resolveInlineDockTarget();
+
+      if (
+        target
+        && target.article.pluginId === leavingPluginId
+        && hasInlinePlayableMedia(target.article)
+        && isInlineMediaPlaying({
+          article: target.article,
+          sessionId: target.inlineSessionId,
+          contentRoot: target.contentRoot,
+          pluginId: leavingPluginId,
+        })
+      ) {
+        const docked = dockInlinePlaybackToReaderSession({
+          sessions: next,
+          article: target.article,
+          parentArticle: target.parentArticle,
+          activeChannel: target.channel,
+          hasDetail: resolveArticleHasDetail(
+            target.article,
+            pluginById.get(target.article.pluginId),
+            target.channel,
+            channelCapabilities,
+            getStoredPluginChannel(target.article.pluginId),
+          ),
+          inlineSessionId: target.inlineSessionId,
+          contentRoot: target.contentRoot,
+        });
+        next = docked.sessions;
+        closePageDetail = docked.closePageDetail;
+      }
+
+      return next === prev ? prev : next;
+    });
+
+    return closePageDetail;
+  }, [resolveInlineDockTarget, pluginById, channelCapabilities]);
 
   const selectPlugin = (pluginId: string, groupId?: string) => {
     if (pluginId !== activePlugin) {
@@ -1823,8 +1922,15 @@ export default function App() {
       }
     }
     const isSwitchingPlugin = pluginId !== activePlugin;
+    let closePageDetailAfterDock = false;
     if (isSwitchingPlugin && activePlugin !== "all") {
-      captureCurrentPluginBrowseSession(activePlugin);
+      closePageDetailAfterDock = autoDockPlaybackBeforePluginLeave(activePlugin);
+      captureCurrentPluginBrowseSession(activePlugin, {
+        closePageDetail: closePageDetailAfterDock,
+      });
+    }
+    if (closePageDetailAfterDock) {
+      setGridPageDetailOpen(false);
     }
     setActivePlugin(pluginId);
     if (pluginId === "all") {
@@ -2313,6 +2419,52 @@ export default function App() {
     switchReaderToPageDetail,
   ]);
 
+  const handleDockCurrentPage = useCallback(() => {
+    const target = resolveInlineDockTarget();
+    if (!target || activePlugin === "all") return;
+
+    setReaderSessions(prev => {
+      const result = dockInlinePlaybackToReaderSession({
+        sessions: prev,
+        article: target.article,
+        parentArticle: target.parentArticle,
+        activeChannel: target.channel,
+        hasDetail: resolveArticleHasDetail(
+          target.article,
+          pluginById.get(target.article.pluginId),
+          target.channel,
+          channelCapabilities,
+          getStoredPluginChannel(target.article.pluginId),
+        ),
+        inlineSessionId: target.inlineSessionId,
+        contentRoot: target.contentRoot,
+      });
+      return result.sessions;
+    });
+
+    if (isPageDetailView) {
+      setGridPageDetailOpen(false);
+      setSelectedItem(null);
+      detailResumeAppliedRef.current = false;
+    } else if (isSplitDetailMode) {
+      setSplitDetailArticle(null);
+      setSplitDetailFeedChannel(null);
+    } else if (isReaderPreviewMode) {
+      suppressAutoSelectRef.current = true;
+      setSelectedItem(null);
+      setChaptersParent(null);
+      detailResumeAppliedRef.current = false;
+    }
+  }, [
+    activePlugin,
+    channelCapabilities,
+    isPageDetailView,
+    isReaderPreviewMode,
+    isSplitDetailMode,
+    pluginById,
+    resolveInlineDockTarget,
+  ]);
+
   const pageDetailModalSwitchButton = isPageDetailView && isGridPreviewMode ? (
     <button
       type="button"
@@ -2323,6 +2475,19 @@ export default function App() {
     >
       <Icon name="pip" className="w-3.5 h-3.5" />
       <span>弹窗</span>
+    </button>
+  ) : null;
+
+  const pageDockButton = canDockCurrentPage ? (
+    <button
+      type="button"
+      onClick={handleDockCurrentPage}
+      className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors align-middle ${chapterNavButtonClass}`}
+      title="挂起到侧栏，切换插件时继续播放"
+      aria-label="挂起到侧栏"
+    >
+      <Icon name="pip" className="w-3.5 h-3.5" />
+      <span>挂起</span>
     </button>
   ) : null;
 
@@ -3187,6 +3352,7 @@ export default function App() {
                         {isPageDetailView ? (
                           <>
                             {pageDetailBackButton}
+                            {pageDockButton}
                             {isNovelReading ? (
                               <NovelReaderSettingsButton
                                 theme={theme}
@@ -3207,6 +3373,8 @@ export default function App() {
                           </>
                         ) : (
                           <>
+
+                        {pageDockButton}
 
                         {chapters.isActive && isNovelReading ? (
                           <NovelReaderSettingsButton
@@ -3734,6 +3902,7 @@ export default function App() {
                       <div className="relative aspect-video bg-neutral-950 flex flex-col items-center justify-center text-white">
                         {selectedYouTubeVideoId ? (
                           <YouTubeEmbed
+                            sessionId={inlineSessionId}
                             runtimeBase={runtimeBase}
                             videoId={selectedYouTubeVideoId}
                             title={selectedItem.title}
