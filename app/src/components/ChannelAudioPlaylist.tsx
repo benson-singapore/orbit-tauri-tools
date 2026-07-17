@@ -7,6 +7,7 @@ import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
 interface ChannelAudioPlaylistProps {
   sessionId: string;
   tracks: ReaderAudioTrack[];
+  runtimeBase: string | null;
   trackCountLabel?: string;
   hasMore?: boolean;
   loadingMore?: boolean;
@@ -19,6 +20,7 @@ interface ChannelAudioPlaylistProps {
 export function ChannelAudioPlaylist({
   sessionId,
   tracks,
+  runtimeBase,
   trackCountLabel,
   hasMore = false,
   loadingMore = false,
@@ -59,6 +61,11 @@ export function ChannelAudioPlaylist({
           onPrev={player.handlePrev}
           onNext={player.handleNext}
           onProgressClick={player.handleProgressClick}
+          volume={player.volume}
+          playbackRate={player.playbackRate}
+          onVolumeChange={player.handleVolumeChange}
+          onPlaybackRateStep={player.handlePlaybackRateStep}
+          runtimeBase={runtimeBase}
         />
       </section>
 
@@ -76,6 +83,7 @@ export function ChannelAudioPlaylist({
           loadMoreLabel={loadMoreLabel}
           onLoadMore={onLoadMore}
           fillHeight
+          runtimeBase={runtimeBase}
         />
       </section>
     </div>

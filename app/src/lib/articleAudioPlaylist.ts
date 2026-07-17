@@ -1,6 +1,5 @@
 import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
 import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
-import { displayImageUrl } from "@/lib/imageProxy";
 import type { Article } from "@/types";
 
 export function filterArticlesWithAudio(articles: Article[]): Article[] {
@@ -9,7 +8,7 @@ export function filterArticlesWithAudio(articles: Article[]): Article[] {
 
 export function articleToAudioTrack(
   article: Article,
-  runtimeBase: string | null,
+  _runtimeBase: string | null,
 ): ReaderAudioTrack | null {
   const url = resolveArticleAudioUrl(article);
   if (!url) return null;
@@ -18,7 +17,7 @@ export function articleToAudioTrack(
     name: article.title,
     artist: article.author?.trim() || undefined,
     url,
-    cover: article.image ? displayImageUrl(runtimeBase, article.image) : undefined,
+    cover: article.image?.trim() || undefined,
   };
 }
 

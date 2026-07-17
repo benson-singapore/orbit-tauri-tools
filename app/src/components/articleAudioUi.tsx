@@ -1,4 +1,6 @@
-import type { MouseEvent } from "react";
+import type { ChangeEvent, MouseEvent } from "react";
+import { ProxiedImage } from "@/components/ProxiedImage";
+import { formatPlaybackRate } from "@/lib/audioPlaybackPrefs";
 import { CHANNEL_PLAYBACK_MODES } from "@/lib/channelPlaybackMode";
 import type { ChannelPlaybackMode } from "aplayer";
 import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
@@ -24,15 +26,18 @@ function PlayingBars() {
 function TrackCover({
   track,
   size,
+  runtimeBase,
 }: {
   track: ReaderAudioTrack;
   size: "lg" | "sm";
+  runtimeBase: string | null;
 }) {
   const sizeClass = size === "lg" ? "h-28 w-28 sm:h-32 sm:w-32" : "h-10 w-10";
 
-  if (track.cover) {
+  if (track.cover?.trim()) {
     return (
-      <img
+      <ProxiedImage
+        runtimeBase={runtimeBase}
         src={track.cover}
         alt=""
         className={`${sizeClass} shrink-0 rounded-xl object-cover shadow-sm`}
@@ -96,6 +101,102 @@ interface AudioPlayerHeroProps {
   onNext: () => void;
   onProgressClick: (event: MouseEvent<HTMLDivElement>) => void;
   showNavControls?: boolean;
+  volume: number;
+  playbackRate: number;
+  onVolumeChange: (volume: number) => void;
+  onPlaybackRateStep: (direction: -1 | 1) => void;
+  runtimeBase: string | null;
+}
+
+function VolumeIcon({ muted }: { muted: boolean }) {
+  if (muted) {
+    return (
+      <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
+        <path
+          fill="currentColor"
+          d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM5 9v6h4l5 5V4L9 9H5zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.06c1.48-.74 2.5-2.26 2.5-4.03zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77 0-4.28-2.99-7.86-7-8.77z"
+        />
+      </svg>
+    );
+  }
+
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77 0-4.28-2.99-7.86-7-8.77z"
+      />
+    </svg>
+  );
+}
+
+function AudioPlaybackTuning({
+  volume,
+  playbackRate,
+  onVolumeChange,
+  onPlaybackRateStep,
+}: {
+  volume: number;
+  playbackRate: number;
+  onVolumeChange: (volume: number) => void;
+  onPlaybackRateStep: (direction: -1 | 1) => void;
+}) {
+  const volumePercent = Math.round(volume * 100);
+  const isMuted = volume <= 0.001;
+
+  const handleVolumeInput = (event: ChangeEvent<HTMLInputElement>) => {
+    onVolumeChange(Number.parseInt(event.target.value, 10) / 100);
+  };
+
+  return (
+    <div className="mt-4 flex flex-col gap-3 border-t border-[var(--orbit-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
+      <label className="flex min-w-0 flex-1 items-center gap-2.5">
+        <span className="shrink-0 text-[var(--orbit-text-muted)]">
+          <VolumeIcon muted={isMuted} />
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={volumePercent}
+          onChange={handleVolumeInput}
+          aria-label="音量"
+          className="orbit-audio-volume-slider min-w-0 flex-1"
+        />
+        <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-[var(--orbit-text-muted)]">
+          {volumePercent}%
+        </span>
+      </label>
+
+      <div className="flex shrink-0 items-center gap-2 self-end sm:self-auto">
+        <span className="text-[11px] font-medium text-[var(--orbit-text-muted)]">倍速</span>
+        <div className="flex items-center rounded-xl border border-[var(--orbit-border)] bg-[color-mix(in_srgb,var(--orbit-surface)_80%,transparent)] p-0.5">
+          <button
+            type="button"
+            onClick={() => onPlaybackRateStep(-1)}
+            className="rounded-lg px-2.5 py-1.5 text-sm font-semibold text-[var(--orbit-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--orbit-text)_6%,transparent)] hover:text-[var(--orbit-text)]"
+            aria-label="减慢播放速度"
+            title="减慢"
+          >
+            −
+          </button>
+          <span className="min-w-[3rem] px-1 text-center text-xs font-semibold tabular-nums text-[var(--orbit-text)]">
+            {formatPlaybackRate(playbackRate)}
+          </span>
+          <button
+            type="button"
+            onClick={() => onPlaybackRateStep(1)}
+            className="rounded-lg px-2.5 py-1.5 text-sm font-semibold text-[var(--orbit-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--orbit-text)_6%,transparent)] hover:text-[var(--orbit-text)]"
+            aria-label="加快播放速度"
+            title="加快"
+          >
+            +
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function AudioPlayerHero({
@@ -110,12 +211,17 @@ export function AudioPlayerHero({
   onNext,
   onProgressClick,
   showNavControls = true,
+  volume,
+  playbackRate,
+  onVolumeChange,
+  onPlaybackRateStep,
+  runtimeBase,
 }: AudioPlayerHeroProps) {
   const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
 
   return (
     <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
-      <TrackCover track={track} size="lg" />
+      <TrackCover track={track} size="lg" runtimeBase={runtimeBase} />
 
       <div className="min-w-0 flex-1">
         <div className="min-w-0">
@@ -197,6 +303,13 @@ export function AudioPlayerHero({
             </button>
           ) : null}
         </div>
+
+        <AudioPlaybackTuning
+          volume={volume}
+          playbackRate={playbackRate}
+          onVolumeChange={onVolumeChange}
+          onPlaybackRateStep={onPlaybackRateStep}
+        />
       </div>
     </div>
   );
@@ -215,6 +328,7 @@ interface AudioTrackListProps {
   loadMoreLabel?: string;
   onLoadMore?: () => void;
   fillHeight?: boolean;
+  runtimeBase: string | null;
 }
 
 export function AudioTrackList({
@@ -230,6 +344,7 @@ export function AudioTrackList({
   loadMoreLabel = "加载更多",
   onLoadMore,
   fillHeight = false,
+  runtimeBase,
 }: AudioTrackListProps) {
   const showPlaybackModes = playbackMode !== undefined && onPlaybackModeChange !== undefined;
 
@@ -274,7 +389,7 @@ export function AudioTrackList({
                     {isActivePlaying ? <PlayingBars /> : index + 1}
                   </span>
 
-                  <TrackCover track={track} size="sm" />
+                  <TrackCover track={track} size="sm" runtimeBase={runtimeBase} />
 
                   <span className="min-w-0 flex-1">
                     <span className={`block truncate text-sm ${

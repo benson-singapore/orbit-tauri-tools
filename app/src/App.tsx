@@ -71,7 +71,7 @@ import { SocialFeedFocusView } from "@/components/SocialFeedFocusView";
 import { AudioFocusView } from "@/components/AudioFocusView";
 import { ReaderAudioPlayer } from "@/components/ReaderAudioPlayer";
 import { buildArticleAudioPlaylist } from "@/lib/articleAudioPlaylist";
-import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
+import { resolveArticleAudioUrl, stripEmbeddedAudioFromContent } from "@/lib/articleAudioUrl";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import {
@@ -80,7 +80,9 @@ import {
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
 import { bindArticleContentImagesWithPreview, shouldEnableArticleImagePreview } from "@/lib/articleContentImagePreview";
+import { shouldEnableArticleTTS } from "@/lib/articleContentTTS";
 import { useArticleContentImagePreview } from "@/hooks/useArticleContentImagePreview";
+import { useArticleContentTTS } from "@/hooks/useArticleContentTTS";
 import {
   formatComicChapterToolbarSubtitle,
   prepareMangaIntroDisplayContent,
@@ -454,6 +456,7 @@ export default function App() {
   const articleContentRef = useRef<HTMLDivElement>(null);
   const [runtimeBase, setRuntimeBase] = useState<string | null>(null);
   const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
+  const { bindTTS, ttsOverlays } = useArticleContentTTS(theme);
 
   useEffect(() => {
     void waitForRuntimeReady().then((url: string) => {
@@ -544,6 +547,9 @@ export default function App() {
 
   const showArticleMedia = useMemo(() => {
     if (!selectedItem) return false;
+    if (resolveArticleAudioUrl(selectedItem) !== null) {
+      return true;
+    }
     if (selectedItem.type === "text") {
       return Boolean(selectedItem.image?.trim()) && !coverImageFailed;
     }
@@ -862,6 +868,11 @@ export default function App() {
     comicChapterStreamActive,
     pluginMediaType: selectedPluginMeta?.mediaType,
   });
+  const selectedItemTTSEnabled = shouldEnableArticleTTS({
+    isComicReaderContent,
+    comicChapterStreamActive,
+    pluginMediaType: selectedPluginMeta?.mediaType,
+  });
 
   const comicToolbarChapter = comicStream.isActive
     ? (comicStream.visibleChapter ?? chapters.activeChapter ?? selectedItem)
@@ -909,14 +920,17 @@ export default function App() {
 
   const selectedItemDisplayContent = useMemo(() => {
     if (!baseDisplayContent) return "";
+    let content = baseDisplayContent;
     if (isMangaIntroPage) {
-      return prepareMangaIntroDisplayContent(baseDisplayContent);
+      content = prepareMangaIntroDisplayContent(content);
+    } else if (chaptersPluginMeta?.mediaType === "novel") {
+      content = enhanceNovelChapterDisplayContent(content, selectedItem?.title);
     }
-    if (chaptersPluginMeta?.mediaType === "novel") {
-      return enhanceNovelChapterDisplayContent(baseDisplayContent, selectedItem?.title);
+    if (selectedAudioUrl) {
+      content = stripEmbeddedAudioFromContent(content);
     }
-    return baseDisplayContent;
-  }, [baseDisplayContent, isMangaIntroPage, chaptersPluginMeta?.mediaType, selectedItem?.title]);
+    return content;
+  }, [baseDisplayContent, isMangaIntroPage, chaptersPluginMeta?.mediaType, selectedItem?.title, selectedAudioUrl]);
 
   const isNovelReading = Boolean(
     (chaptersPluginMeta?.mediaType === "novel" && (chapters.isActive || selectedItem))
@@ -1023,6 +1037,7 @@ export default function App() {
     if (!hasStreamContent && !selectedItemDisplayContent) return;
 
     let unbindContentImages = () => {};
+    let unbindTTS = () => {};
 
     if (!isComicReaderContent && !novelChapterStreamActive) {
       highlightArticleCode(contentRoot);
@@ -1030,6 +1045,7 @@ export default function App() {
         onImagePreview: openImagePreview,
         previewEnabled: selectedItemImagePreviewEnabled,
       });
+      unbindTTS = bindTTS(contentRoot, { enabled: selectedItemTTSEnabled });
       bindArticleContentPlayers(contentRoot, { sessionId: inlineSessionId, runtimeBase });
     } else if (isComicHtml) {
       unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
@@ -1041,6 +1057,7 @@ export default function App() {
         onImagePreview: openImagePreview,
         previewEnabled: selectedItemImagePreviewEnabled,
       });
+      unbindTTS = bindTTS(contentRoot, { enabled: selectedItemTTSEnabled });
     }
 
     if (
@@ -1067,6 +1084,7 @@ export default function App() {
 
     return () => {
       unbindContentImages();
+      unbindTTS();
       if (!isComicReaderContent && !novelChapterStreamActive) {
         destroyArticleContentPlayers(contentRoot);
       }
@@ -1093,7 +1111,9 @@ export default function App() {
     activeChannel,
     channelCapabilities,
     openImagePreview,
+    bindTTS,
     selectedItemImagePreviewEnabled,
+    selectedItemTTSEnabled,
     chapters.activeChapter?.id,
     selectedItem?.id,
   ]);
@@ -1102,7 +1122,7 @@ export default function App() {
     setChaptersDrawerOpen(open => !open);
   }, []);
 
-  const chaptersOpenButton = chapters.isActive && isPageDetailView && !isSplitDetailMode ? (
+  const chaptersOpenButton = chapters.isActive && !isSplitDetailMode && (isPageDetailView || isReaderPreviewMode) ? (
     <ChaptersOpenButton
       theme={theme}
       open={chaptersDrawerOpen}
@@ -1535,7 +1555,9 @@ export default function App() {
         .then(result => {
           if (cancelled || !result.item) return;
           setSelectedItem(prev =>
-            prev?.id === itemId ? { ...prev, ...result.item } : prev,
+            prev?.id === itemId && result.item
+              ? mergeArticleListWithDetail(prev, result.item)
+              : prev,
           );
         })
         .catch(err => {
@@ -1570,7 +1592,7 @@ export default function App() {
           return;
         }
         setSelectedItem(prev =>
-          prev?.id === itemId ? { ...prev, ...detail } : prev,
+          prev?.id === itemId ? mergeArticleListWithDetail(prev, detail) : prev,
         );
       } catch (err) {
         if (!cancelled) {
@@ -3137,6 +3159,7 @@ export default function App() {
                           />
                         ) : null}
                         {chapterToolbarNav}
+                        {chaptersOpenButton}
 
                         {isSplitBroadcastMode && activePlugin !== "all" ? (
                           <>
@@ -3337,19 +3360,6 @@ export default function App() {
                             channelId={activeChannel}
                             onClick={() => setPlaybackHistoryOpen(true)}
                           />
-                        ) : null}
-
-                        {!isPluginFocusMode && selectedItem?.sourceUrl ? (
-                          <a
-                            href={selectedItem.sourceUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="p-1.5 rounded-lg text-xs flex items-center gap-1 transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-indigo-500 dark:text-indigo-400"
-                            title="阅读原文"
-                          >
-                            <Icon name="share" className="w-3.5 h-3.5" />
-                            <span className="hidden sm:inline">阅读原文</span>
-                          </a>
                         ) : null}
 
                         {!isPluginFocusMode && selectedItem ? (
@@ -3685,7 +3695,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {selectedItem.type === "audio" && selectedAudioUrl ? (
+                    {selectedAudioUrl ? (
                       <div className="p-4 md:p-6 bg-[var(--orbit-surface)]">
                         <ReaderAudioPlayer
                           sessionId={inlineSessionId ?? `inline-audio:${selectedItem.pluginId}:${selectedItem.id}`}
@@ -3973,6 +3983,7 @@ export default function App() {
       />
 
       {previewLightbox}
+      {ttsOverlays}
 
       {unlockModalOpen ? (
         <ExperienceModeUnlockModal

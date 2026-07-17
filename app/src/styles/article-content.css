@@ -147,6 +147,14 @@
   background: #0a0a0a;
 }
 
+.article-content :where(audio) {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 .article-content :where(iframe) {
   display: block;
   width: 100%;
@@ -943,6 +951,31 @@
   font-family: var(--novel-font-family, inherit);
   font-size: calc(0.9375rem * var(--novel-font-scale, 1) * var(--reader-scale, 1));
   filter: brightness(var(--novel-brightness, 1));
+}
+
+/* TTS selection marks */
+.article-content :where(mark.orbit-tts-pending-mark) {
+  background-color: rgba(255, 214, 102, 0.5);
+  color: inherit;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.article-content[data-theme="dark"] :where(mark.orbit-tts-pending-mark) {
+  background-color: rgba(255, 193, 7, 0.3);
+}
+
+.article-content :where(mark.orbit-tts-read-mark) {
+  background-color: rgba(88, 86, 214, 0.28);
+  color: inherit;
+  border-radius: 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.article-content[data-theme="dark"] :where(mark.orbit-tts-read-mark) {
+  background-color: rgba(88, 86, 214, 0.38);
 }
 
 /* Novel background presets — override manga intro + reader chrome */

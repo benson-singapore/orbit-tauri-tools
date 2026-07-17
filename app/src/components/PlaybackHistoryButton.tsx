@@ -24,10 +24,7 @@ export function PlaybackHistoryButton({
       className={className}
       title="历史记录"
     >
-      <span className="inline-flex">
-        <Icon name="history" className="w-3.5 h-3.5" />
-      </span>
-      <span className="hidden sm:inline">历史</span>
+      <Icon name="history" className="w-3.5 h-3.5" />
     </button>
   );
 }

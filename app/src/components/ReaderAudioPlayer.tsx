@@ -3,7 +3,6 @@ import "aplayer/dist/APlayer.min.css";
 import "@/styles/orbit-aplayer.css";
 import { AudioPlayerHero } from "@/components/articleAudioUi";
 import { useOrbitAudioPlayer } from "@/hooks/useOrbitAudioPlayer";
-import { displayImageUrl } from "@/lib/imageProxy";
 import type { Article } from "@/types";
 
 export const READER_AUDIO_SELECTOR = "audio[data-orbit-reader-audio]";
@@ -41,7 +40,7 @@ export function ReaderAudioPlayer({
       name: article.title,
       artist: article.author || undefined,
       url: audioUrl,
-      cover: article.image ? displayImageUrl(runtimeBase, article.image) : undefined,
+      cover: article.image?.trim() || undefined,
     }];
   }, [article.title, article.author, article.image, audioUrl, runtimeBase, playlist]);
 
@@ -77,6 +76,11 @@ export function ReaderAudioPlayer({
           onNext={player.handleNext}
           onProgressClick={player.handleProgressClick}
           showNavControls={hasMultipleTracks}
+          volume={player.volume}
+          playbackRate={player.playbackRate}
+          onVolumeChange={player.handleVolumeChange}
+          onPlaybackRateStep={player.handlePlaybackRateStep}
+          runtimeBase={runtimeBase}
         />
       </section>
     </div>

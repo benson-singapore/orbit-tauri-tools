@@ -15,8 +15,11 @@ import { isSocialPlugin } from "@/lib/socialPlugin";
 import { SocialNoteDetail } from "@/components/SocialNoteDetail";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
+import { mergeArticleListWithDetail } from "@/lib/articleContent";
 import { bindArticleContentImagesWithPreview, shouldEnableArticleImagePreview } from "@/lib/articleContentImagePreview";
+import { shouldEnableArticleTTS } from "@/lib/articleContentTTS";
 import { useArticleContentImagePreview } from "@/hooks/useArticleContentImagePreview";
+import { useArticleContentTTS } from "@/hooks/useArticleContentTTS";
 import {
   prepareMangaIntroDisplayContent,
 } from "@/lib/comicChapterContent";
@@ -66,7 +69,7 @@ import {
 } from "@/lib/novelReaderSettings";
 import type { PlaybackResumeIntent, PlaybackProgress } from "@/types";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
-import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
+import { resolveArticleAudioUrl, stripEmbeddedAudioFromContent } from "@/lib/articleAudioUrl";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
 import type { ReaderSessionMode } from "@/lib/readerSessions";
 import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
@@ -147,6 +150,7 @@ export function ArticleReaderModal({
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
+  const { bindTTS, ttsOverlays } = useArticleContentTTS(theme);
   const onArticleChangeRef = useRef(onArticleChange);
   onArticleChangeRef.current = onArticleChange;
 
@@ -247,7 +251,7 @@ export function ArticleReaderModal({
           if (cancelled || !result.item) return;
           setArticle(prev => {
             if (prev.id !== itemId) return prev;
-            const next = { ...prev, ...result.item };
+            const next = mergeArticleListWithDetail(prev, result.item!);
             syncArticleToSession(next);
             return next;
           });
@@ -278,7 +282,7 @@ export function ArticleReaderModal({
         if (cancelled) return;
         setArticle(prev => {
           if (prev.id !== itemId) return prev;
-          const next = { ...prev, ...detail };
+          const next = mergeArticleListWithDetail(prev, detail);
           syncArticleToSession(next);
           return next;
         });
@@ -298,6 +302,9 @@ export function ArticleReaderModal({
   const isRatingCoverLayout = isRatingPluginArticle(article, pluginMeta);
 
   const showArticleMedia = useMemo(() => {
+    if (resolveArticleAudioUrl(article) !== null) {
+      return true;
+    }
     if (article.type === "text") {
       return Boolean(article.image?.trim()) && !coverImageFailed;
     }
@@ -408,6 +415,11 @@ export function ArticleReaderModal({
     comicChapterStreamActive,
     pluginMediaType: pluginMeta?.mediaType,
   });
+  const articleTTSEnabled = shouldEnableArticleTTS({
+    isComicReaderContent,
+    comicChapterStreamActive,
+    pluginMediaType: pluginMeta?.mediaType,
+  });
 
   const comicToolbarChapter = comicStream.isActive
     ? (comicStream.visibleChapter ?? chapters.activeChapter ?? article)
@@ -454,14 +466,17 @@ export function ArticleReaderModal({
 
   const displayContent = useMemo(() => {
     if (!baseDisplayContent) return "";
+    let content = baseDisplayContent;
     if (isMangaIntroPage) {
-      return prepareMangaIntroDisplayContent(baseDisplayContent);
+      content = prepareMangaIntroDisplayContent(content);
+    } else if (pluginMeta?.mediaType === "novel") {
+      content = enhanceNovelChapterDisplayContent(content, article.title);
     }
-    if (pluginMeta?.mediaType === "novel") {
-      return enhanceNovelChapterDisplayContent(baseDisplayContent, article.title);
+    if (audioUrl) {
+      content = stripEmbeddedAudioFromContent(content);
     }
-    return baseDisplayContent;
-  }, [baseDisplayContent, isMangaIntroPage, pluginMeta?.mediaType, article.title]);
+    return content;
+  }, [baseDisplayContent, isMangaIntroPage, pluginMeta?.mediaType, article.title, audioUrl]);
 
   const isNovelReading = pluginMeta?.mediaType === "novel";
   const novelReaderStyle = isNovelReading
@@ -540,6 +555,7 @@ export function ArticleReaderModal({
     if (!hasStreamContent && !displayContent) return;
 
     let unbindContentImages = () => {};
+    let unbindTTS = () => {};
 
     if (!isComicReaderContent && !novelChapterStreamActive) {
       highlightArticleCode(contentRoot);
@@ -547,6 +563,7 @@ export function ArticleReaderModal({
         onImagePreview: openImagePreview,
         previewEnabled: articleImagePreviewEnabled,
       });
+      unbindTTS = bindTTS(contentRoot, { enabled: articleTTSEnabled });
       bindArticleContentPlayers(contentRoot, { sessionId, runtimeBase });
     } else if (isComicHtml) {
       unbindContentImages = bindArticleContentImagesWithPreview(contentRoot, runtimeBase, {
@@ -558,6 +575,7 @@ export function ArticleReaderModal({
         onImagePreview: openImagePreview,
         previewEnabled: articleImagePreviewEnabled,
       });
+      unbindTTS = bindTTS(contentRoot, { enabled: articleTTSEnabled });
     }
 
     if (
@@ -581,6 +599,7 @@ export function ArticleReaderModal({
 
     return () => {
       unbindContentImages();
+      unbindTTS();
       if (!isComicReaderContent && !novelChapterStreamActive) {
         destroyArticleContentPlayers(contentRoot);
       }
@@ -610,7 +629,9 @@ export function ArticleReaderModal({
     channelCapabilities,
     onResumeApplied,
     openImagePreview,
+    bindTTS,
     articleImagePreviewEnabled,
+    articleTTSEnabled,
     chapters.activeChapter?.id,
     article.id,
   ]);
@@ -1041,7 +1062,7 @@ export function ArticleReaderModal({
                 </div>
               ) : null}
 
-            {showArticleMedia && !showRatingHero && (article.type === "video" || article.type === "audio") ? (
+            {showArticleMedia && !showRatingHero && (article.type === "video" || audioUrl) ? (
               <div className="w-full rounded-2xl overflow-hidden shadow-md bg-neutral-100 dark:bg-neutral-900">
                 {hasSessionVideoMedia ? (
                   <div
@@ -1055,7 +1076,7 @@ export function ArticleReaderModal({
                   />
                 ) : null}
 
-                {article.type === "audio" && audioUrl ? (
+                {audioUrl ? (
                   <div className="p-4 md:p-6 bg-[var(--orbit-surface)]">
                     <ReaderAudioPlayer
                       sessionId={sessionId}
@@ -1181,6 +1202,7 @@ export function ArticleReaderModal({
     <>
       {createPortal(modal, document.body)}
       {previewLightbox}
+      {ttsOverlays}
     </>
   );
 }

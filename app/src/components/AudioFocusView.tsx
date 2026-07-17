@@ -94,6 +94,7 @@ export function AudioFocusView({
       <ChannelAudioPlaylist
         sessionId={sessionId}
         tracks={tracks}
+        runtimeBase={runtimeBase}
         trackCountLabel={`共 ${tracks.length} 首`}
         hasMore={hasMore}
         loadingMore={loadingMore}

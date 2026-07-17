@@ -3,6 +3,13 @@ import APlayer from "aplayer";
 import Hls from "hls.js";
 import { isHlsAudioUrl } from "@/lib/articleAudioUrl";
 import {
+  persistAudioVolume,
+  persistPlaybackRate,
+  readStoredAudioVolume,
+  readStoredPlaybackRate,
+  stepPlaybackRate,
+} from "@/lib/audioPlaybackPrefs";
+import {
   applyChannelPlaybackMode,
   persistChannelPlaybackMode,
   readStoredChannelPlaybackMode,
@@ -41,6 +48,10 @@ export interface UseOrbitAudioPlayerResult {
   handleNext: () => void;
   handleProgressClick: (event: MouseEvent<HTMLDivElement>) => void;
   switchToIndex: (index: number) => void;
+  volume: number;
+  playbackRate: number;
+  handleVolumeChange: (volume: number) => void;
+  handlePlaybackRateStep: (direction: -1 | 1) => void;
 }
 
 function readOrbitAccentColor(): string {
@@ -94,6 +105,8 @@ export function useOrbitAudioPlayer({
   const [playbackMode, setPlaybackMode] = useState<ChannelPlaybackMode>(
     () => readStoredChannelPlaybackMode(storageName),
   );
+  const [volume, setVolume] = useState(() => readStoredAudioVolume());
+  const [playbackRate, setPlaybackRate] = useState(() => readStoredPlaybackRate());
 
   const hasMultipleTracks = tracks.length > 1;
   const currentTrack = tracks[currentIndex] ?? tracks[0];
@@ -154,6 +167,28 @@ export function useOrbitAudioPlayer({
     applyChannelPlaybackMode(player, mode);
   }, [storageName]);
 
+  const handleVolumeChange = useCallback((nextVolume: number) => {
+    const clamped = Math.max(0, Math.min(1, nextVolume));
+    setVolume(clamped);
+    persistAudioVolume(clamped);
+    const player = playerRef.current;
+    if (player) {
+      player.audio.volume = clamped;
+    }
+  }, []);
+
+  const handlePlaybackRateStep = useCallback((direction: -1 | 1) => {
+    setPlaybackRate(prev => {
+      const next = stepPlaybackRate(prev, direction);
+      persistPlaybackRate(next);
+      const player = playerRef.current;
+      if (player) {
+        player.audio.playbackRate = next;
+      }
+      return next;
+    });
+  }, []);
+
   useEffect(() => {
     const container = engineRef.current;
     if (!container || tracks.length === 0) return;
@@ -181,6 +216,8 @@ export function useOrbitAudioPlayer({
     }
 
     player.audio.dataset.orbitReaderAudio = "true";
+    player.audio.volume = readStoredAudioVolume();
+    player.audio.playbackRate = readStoredPlaybackRate();
     const originalSkipForward = player.skipForward.bind(player);
     player.skipForward = () => {
       if (player.audio.paused && !userNavigatingRef.current && !player.audio.ended) return;
@@ -262,6 +299,18 @@ export function useOrbitAudioPlayer({
   }, [tracks]);
 
   useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    player.audio.volume = volume;
+  }, [volume]);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+    player.audio.playbackRate = playbackRate;
+  }, [playbackRate]);
+
+  useEffect(() => {
     if (currentIndex >= tracks.length && tracks.length > 0) {
       setCurrentIndex(0);
     }
@@ -319,5 +368,9 @@ export function useOrbitAudioPlayer({
     handleNext,
     handleProgressClick,
     switchToIndex,
+    volume,
+    playbackRate,
+    handleVolumeChange,
+    handlePlaybackRateStep,
   };
 }

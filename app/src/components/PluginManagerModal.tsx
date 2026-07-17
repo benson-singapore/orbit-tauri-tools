@@ -4,6 +4,7 @@ import { Icon } from "@/components/Icon";
 import { LLMSettingsPanel } from "@/components/LLMSettingsPanel";
 import { PluginAvatar } from "@/components/PluginAvatar";
 import { PluginReadmeModal } from "@/components/PluginReadmeModal";
+import { TTSSettingsPanel } from "@/components/TTSSettingsPanel";
 import {
   WasmChannelEditorModal,
   createWasmChannelRow,
@@ -2941,7 +2942,7 @@ function ImportPluginModal({
                   </div>
                   <h4 className="text-sm font-bold mb-2">上传 WASM 官方插件包</h4>
                   <p className={`text-[11px] leading-relaxed max-w-md mb-6 ${isDark ? "text-neutral-400" : "text-neutral-500"}`}>
-                    支持 `.orbit` 格式（ZIP 压缩包），可本地上传或 URL 导入，需包含 `manifest.json`、`.wasm.br` 主文件及校验信息。
+                    支持 `.orbit` 格式（ZIP 压缩包），可本地上传或 URL 导入，需包含 `manifest.json`、`.wasm.br` 主文件及校验信息。若插件 ID 已存在，将自动替换为新版（等同更新）。
                   </p>
 
                   <input
@@ -4399,19 +4400,7 @@ export function PluginManagerModal({
 
           {activeTab === "tts" && (
             <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-              <div className={`shrink-0 flex items-start justify-between gap-4 px-8 py-5 border-b ${subtleBorder}`}>
-                <div>
-                  <h3 className="text-base font-bold">TTS设置</h3>
-                  <p className="text-sm text-neutral-500 mt-1">根据系统字典开关动态显示的配置页</p>
-                </div>
-              </div>
-              <div className={`flex-1 min-h-0 overflow-y-auto px-8 py-6 ${isDark ? "bg-neutral-950/30" : "bg-neutral-100/80"}`}>
-                <div className={`rounded-2xl border p-5 ${subtleBorder} ${isDark ? "bg-neutral-900/40" : "bg-white"}`}>
-                  <p className="text-sm text-neutral-600 dark:text-neutral-300">
-                    这里将放置 TTS 相关设置项（tts_mode）。
-                  </p>
-                </div>
-              </div>
+              <TTSSettingsPanel theme={theme} />
             </div>
           )}
         </div>

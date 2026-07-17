@@ -348,6 +348,7 @@ export function mergeArticleListWithDetail(
 ): Article {
   return {
     ...listItem,
+    image: listItem.image?.trim() || detail.image?.trim() || listItem.image,
     content: detail.content,
     galleryImages: detail.galleryImages,
     videoUrl: detail.videoUrl,

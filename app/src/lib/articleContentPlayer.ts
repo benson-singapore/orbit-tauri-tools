@@ -1,4 +1,8 @@
 import Hls from "hls.js";
+import {
+  isHlsAudioUrl,
+  resolveAudioElementSourceUrl,
+} from "@/lib/articleAudioUrl";
 import { isHlsVideoUrl, resolveVideoElementSourceUrl } from "@/lib/articleVideoUrl";
 import {
   applyYouTubeIframeAttributes,
@@ -22,7 +26,9 @@ import {
 import type { Article } from "@/types";
 
 const hlsByVideo = new WeakMap<HTMLVideoElement, Hls>();
+const hlsByAudio = new WeakMap<HTMLAudioElement, Hls>();
 const resumeCleanupByVideo = new WeakMap<HTMLVideoElement, () => void>();
+const resumeCleanupByAudio = new WeakMap<HTMLAudioElement, () => void>();
 const SOURCE_SWITCH_RE = /rycjSwitchSource\s*\(\s*(\d+)\s*\)/i;
 const RYCJ_SOURCES_RE = /rycjSources\s*=\s*(\[[\s\S]*?\])/;
 
@@ -212,6 +218,13 @@ export function destroyEmbeddedVideoHls(video: HTMLVideoElement): void {
   hlsByVideo.delete(video);
 }
 
+export function destroyEmbeddedAudioHls(audio: HTMLAudioElement): void {
+  const hls = hlsByAudio.get(audio);
+  if (!hls) return;
+  hls.destroy();
+  hlsByAudio.delete(audio);
+}
+
 export interface BindArticleContentPlayersOptions {
   sessionId?: string;
   runtimeBase?: string | null;
@@ -285,6 +298,112 @@ function bindEmbeddedResumeListener(video: HTMLVideoElement, sessionId?: string)
   });
 }
 
+function seekEmbeddedAudioToPosition(audio: HTMLAudioElement, position: number): void {
+  if (position <= 0.5) return;
+
+  const seek = () => {
+    try {
+      if (Math.abs(audio.currentTime - position) > 0.75) {
+        audio.currentTime = position;
+      }
+    } catch {
+      // Ignore seek failures before the media is ready.
+    }
+  };
+
+  if (audio.readyState >= 1) {
+    seek();
+  }
+  audio.addEventListener("loadedmetadata", seek, { once: true });
+  audio.addEventListener("canplay", seek, { once: true });
+}
+
+function bindInlineAudioTracking(audio: HTMLAudioElement, sessionId?: string): void {
+  if (!sessionId || audio.dataset.orbitPlaybackTracked === "1") return;
+  audio.dataset.orbitPlaybackTracked = "1";
+
+  audio.addEventListener("timeupdate", () => {
+    updateSessionPlaybackSnapshot(sessionId, {
+      currentTime: audio.currentTime,
+      playing: !audio.paused,
+    });
+  });
+  audio.addEventListener("play", () => {
+    updateSessionPlaybackSnapshot(sessionId, { playing: true });
+  });
+  audio.addEventListener("pause", () => {
+    updateSessionPlaybackSnapshot(sessionId, { playing: false });
+  });
+}
+
+function bindEmbeddedAudioResumeListener(audio: HTMLAudioElement, sessionId?: string): void {
+  if (!sessionId || audio.dataset.orbitResumeBound === "1") return;
+  audio.dataset.orbitResumeBound = "1";
+
+  const onResume = (event: Event) => {
+    const detail = (event as CustomEvent<PlaybackResumeEventDetail>).detail;
+    if (detail.sessionId !== sessionId) return;
+    audio.dataset.orbitResumeTime = String(detail.position);
+    seekEmbeddedAudioToPosition(audio, detail.position);
+  };
+
+  window.addEventListener(PLAYBACK_RESUME_EVENT, onResume);
+  resumeCleanupByAudio.set(audio, () => {
+    window.removeEventListener(PLAYBACK_RESUME_EVENT, onResume);
+  });
+}
+
+export function setEmbeddedAudioSource(
+  audio: HTMLAudioElement,
+  url: string,
+  sessionId?: string,
+): void {
+  const trimmed = url.trim();
+  if (!trimmed) return;
+
+  const wasPlaying = !audio.paused;
+  const dataTime = Number.parseFloat(audio.dataset.orbitResumeTime ?? "");
+  const snapshotTime = sessionId
+    ? getSessionPlaybackSnapshot(sessionId)?.currentTime ?? 0
+    : 0;
+  const resumeTime = Number.isFinite(dataTime) && dataTime > 0
+    ? dataTime
+    : Math.max(audio.currentTime, snapshotTime);
+
+  destroyEmbeddedAudioHls(audio);
+  audio.removeAttribute("src");
+  for (const source of Array.from(audio.querySelectorAll("source"))) {
+    source.remove();
+  }
+
+  const resumePlayback = () => {
+    const target = Number.parseFloat(audio.dataset.orbitResumeTime ?? "");
+    const position = Number.isFinite(target) && target > 0 ? target : resumeTime;
+    if (position > 0.5) {
+      seekEmbeddedAudioToPosition(audio, position);
+    }
+    if (wasPlaying) {
+      void audio.play().catch(() => {});
+    }
+  };
+
+  if (isHlsAudioUrl(trimmed) && Hls.isSupported()) {
+    const hls = new Hls();
+    hlsByAudio.set(audio, hls);
+    hls.loadSource(trimmed);
+    hls.attachMedia(audio);
+    hls.on(Hls.Events.MANIFEST_PARSED, resumePlayback, { once: true });
+    return;
+  }
+
+  audio.src = trimmed;
+  if (audio.readyState >= 1) {
+    resumePlayback();
+    return;
+  }
+  audio.addEventListener("loadedmetadata", resumePlayback, { once: true });
+}
+
 export function setEmbeddedVideoSource(
   video: HTMLVideoElement,
   url: string,
@@ -352,6 +471,20 @@ function bindPlainContentVideo(video: HTMLVideoElement, sessionId?: string): voi
   bindInlineVideoTracking(video, sessionId);
   bindEmbeddedResumeListener(video, sessionId);
   bindEmbeddedVideoTheater(video);
+}
+
+function bindPlainContentAudio(audio: HTMLAudioElement, sessionId?: string): void {
+  if (audio.dataset.orbitInlineAudioBound === "1") return;
+  if (audio.dataset.orbitReaderAudio === "true") return;
+
+  const url = resolveAudioElementSourceUrl(audio);
+  if (!url) return;
+
+  audio.dataset.orbitInlineAudioBound = "1";
+  audio.controls = true;
+  setEmbeddedAudioSource(audio, url, sessionId);
+  bindInlineAudioTracking(audio, sessionId);
+  bindEmbeddedAudioResumeListener(audio, sessionId);
 }
 
 function bindRycjPlayer(article: HTMLElement, sessionId?: string): void {
@@ -451,6 +584,10 @@ export function bindArticleContentPlayers(
   for (const video of root.querySelectorAll<HTMLVideoElement>("video")) {
     bindPlainContentVideo(video, sessionId);
   }
+
+  for (const audio of root.querySelectorAll<HTMLAudioElement>("audio")) {
+    bindPlainContentAudio(audio, sessionId);
+  }
 }
 
 export function destroyArticleContentPlayers(root: HTMLElement | null): void {
@@ -462,5 +599,11 @@ export function destroyArticleContentPlayers(root: HTMLElement | null): void {
     exitEmbeddedVideoTheater(video);
     destroyEmbeddedVideoTheater(video);
     destroyEmbeddedVideoHls(video);
+  }
+
+  for (const audio of root.querySelectorAll("audio")) {
+    resumeCleanupByAudio.get(audio)?.();
+    resumeCleanupByAudio.delete(audio);
+    destroyEmbeddedAudioHls(audio);
   }
 }
