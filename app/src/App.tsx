@@ -70,7 +70,7 @@ import { SocialFeedCard } from "@/components/SocialFeedCard";
 import { SocialFeedFocusView } from "@/components/SocialFeedFocusView";
 import { AudioFocusView } from "@/components/AudioFocusView";
 import { ReaderAudioPlayer } from "@/components/ReaderAudioPlayer";
-import { buildArticleAudioPlaylist } from "@/lib/articleAudioPlaylist";
+import { buildArticleAudioPlaylist, resolveArticleCoverImage } from "@/lib/articleAudioPlaylist";
 import { resolveArticleAudioUrl, stripEmbeddedAudioFromContent } from "@/lib/articleAudioUrl";
 import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
@@ -126,6 +126,10 @@ import {
   getStoredPluginChannel,
   persistPluginChannel,
 } from "@/lib/pluginChannelMemory";
+import {
+  getPluginBrowseSession,
+  savePluginBrowseSession,
+} from "@/lib/pluginBrowseSession";
 import { pluginNeedsVariablesConfiguration } from "@/lib/pluginVariablesReady";
 import {
   getStoredPluginPreviewMode,
@@ -135,11 +139,6 @@ import {
 } from "@/lib/pluginPreviewMode";
 import {
   READER_FONT_SCALE_DEFAULT,
-  READER_FONT_SCALE_MAX,
-  READER_FONT_SCALE_MIN,
-  READER_FONT_SCALE_STEP,
-  clampReaderFontScale,
-  persistReaderFontScale,
   readStoredReaderFontScale,
 } from "@/lib/readerFontScale";
 import {
@@ -453,10 +452,15 @@ export default function App() {
   splitDetailArticleRef.current = splitDetailArticle;
   const [contentLoading, setContentLoading] = useState(false);
   const [novelPlaybackChapter, setNovelPlaybackChapter] = useState<Article | null>(null);
+  const novelPlaybackChapterRef = useRef<Article | null>(null);
+  const pendingPluginRestoreRef = useRef<string | null>(null);
+  const restoringBrowseSessionRef = useRef(false);
   const articleContentRef = useRef<HTMLDivElement>(null);
   const [runtimeBase, setRuntimeBase] = useState<string | null>(null);
   const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
-  const { bindTTS, ttsOverlays } = useArticleContentTTS(theme);
+  const { bindTTS, ttsOverlays } = useArticleContentTTS(theme, {
+    experienceUnlocked: experienceMode === "full",
+  });
 
   useEffect(() => {
     void waitForRuntimeReady().then((url: string) => {
@@ -471,6 +475,7 @@ export default function App() {
   const [isSidebarRefreshing, setIsSidebarRefreshing] = useState(false);
 
   useEffect(() => {
+    if (pendingPluginRestoreRef.current === activePlugin) return;
     setChaptersParent(null);
     setDetailResumeIntent(undefined);
   }, [activePlugin, activeChannel]);
@@ -522,14 +527,6 @@ export default function App() {
       persistSocialFeedWidth(activePlugin, width);
     }
   }, [activePlugin]);
-
-  const bumpReaderFontScale = useCallback((direction: -1 | 1) => {
-    setReaderFontScale((prev) => {
-      const next = clampReaderFontScale(prev + direction * READER_FONT_SCALE_STEP);
-      persistReaderFontScale(next);
-      return next;
-    });
-  }, []);
   const [aiSummary, setAiSummary] = useState<string | null>(null);
 
   // Image Slider Index
@@ -609,9 +606,26 @@ export default function App() {
     const samePluginArticles = filteredArticles.filter(
       item => item.pluginId === selectedItem.pluginId,
     );
-    const playlist = buildArticleAudioPlaylist(samePluginArticles, selectedItem, runtimeBase);
+    const coverContext = {
+      listArticles: filteredArticles,
+      parentArticle: chaptersParent,
+    };
+    const playlist = buildArticleAudioPlaylist(
+      samePluginArticles,
+      selectedItem,
+      runtimeBase,
+      coverContext,
+    );
     return playlist.length > 1 ? playlist : undefined;
-  }, [selectedItem, selectedAudioUrl, filteredArticles, runtimeBase]);
+  }, [selectedItem, selectedAudioUrl, filteredArticles, runtimeBase, chaptersParent]);
+
+  const selectedAudioCoverImage = useMemo(() => {
+    if (!selectedItem) return undefined;
+    return resolveArticleCoverImage(selectedItem, {
+      listArticles: filteredArticles,
+      parentArticle: chaptersParent,
+    });
+  }, [selectedItem, filteredArticles, chaptersParent]);
 
   const selectedPluginMeta = selectedItem ? pluginById.get(selectedItem.pluginId) : undefined;
   const isRatingCoverLayout = Boolean(
@@ -709,6 +723,13 @@ export default function App() {
     const prev = splitDetailArticleRef.current;
     if (prev?.pluginId === activePlugin) return;
 
+    const session = getPluginBrowseSession(activePlugin);
+    if (session?.splitDetailArticle?.pluginId === activePlugin) {
+      setSplitDetailArticle(session.splitDetailArticle);
+      setSplitDetailFeedChannel(session.splitDetailFeedChannel);
+      return;
+    }
+
     const pluginArticles = filteredArticles.filter(item => item.pluginId === activePlugin);
     const first = pluginArticles[0] ?? null;
     setSplitDetailArticle(first);
@@ -774,6 +795,7 @@ export default function App() {
     : undefined;
 
   chaptersParentRef.current = chaptersParent;
+  novelPlaybackChapterRef.current = novelPlaybackChapter;
 
   const chaptersDetailChannelId = useMemo(() => {
     if (!chaptersParent) return activeChannel;
@@ -1460,9 +1482,11 @@ export default function App() {
   ]);
 
   useEffect(() => {
+    if (pendingPluginRestoreRef.current === activePlugin) return;
     if (isGridPageMode && !gridPageDetailOpen) return;
     if (chaptersParent) return;
     if (visibleArticles.length === 0) {
+      if (selectedItemRef.current?.pluginId === activePlugin) return;
       setSelectedItem(null);
       return;
     }
@@ -1504,7 +1528,7 @@ export default function App() {
 
   useEffect(() => {
     // Chapter switches manage their own scroll (goToChapter + novel/comic stream).
-    if (chapters.isActive) return;
+    if (chapters.isActive || restoringBrowseSessionRef.current) return;
     if (readerPanelRef.current) {
       readerPanelRef.current.scrollTop = 0;
     }
@@ -1764,6 +1788,20 @@ export default function App() {
     selectChannel,
   ]);
 
+  const captureCurrentPluginBrowseSession = (pluginId: string) => {
+    if (pluginId === "all") return;
+    savePluginBrowseSession(pluginId, {
+      selectedItem: selectedItemRef.current,
+      gridPageDetailOpen,
+      chaptersParent: chaptersParentRef.current,
+      splitDetailArticle: splitDetailArticleRef.current,
+      splitDetailFeedChannel,
+      novelPlaybackChapter: novelPlaybackChapterRef.current,
+      detailResumeIntent,
+      scrollTop: readerPanelRef.current?.scrollTop ?? 0,
+    });
+  };
+
   const selectPlugin = (pluginId: string, groupId?: string) => {
     if (pluginId !== activePlugin) {
       clearSearch();
@@ -1785,6 +1823,9 @@ export default function App() {
       }
     }
     const isSwitchingPlugin = pluginId !== activePlugin;
+    if (isSwitchingPlugin && activePlugin !== "all") {
+      captureCurrentPluginBrowseSession(activePlugin);
+    }
     setActivePlugin(pluginId);
     if (pluginId === "all") {
       setActiveChannel("all");
@@ -1792,7 +1833,14 @@ export default function App() {
         setActivePluginGroupId(groupId);
       }
       if (isSwitchingPlugin) {
+        pendingPluginRestoreRef.current = null;
         setPluginPreviewMode("reader");
+        setSelectedItem(null);
+        setGridPageDetailOpen(false);
+        setChaptersParent(null);
+        setSplitDetailArticle(null);
+        setSplitDetailFeedChannel(null);
+        setNovelPlaybackChapter(null);
       }
       return;
     }
@@ -1800,6 +1848,7 @@ export default function App() {
     setActivePluginGroupId(groupId ?? getPluginGroupId(pluginId));
     setShowPluginStore(false);
     if (isSwitchingPlugin) {
+      pendingPluginRestoreRef.current = pluginId;
       const saved = getStoredPluginPreviewMode(pluginId);
       setPluginPreviewMode(resolvePluginPreviewMode(pluginById.get(pluginId), saved));
     }
@@ -1824,8 +1873,8 @@ export default function App() {
   }, [activePlugin, activePluginMeta]);
 
   useEffect(() => {
+    if (pendingPluginRestoreRef.current) return;
     itemSelectRequestRef.current += 1;
-    setGridPageDetailOpen(false);
     if (activePlugin !== "all") {
       setSelectedItem(prev => (prev && prev.pluginId !== activePlugin ? null : prev));
       setContentLoading(false);
@@ -1833,8 +1882,40 @@ export default function App() {
   }, [activePlugin]);
 
   useEffect(() => {
-    setGridPageDetailOpen(false);
-  }, [activeChannel]);
+    const pluginId = pendingPluginRestoreRef.current;
+    if (!pluginId || pluginId !== activePlugin) return;
+    pendingPluginRestoreRef.current = null;
+
+    const session = getPluginBrowseSession(pluginId);
+    if (!session) return;
+
+    restoringBrowseSessionRef.current = true;
+    setSelectedItem(session.selectedItem);
+    setGridPageDetailOpen(session.gridPageDetailOpen);
+    setChaptersParent(session.chaptersParent);
+    setSplitDetailArticle(session.splitDetailArticle);
+    setSplitDetailFeedChannel(session.splitDetailFeedChannel);
+    setNovelPlaybackChapter(session.novelPlaybackChapter);
+    if (session.detailResumeIntent !== undefined) {
+      setDetailResumeIntent(session.detailResumeIntent);
+    }
+
+    const scrollTop = session.scrollTop;
+    requestAnimationFrame(() => {
+      restoringBrowseSessionRef.current = false;
+      if (scrollTop > 0 && readerPanelRef.current) {
+        readerPanelRef.current.scrollTop = scrollTop;
+      }
+    });
+  }, [activePlugin]);
+
+  const prevActivePluginForChannelRef = useRef(activePlugin);
+  useEffect(() => {
+    if (prevActivePluginForChannelRef.current === activePlugin) {
+      setGridPageDetailOpen(false);
+    }
+    prevActivePluginForChannelRef.current = activePlugin;
+  }, [activeChannel, activePlugin]);
 
   useEffect(() => {
     if (gridDetailViewMode === "modal") {
@@ -3126,30 +3207,6 @@ export default function App() {
                           </>
                         ) : (
                           <>
-                        {!isPluginFocusMode ? (
-                          <div className="flex items-center gap-0.5 mr-0.5">
-                            <button
-                              type="button"
-                              onClick={() => bumpReaderFontScale(-1)}
-                              disabled={readerFontScale <= READER_FONT_SCALE_MIN}
-                              className="w-7 h-7 rounded-lg text-sm font-medium flex items-center justify-center transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 disabled:opacity-30 disabled:pointer-events-none"
-                              title="减小字号"
-                              aria-label="减小字号"
-                            >
-                              −
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => bumpReaderFontScale(1)}
-                              disabled={readerFontScale >= READER_FONT_SCALE_MAX}
-                              className="w-7 h-7 rounded-lg text-sm font-medium flex items-center justify-center transition-all hover:bg-neutral-100 dark:hover:bg-neutral-800 text-neutral-500 disabled:opacity-30 disabled:pointer-events-none"
-                              title="增大字号"
-                              aria-label="增大字号"
-                            >
-                              +
-                            </button>
-                          </div>
-                        ) : null}
 
                         {chapters.isActive && isNovelReading ? (
                           <NovelReaderSettingsButton
@@ -3509,6 +3566,7 @@ export default function App() {
                       pluginMeta={activePluginMeta}
                       channelCapabilities={channelCapabilities}
                       storedChannel={getStoredPluginChannel(activePlugin)}
+                      experienceMode={experienceMode}
                       loading={feedLoading}
                       loadingMore={feedLoadingMore}
                       searching={feedSearching}
@@ -3703,6 +3761,7 @@ export default function App() {
                           audioUrl={selectedAudioUrl}
                           runtimeBase={runtimeBase}
                           playlist={selectedAudioPlaylist}
+                          coverImage={selectedAudioCoverImage}
                         />
                       </div>
                     ) : null}
@@ -3953,6 +4012,7 @@ export default function App() {
             && session.article.pluginId === activePlugin
           }
           onSwitchToPageDetail={payload => switchReaderToPageDetail(session.id, payload)}
+          experienceMode={experienceMode}
         />
       ))}
 

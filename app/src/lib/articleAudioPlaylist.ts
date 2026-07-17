@@ -2,6 +2,29 @@ import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
 import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
 import type { Article } from "@/types";
 
+export interface ArticleCoverImageContext {
+  listArticles?: Array<Pick<Article, "id" | "image">>;
+  parentArticle?: Pick<Article, "image"> | null;
+}
+
+export function resolveArticleCoverImage(
+  article: Pick<Article, "id" | "image">,
+  context?: ArticleCoverImageContext,
+): string | undefined {
+  const direct = article.image?.trim();
+  if (direct) return direct;
+
+  const fromList = context?.listArticles
+    ?.find(item => item.id === article.id)
+    ?.image?.trim();
+  if (fromList) return fromList;
+
+  const fromParent = context?.parentArticle?.image?.trim();
+  if (fromParent) return fromParent;
+
+  return undefined;
+}
+
 export function filterArticlesWithAudio(articles: Article[]): Article[] {
   return articles.filter(article => resolveArticleAudioUrl(article) !== null);
 }
@@ -9,6 +32,7 @@ export function filterArticlesWithAudio(articles: Article[]): Article[] {
 export function articleToAudioTrack(
   article: Article,
   _runtimeBase: string | null,
+  context?: ArticleCoverImageContext,
 ): ReaderAudioTrack | null {
   const url = resolveArticleAudioUrl(article);
   if (!url) return null;
@@ -17,17 +41,18 @@ export function articleToAudioTrack(
     name: article.title,
     artist: article.author?.trim() || undefined,
     url,
-    cover: article.image?.trim() || undefined,
+    cover: resolveArticleCoverImage(article, context),
   };
 }
 
 export function articlesToAudioTracks(
   articles: Article[],
   runtimeBase: string | null,
+  context?: ArticleCoverImageContext,
 ): ReaderAudioTrack[] {
   const tracks: ReaderAudioTrack[] = [];
   for (const article of articles) {
-    const track = articleToAudioTrack(article, runtimeBase);
+    const track = articleToAudioTrack(article, runtimeBase, context);
     if (track) tracks.push(track);
   }
   return tracks;
@@ -38,10 +63,15 @@ export function buildArticleAudioPlaylist(
   articles: Article[],
   selectedArticle: Article,
   runtimeBase: string | null,
+  context?: ArticleCoverImageContext,
 ): ReaderAudioTrack[] {
+  const coverContext: ArticleCoverImageContext = {
+    listArticles: context?.listArticles ?? articles,
+    parentArticle: context?.parentArticle,
+  };
   const playable = filterArticlesWithAudio(articles);
   if (playable.length <= 1) {
-    const single = articleToAudioTrack(selectedArticle, runtimeBase);
+    const single = articleToAudioTrack(selectedArticle, runtimeBase, coverContext);
     return single ? [single] : [];
   }
 
@@ -50,5 +80,5 @@ export function buildArticleAudioPlaylist(
     ? [playable[selectedIndex], ...playable.slice(0, selectedIndex), ...playable.slice(selectedIndex + 1)]
     : playable;
 
-  return articlesToAudioTracks(ordered, runtimeBase);
+  return articlesToAudioTracks(ordered, runtimeBase, coverContext);
 }

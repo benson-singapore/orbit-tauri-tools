@@ -11,6 +11,7 @@ export function shouldEnableArticleTTS(options: {
 }
 
 export const TTS_PENDING_MARK_CLASS = "orbit-tts-pending-mark";
+export const TTS_ACTIVE_MARK_CLASS = "orbit-tts-active-mark";
 export const TTS_READ_MARK_CLASS = "orbit-tts-read-mark";
 
 function isNodeInsideRoot(node: Node, root: HTMLElement): boolean {
@@ -72,6 +73,24 @@ function collectTextNodesInRange(range: Range): Text[] {
 }
 
 export function applyMarkToRange(range: Range, className: string): HTMLElement[] {
+  if (range.collapsed) return [];
+
+  const workingRange = range.cloneRange();
+  const mark = document.createElement("mark");
+  mark.className = className;
+
+  try {
+    const fragment = workingRange.extractContents();
+    if (!fragment.textContent?.replace(/\s+/g, "").trim()) {
+      return [];
+    }
+    mark.appendChild(fragment);
+    workingRange.insertNode(mark);
+    return [mark];
+  } catch {
+    // Fall through to per-text-node wrapping.
+  }
+
   const marks: HTMLElement[] = [];
   const textNodes = collectTextNodesInRange(range);
 
@@ -86,17 +105,22 @@ export function applyMarkToRange(range: Range, className: string): HTMLElement[]
     nodeRange.setStart(textNode, start);
     nodeRange.setEnd(textNode, end);
 
-    const mark = document.createElement("mark");
-    mark.className = className;
+    const nodeMark = document.createElement("mark");
+    nodeMark.className = className;
     try {
-      nodeRange.surroundContents(mark);
-      marks.push(mark);
+      nodeRange.surroundContents(nodeMark);
+      marks.push(nodeMark);
     } catch {
       // Skip nodes that cannot be wrapped safely.
     }
   }
 
   return marks;
+}
+
+export function scrollMarksIntoView(marks: HTMLElement[]) {
+  const first = marks.find(mark => mark.isConnected);
+  first?.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 export function promoteMarksClass(marks: HTMLElement[], fromClass: string, toClass: string) {
@@ -115,7 +139,7 @@ export function bindArticleContentTTSSelection(
   root: HTMLElement,
   options: {
     enabled?: boolean;
-    onSelection: (payload: ArticleTTSSelectionPayload | null) => void;
+    onSelection: (payload: ArticleTTSSelectionPayload) => void;
   },
 ): () => void {
   if (options.enabled === false) return () => {};
@@ -123,15 +147,13 @@ export function bindArticleContentTTSSelection(
   const controller = new AbortController();
   const { signal } = controller;
   let rafId = 0;
+  let pointerSelecting = false;
 
-  const emitSelection = () => {
+  const finalizeSelection = () => {
     cancelAnimationFrame(rafId);
     rafId = requestAnimationFrame(() => {
       const range = getArticleContentSelectionRange(root);
-      if (!range) {
-        options.onSelection(null);
-        return;
-      }
+      if (!range) return;
       options.onSelection({
         text: getRangeText(range),
         range,
@@ -139,8 +161,32 @@ export function bindArticleContentTTSSelection(
     });
   };
 
-  root.addEventListener("mouseup", emitSelection, { signal });
-  document.addEventListener("selectionchange", emitSelection, { signal });
+  const handlePointerDown = (event: PointerEvent) => {
+    if (!(event.target instanceof Node) || !root.contains(event.target)) return;
+    pointerSelecting = true;
+  };
+
+  const handlePointerUp = () => {
+    if (!pointerSelecting) return;
+    pointerSelecting = false;
+    finalizeSelection();
+  };
+
+  const handleKeyUp = (event: KeyboardEvent) => {
+    if (
+      event.key === "Shift"
+      || event.key === "ArrowLeft"
+      || event.key === "ArrowRight"
+      || event.key === "ArrowUp"
+      || event.key === "ArrowDown"
+    ) {
+      finalizeSelection();
+    }
+  };
+
+  root.addEventListener("pointerdown", handlePointerDown, { signal });
+  document.addEventListener("pointerup", handlePointerUp, { signal });
+  document.addEventListener("keyup", handleKeyUp, { signal });
 
   return () => {
     cancelAnimationFrame(rafId);

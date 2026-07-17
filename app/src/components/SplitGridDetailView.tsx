@@ -8,6 +8,7 @@ import {
 import type { GridColumnCount } from "@/lib/gridColumnCount";
 import type { GridCoverAspectRatio } from "@/lib/gridCoverAspectRatio";
 import type { NovelReaderSettings } from "@/lib/novelReaderSettings";
+import type { ExperienceMode } from "@/lib/experienceMode";
 import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
 
 interface SplitGridDetailViewProps {
@@ -28,6 +29,7 @@ interface SplitGridDetailViewProps {
   pluginMeta?: Plugin;
   channelCapabilities: ChannelCapabilities;
   storedChannel?: string | null;
+  experienceMode?: ExperienceMode;
   loading: boolean;
   loadingMore: boolean;
   searching?: boolean;
@@ -58,6 +60,7 @@ export function SplitGridDetailView({
   pluginMeta,
   channelCapabilities,
   storedChannel,
+  experienceMode = "safe",
   loading,
   loadingMore,
   searching = false,
@@ -151,6 +154,7 @@ export function SplitGridDetailView({
             pluginMeta={pluginMeta}
             channelCapabilities={channelCapabilities}
             storedChannel={storedChannel}
+            experienceMode={experienceMode}
           />
         ) : (
           <div className="flex h-full items-center justify-center px-6 text-center">

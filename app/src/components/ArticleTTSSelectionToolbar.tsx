@@ -71,7 +71,7 @@ export function ArticleTTSSelectionToolbar({
             <div className="min-w-0">
               <p className="text-sm font-semibold">朗读助手</p>
               <p className={`text-[11px] mt-0.5 ${subtleText}`}>
-                {hasReadMark ? "紫色为已朗读段落" : "选中文字后可朗读"}
+                {hasReadMark ? "紫色为已朗读，闪烁为正在朗读" : "选中文字后可朗读"}
               </p>
             </div>
         <button

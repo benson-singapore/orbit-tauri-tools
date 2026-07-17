@@ -79,6 +79,31 @@ function buildFeedKey(
   return `${pluginId}|${channelId}|${contentType ?? ""}|${search}|${pluginGroupScopeId ?? ""}`;
 }
 
+type FeedCacheEntry = {
+  articles: Article[];
+  hasMore: boolean;
+  feedTotal: number;
+  feedNextParams: Record<string, string> | null;
+};
+
+const feedCache = new Map<string, FeedCacheEntry>();
+
+function snapshotCurrentFeed(
+  feedKey: string,
+  articles: Article[],
+  hasMore: boolean,
+  feedTotal: number,
+  feedNextParams: Record<string, string> | null,
+): void {
+  if (articles.length === 0) return;
+  feedCache.set(feedKey, {
+    articles,
+    hasMore,
+    feedTotal,
+    feedNextParams,
+  });
+}
+
 function mergeArticlesPreservingReadState(prev: Article[], items: Article[]): Article[] {
   if (prev.length === 0) {
     return items;
@@ -259,6 +284,8 @@ export function useOrbitData(
   const getPluginGroupIdRef = useRef(getPluginGroupId);
   const pluginsRef = useRef(plugins);
   const articlesRef = useRef(articles);
+  const hasMoreRef = useRef(hasMore);
+  const feedTotalRef = useRef(feedTotal);
   pluginFilterRef.current = pluginFilter;
   channelFilterRef.current = channelFilter;
   contentTypeFilterRef.current = contentTypeFilter;
@@ -267,6 +294,8 @@ export function useOrbitData(
   getPluginGroupIdRef.current = getPluginGroupId;
   pluginsRef.current = plugins;
   articlesRef.current = articles;
+  hasMoreRef.current = hasMore;
+  feedTotalRef.current = feedTotal;
   channelCapabilitiesRef.current = channelCapabilities;
 
   const commitFeedSettled = useCallback(() => {
@@ -658,15 +687,32 @@ export function useOrbitData(
     const isSearchReload = options?.searching === true;
     cancelBackgroundFeedPolling();
     feedRequestId.current += 1;
-    feedNextParamsRef.current = null;
     feedPaginationExhaustedRef.current = false;
     loadMoreBlockedRef.current = false;
-    setArticles([]);
-    setHasMore(false);
-    if (isSearchReload) {
-      setSearching(true);
+    const feedKey = buildFeedKey(
+      pluginFilterRef.current,
+      channelFilterRef.current,
+      contentTypeFilterRef.current,
+      searchFilterRef.current,
+      pluginGroupScopeIdRef.current,
+    );
+    const cached = !isSearchReload ? feedCache.get(feedKey) : undefined;
+    if (cached) {
+      setArticles(cached.articles);
+      setHasMore(cached.hasMore);
+      setFeedTotal(cached.feedTotal);
+      feedNextParamsRef.current = cached.feedNextParams;
+      setLoading(false);
+      setSearching(false);
     } else {
-      setLoading(true);
+      feedNextParamsRef.current = null;
+      setArticles([]);
+      setHasMore(false);
+      if (isSearchReload) {
+        setSearching(true);
+      } else {
+        setLoading(true);
+      }
     }
     setError(null);
     let deferLoadingClear = false;
@@ -759,16 +805,70 @@ export function useOrbitData(
   }, []);
 
   const prevSearchFilterRef = useRef(searchFilter);
+  const prevFeedContextRef = useRef({
+    pluginFilter,
+    channelFilter,
+    contentTypeFilter,
+    searchFilter,
+    pluginGroupScopeId,
+  });
   useLayoutEffect(() => {
     if (initialMount.current) {
       initialMount.current = false;
       prevSearchFilterRef.current = searchFilter;
+      prevFeedContextRef.current = {
+        pluginFilter,
+        channelFilter,
+        contentTypeFilter,
+        searchFilter,
+        pluginGroupScopeId,
+      };
       return;
     }
+    const prev = prevFeedContextRef.current;
+    const oldFeedKey = buildFeedKey(
+      prev.pluginFilter,
+      prev.channelFilter,
+      prev.contentTypeFilter,
+      prev.searchFilter,
+      prev.pluginGroupScopeId,
+    );
+    snapshotCurrentFeed(
+      oldFeedKey,
+      articlesRef.current,
+      hasMoreRef.current,
+      feedTotalRef.current,
+      feedNextParamsRef.current,
+    );
+    prevFeedContextRef.current = {
+      pluginFilter,
+      channelFilter,
+      contentTypeFilter,
+      searchFilter,
+      pluginGroupScopeId,
+    };
     const searchChanged = prevSearchFilterRef.current !== searchFilter;
     prevSearchFilterRef.current = searchFilter;
     void reloadFeedOnlyRef.current(searchChanged ? { searching: true } : undefined);
   }, [pluginFilter, channelFilter, contentTypeFilter, searchFilter, pluginGroupScopeId]);
+
+  useEffect(() => {
+    const feedKey = buildFeedKey(
+      pluginFilter,
+      channelFilter,
+      contentTypeFilter,
+      searchFilter,
+      pluginGroupScopeId,
+    );
+    if (articles.length === 0) return;
+    snapshotCurrentFeed(
+      feedKey,
+      articles,
+      hasMore,
+      feedTotal,
+      feedNextParamsRef.current,
+    );
+  }, [articles, hasMore, feedTotal, pluginFilter, channelFilter, contentTypeFilter, searchFilter, pluginGroupScopeId]);
 
   const installCustomRSS = useCallback(
     async (payload: InstallRSSPluginRequest) => {

@@ -182,7 +182,11 @@ export async function createTTSVoice(
         ? { Authorization: `Bearer ${config.api_key.trim()}`, "x-api-key": config.api_key.trim() }
         : {}),
     },
-    body: JSON.stringify(request),
+    body: JSON.stringify({
+      cache: request.cache ?? false,
+      speaker: request.speaker,
+      text_content: request.text_content,
+    }),
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");

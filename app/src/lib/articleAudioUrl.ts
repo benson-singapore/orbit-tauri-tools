@@ -2,7 +2,6 @@ import type { Article } from "@/types";
 
 const BLOB_SRC_RE = /^blob:/i;
 const DIRECT_MEDIA_URL_RE = /\.(mp3|m4a|aac|ogg|wav|flac|opus|m3u8)(\?|$)/i;
-const MEDIA_URL_IN_TEXT_RE = /https?:\/\/[^\s"'<>]+\.(?:mp3|m4a|aac|ogg|wav|flac|opus|m3u8)(?:\?[^\s"'<>]*)?/i;
 
 function isUsableAudioSrc(src: string): boolean {
   const trimmed = src.trim();
@@ -51,17 +50,7 @@ export function resolveAudioElementSourceUrl(audio: HTMLAudioElement): string | 
   return pickBestAudioSourceUrl(audio.querySelectorAll("source"));
 }
 
-function readAudioUrlFromElement(el: Element): string | null {
-  for (const attr of ["src", "data-src", "data-url", "data-audio", "href"]) {
-    const value = el.getAttribute(attr)?.trim() ?? "";
-    if (isUsableAudioSrc(value) && isDirectMediaUrl(value)) {
-      return value;
-    }
-  }
-  return null;
-}
-
-/** Extract the primary playable URL from article HTML (`<audio>` / links / text). */
+/** Extract the primary playable URL from article HTML (`<audio>` only). */
 export function extractAudioUrlFromContent(
   html: string,
   baseUrl?: string,
@@ -70,32 +59,17 @@ export function extractAudioUrlFromContent(
     return null;
   }
 
-  if (typeof DOMParser !== "undefined") {
-    const doc = new DOMParser().parseFromString(html, "text/html");
-
-    for (const audio of doc.querySelectorAll("audio")) {
-      const url = resolveAudioElementSourceUrl(audio);
-      if (url) {
-        return resolveRelativeMediaUrl(url, baseUrl);
-      }
-    }
-
-    const fromSource = pickBestAudioSourceUrl(doc.querySelectorAll("source"));
-    if (fromSource) {
-      return resolveRelativeMediaUrl(fromSource, baseUrl);
-    }
-
-    for (const el of doc.querySelectorAll("a[href], [data-src], [data-url], [data-audio]")) {
-      const url = readAudioUrlFromElement(el);
-      if (url) {
-        return resolveRelativeMediaUrl(url, baseUrl);
-      }
-    }
+  if (typeof DOMParser === "undefined") {
+    return null;
   }
 
-  const textMatch = html.match(MEDIA_URL_IN_TEXT_RE);
-  if (textMatch?.[0]) {
-    return resolveRelativeMediaUrl(textMatch[0], baseUrl);
+  const doc = new DOMParser().parseFromString(html, "text/html");
+
+  for (const audio of doc.querySelectorAll("audio")) {
+    const url = resolveAudioElementSourceUrl(audio);
+    if (url) {
+      return resolveRelativeMediaUrl(url, baseUrl);
+    }
   }
 
   return null;
@@ -118,8 +92,8 @@ export function resolveArticleAudioUrl(
   }
 
   const source = article.sourceUrl?.trim();
-  if (source && isDirectMediaUrl(source)) {
-    return source;
+  if (source && article.type === "audio" && isDirectMediaUrl(source)) {
+    return resolveRelativeMediaUrl(source, baseUrl);
   }
 
   return null;

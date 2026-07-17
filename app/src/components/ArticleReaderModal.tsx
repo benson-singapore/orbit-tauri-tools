@@ -70,8 +70,10 @@ import {
 import type { PlaybackResumeIntent, PlaybackProgress } from "@/types";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import { resolveArticleAudioUrl, stripEmbeddedAudioFromContent } from "@/lib/articleAudioUrl";
+import { resolveArticleCoverImage } from "@/lib/articleAudioPlaylist";
 import { snapshotContentVideoProgress } from "@/lib/sessionVideoProgress";
 import type { ReaderSessionMode } from "@/lib/readerSessions";
+import type { ExperienceMode } from "@/lib/experienceMode";
 import type { Article, ChannelCapabilities, Plugin, ThemeMode } from "@/types";
 
 interface ArticleReaderModalProps {
@@ -102,6 +104,7 @@ interface ArticleReaderModalProps {
     openArticle: Article;
     resumeIntent?: PlaybackResumeIntent;
   }) => void;
+  experienceMode?: ExperienceMode;
 }
 
 export function ArticleReaderModal({
@@ -129,6 +132,7 @@ export function ArticleReaderModal({
   onResumeApplied,
   pageDetailSwitchEnabled = false,
   onSwitchToPageDetail,
+  experienceMode = "safe",
 }: ArticleReaderModalProps) {
   const isExpanded = mode === "expanded";
   const [article, setArticle] = useState(initialArticle);
@@ -150,7 +154,9 @@ export function ArticleReaderModal({
   const contentRef = useRef<HTMLDivElement>(null);
   const scrollRootRef = useRef<HTMLDivElement>(null);
   const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
-  const { bindTTS, ttsOverlays } = useArticleContentTTS(theme);
+  const { bindTTS, ttsOverlays } = useArticleContentTTS(theme, {
+    experienceUnlocked: experienceMode === "full",
+  });
   const onArticleChangeRef = useRef(onArticleChange);
   onArticleChangeRef.current = onArticleChange;
 
@@ -325,6 +331,13 @@ export function ArticleReaderModal({
 
   const hasSessionVideoMedia = usesDedicatedSessionVideoPlayer(article);
   const audioUrl = useMemo(() => resolveArticleAudioUrl(article), [article]);
+  const audioCoverImage = useMemo(
+    () => resolveArticleCoverImage(article, {
+      listArticles: [initialArticle],
+      parentArticle: chaptersParent,
+    }),
+    [article, initialArticle, chaptersParent],
+  );
   const { registerMount } = useVideoSessionMountRegistry();
 
   const modalMountRef = useCallback(
@@ -1083,6 +1096,7 @@ export function ArticleReaderModal({
                       article={article}
                       audioUrl={audioUrl}
                       runtimeBase={runtimeBase}
+                      coverImage={audioCoverImage}
                     />
                   </div>
                 ) : null}

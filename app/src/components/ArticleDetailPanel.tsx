@@ -59,7 +59,9 @@ import {
 import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import { resolveArticleAudioUrl, stripEmbeddedAudioFromContent } from "@/lib/articleAudioUrl";
+import { resolveArticleCoverImage } from "@/lib/articleAudioPlaylist";
 import type { Article, ChannelCapabilities, PlaybackResumeIntent, Plugin, ThemeMode } from "@/types";
+import type { ExperienceMode } from "@/lib/experienceMode";
 
 interface ArticleDetailPanelProps {
   sessionId: string;
@@ -74,6 +76,7 @@ interface ArticleDetailPanelProps {
   pluginMeta?: Plugin;
   channelCapabilities: ChannelCapabilities;
   storedChannel?: string | null;
+  experienceMode?: ExperienceMode;
 }
 
 export function ArticleDetailPanel({
@@ -89,6 +92,7 @@ export function ArticleDetailPanel({
   pluginMeta,
   channelCapabilities,
   storedChannel,
+  experienceMode = "safe",
 }: ArticleDetailPanelProps) {
   const [article, setArticle] = useState(initialArticle);
   const [loading, setLoading] = useState(false);
@@ -101,7 +105,9 @@ export function ArticleDetailPanel({
   // undefined = loading; null = loaded but no resume record; PlaybackResumeIntent = loaded record
   const [resolvedResumeIntent, setResolvedResumeIntent] = useState<PlaybackResumeIntent | null | undefined>(undefined);
   const { openImagePreview, previewLightbox } = useArticleContentImagePreview(runtimeBase);
-  const { bindTTS, ttsOverlays } = useArticleContentTTS(theme);
+  const { bindTTS, ttsOverlays } = useArticleContentTTS(theme, {
+    experienceUnlocked: experienceMode === "full",
+  });
 
   const hasChaptersMode = shouldOpenChaptersForArticle(
     initialArticle,
@@ -260,6 +266,13 @@ export function ArticleDetailPanel({
 
   const youTubeVideoId = useMemo(() => resolveYouTubeVideoId(article), [article]);
   const audioUrl = useMemo(() => resolveArticleAudioUrl(article), [article]);
+  const audioCoverImage = useMemo(
+    () => resolveArticleCoverImage(article, {
+      listArticles: [initialArticle],
+      parentArticle: hasChaptersMode ? initialArticle : null,
+    }),
+    [article, initialArticle, hasChaptersMode],
+  );
 
   const {
     pageUrls: comicPageUrls,
@@ -809,6 +822,7 @@ export function ArticleDetailPanel({
                       article={article}
                       audioUrl={audioUrl}
                       runtimeBase={runtimeBase}
+                      coverImage={audioCoverImage}
                     />
                   </div>
                 ) : null}

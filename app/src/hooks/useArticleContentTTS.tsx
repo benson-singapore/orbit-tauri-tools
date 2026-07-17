@@ -6,6 +6,8 @@ import {
   bindArticleContentTTSSelection,
   clearMarksByClass,
   promoteMarksClass,
+  scrollMarksIntoView,
+  TTS_ACTIVE_MARK_CLASS,
   TTS_PENDING_MARK_CLASS,
   TTS_READ_MARK_CLASS,
   type ArticleTTSSelectionPayload,
@@ -29,7 +31,17 @@ type SelectionSnapshot = {
   range: Range;
 };
 
-export function useArticleContentTTS(theme: ThemeMode) {
+type UseArticleContentTTSOptions = {
+  experienceUnlocked?: boolean;
+};
+
+export function useArticleContentTTS(
+  theme: ThemeMode,
+  options: UseArticleContentTTSOptions = {},
+) {
+  const experienceUnlocked = options.experienceUnlocked ?? false;
+  const [ttsConfigured, setTtsConfigured] = useState(false);
+  const featureEnabled = experienceUnlocked && ttsConfigured;
   const [toolbarExpanded, setToolbarExpanded] = useState(false);
   const [selectionSnapshot, setSelectionSnapshot] = useState<SelectionSnapshot | null>(null);
   const [defaultVoice, setDefaultVoice] = useState<TTSVoiceItem | null>(() => loadDefaultTTSVoice());
@@ -44,6 +56,7 @@ export function useArticleContentTTS(theme: ThemeMode) {
   const pendingReadTextRef = useRef<string | null>(null);
   const contentRootRef = useRef<HTMLElement | null>(null);
   const pendingMarksRef = useRef<HTMLElement[]>([]);
+  const activeMarksRef = useRef<HTMLElement[]>([]);
   const readMarksRef = useRef<HTMLElement[]>([]);
   const lastSnapshotRef = useRef<SelectionSnapshot | null>(null);
 
@@ -55,12 +68,22 @@ export function useArticleContentTTS(theme: ThemeMode) {
     pendingMarksRef.current = [];
   }, []);
 
+  const clearActiveMarks = useCallback((root?: HTMLElement | null) => {
+    const target = root ?? contentRootRef.current;
+    if (target) {
+      clearMarksByClass(target, TTS_ACTIVE_MARK_CLASS);
+    }
+    activeMarksRef.current = [];
+  }, []);
+
   const clearReadMarks = useCallback((root?: HTMLElement | null) => {
     const target = root ?? contentRootRef.current;
     if (target) {
       clearMarksByClass(target, TTS_READ_MARK_CLASS);
+      clearMarksByClass(target, TTS_ACTIVE_MARK_CLASS);
     }
     readMarksRef.current = [];
+    activeMarksRef.current = [];
     setHasReadMark(false);
   }, []);
 
@@ -70,17 +93,9 @@ export function useArticleContentTTS(theme: ThemeMode) {
 
     clearPendingMarks(root);
     pendingMarksRef.current = applyMarkToRange(range, TTS_PENDING_MARK_CLASS);
-    window.getSelection()?.removeAllRanges();
   }, [clearPendingMarks]);
 
-  const handleSelection = useCallback((payload: ArticleTTSSelectionPayload | null) => {
-    if (!payload) {
-      if (lastSnapshotRef.current) {
-        setSelectionSnapshot(lastSnapshotRef.current);
-      }
-      return;
-    }
-
+  const handleSelection = useCallback((payload: ArticleTTSSelectionPayload) => {
     const snapshot: SelectionSnapshot = {
       text: payload.text,
       range: payload.range,
@@ -90,8 +105,23 @@ export function useArticleContentTTS(theme: ThemeMode) {
     setHasActivated(true);
     setReadError(null);
     applyPendingHighlight(payload.range);
-    setToolbarExpanded(true);
   }, [applyPendingHighlight]);
+
+  useEffect(() => {
+    if (!experienceUnlocked) {
+      setTtsConfigured(false);
+      return;
+    }
+    let cancelled = false;
+    void fetchTTSConfig().then(config => {
+      if (!cancelled) {
+        setTtsConfigured(Boolean(config.api_url.trim()));
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [experienceUnlocked]);
 
   useEffect(() => {
     const syncDefaultVoice = () => setDefaultVoice(loadDefaultTTSVoice());
@@ -109,10 +139,11 @@ export function useArticleContentTTS(theme: ThemeMode) {
 
   const bindTTS = useCallback(
     (root: HTMLElement | null, options?: { enabled?: boolean }) => {
-      if (!root) return () => {};
+      if (!root || !featureEnabled || options?.enabled === false) return () => {};
 
       contentRootRef.current = root;
       clearPendingMarks(root);
+      clearActiveMarks(root);
       clearReadMarks(root);
       setSelectionSnapshot(null);
       lastSnapshotRef.current = null;
@@ -122,11 +153,10 @@ export function useArticleContentTTS(theme: ThemeMode) {
       setReadError(null);
 
       return bindArticleContentTTSSelection(root, {
-        enabled: options?.enabled,
         onSelection: handleSelection,
       });
     },
-    [clearPendingMarks, clearReadMarks, handleSelection],
+    [clearActiveMarks, clearPendingMarks, clearReadMarks, featureEnabled, handleSelection],
   );
 
   const ensureTTSConfig = useCallback(async (): Promise<TTSConfig> => {
@@ -145,7 +175,6 @@ export function useArticleContentTTS(theme: ThemeMode) {
     }
 
     const result = await createTTSVoice(config, {
-      cache: true,
       speaker: voice.value,
       text_content: text,
     });
@@ -161,29 +190,47 @@ export function useArticleContentTTS(theme: ThemeMode) {
     });
   }, [ensureTTSConfig]);
 
-  const promotePendingToRead = useCallback(() => {
+  const promotePendingToActive = useCallback(() => {
     const root = contentRootRef.current;
-    if (!root) return;
+    if (!root) return [];
 
     clearReadMarks(root);
 
     if (pendingMarksRef.current.length > 0) {
-      promoteMarksClass(pendingMarksRef.current, TTS_PENDING_MARK_CLASS, TTS_READ_MARK_CLASS);
-      readMarksRef.current = [...pendingMarksRef.current];
+      promoteMarksClass(
+        pendingMarksRef.current,
+        TTS_PENDING_MARK_CLASS,
+        TTS_ACTIVE_MARK_CLASS,
+      );
+      activeMarksRef.current = [...pendingMarksRef.current];
       pendingMarksRef.current = [];
-      setHasReadMark(true);
-      return;
+      scrollMarksIntoView(activeMarksRef.current);
+      return activeMarksRef.current;
     }
 
     const snapshot = selectionSnapshot ?? lastSnapshotRef.current;
-    if (!snapshot) return;
+    if (!snapshot) return [];
 
-    const marks = applyMarkToRange(snapshot.range, TTS_READ_MARK_CLASS);
-    readMarksRef.current = marks;
+    const marks = applyMarkToRange(snapshot.range, TTS_ACTIVE_MARK_CLASS);
+    activeMarksRef.current = marks;
     pendingMarksRef.current = [];
-    setHasReadMark(marks.length > 0);
+    scrollMarksIntoView(marks);
     window.getSelection()?.removeAllRanges();
+    return marks;
   }, [clearReadMarks, selectionSnapshot]);
+
+  const finalizeActiveToRead = useCallback(() => {
+    if (activeMarksRef.current.length === 0) return;
+
+    promoteMarksClass(
+      activeMarksRef.current,
+      TTS_ACTIVE_MARK_CLASS,
+      TTS_READ_MARK_CLASS,
+    );
+    readMarksRef.current = [...activeMarksRef.current];
+    activeMarksRef.current = [];
+    setHasReadMark(readMarksRef.current.length > 0);
+  }, []);
 
   const handleReadAloud = useCallback(async () => {
     const snapshot = selectionSnapshot ?? lastSnapshotRef.current;
@@ -196,17 +243,19 @@ export function useArticleContentTTS(theme: ThemeMode) {
       return;
     }
 
-    setReading(true);
     setReadError(null);
+    promotePendingToActive();
+    setReading(true);
     try {
-      promotePendingToRead();
       await playText(text, defaultVoice);
+      finalizeActiveToRead();
     } catch (err) {
       setReadError(err instanceof Error ? err.message : String(err));
+      finalizeActiveToRead();
     } finally {
       setReading(false);
     }
-  }, [defaultVoice, playText, promotePendingToRead, selectionSnapshot]);
+  }, [defaultVoice, finalizeActiveToRead, playText, promotePendingToActive, selectionSnapshot]);
 
   const handleSelectDefaultVoice = useCallback((voice: TTSVoiceItem) => {
     persistDefaultTTSVoice(voice);
@@ -218,33 +267,36 @@ export function useArticleContentTTS(theme: ThemeMode) {
 
     pendingReadTextRef.current = null;
     void (async () => {
-      setReading(true);
       setReadError(null);
+      promotePendingToActive();
+      setReading(true);
       try {
-        promotePendingToRead();
         await playText(pendingText, voice);
+        finalizeActiveToRead();
       } catch (err) {
         setReadError(err instanceof Error ? err.message : String(err));
+        finalizeActiveToRead();
       } finally {
         setReading(false);
       }
     })();
-  }, [playText, promotePendingToRead]);
+  }, [finalizeActiveToRead, playText, promotePendingToActive]);
 
   const handleStopReading = useCallback(() => {
     audioRef.current?.pause();
     audioRef.current = null;
+    finalizeActiveToRead();
     setReading(false);
-  }, []);
+  }, [finalizeActiveToRead]);
 
-  const toolbarVisible = Boolean(
+  const toolbarVisible = featureEnabled && Boolean(
     hasActivated
     || selectionSnapshot
     || hasReadMark
     || reading,
   );
 
-  const ttsOverlays = (
+  const ttsOverlays = featureEnabled ? (
     <>
       <ArticleTTSSelectionToolbar
         theme={theme}
@@ -272,7 +324,7 @@ export function useArticleContentTTS(theme: ThemeMode) {
         />
       ) : null}
     </>
-  );
+  ) : null;
 
   return {
     bindTTS,

@@ -21,7 +21,16 @@ interface ReaderAudioPlayerProps {
   audioUrl: string;
   runtimeBase: string | null;
   playlist?: ReaderAudioTrack[];
+  coverImage?: string;
   className?: string;
+}
+
+function withResolvedCover(
+  track: ReaderAudioTrack,
+  coverImage?: string,
+): ReaderAudioTrack {
+  const cover = track.cover?.trim() || coverImage?.trim();
+  return cover ? { ...track, cover } : track;
 }
 
 export function ReaderAudioPlayer({
@@ -30,19 +39,20 @@ export function ReaderAudioPlayer({
   audioUrl,
   runtimeBase,
   playlist,
+  coverImage,
   className = "",
 }: ReaderAudioPlayerProps) {
   const tracks = useMemo(() => {
     if (playlist && playlist.length > 0) {
-      return playlist;
+      return playlist.map(track => withResolvedCover(track, coverImage));
     }
     return [{
       name: article.title,
       artist: article.author || undefined,
       url: audioUrl,
-      cover: article.image?.trim() || undefined,
+      cover: coverImage?.trim() || article.image?.trim() || undefined,
     }];
-  }, [article.title, article.author, article.image, audioUrl, runtimeBase, playlist]);
+  }, [article.title, article.author, article.image, audioUrl, coverImage, playlist]);
 
   const storageName = `orbit-aplayer-${sessionId}`;
   const player = useOrbitAudioPlayer({

@@ -954,28 +954,58 @@
 }
 
 /* TTS selection marks */
-.article-content :where(mark.orbit-tts-pending-mark) {
-  background-color: rgba(255, 214, 102, 0.5);
+.article-content :where(mark.orbit-tts-pending-mark),
+.novel-chapter-stream :where(mark.orbit-tts-pending-mark) {
+  background-color: rgba(255, 214, 102, 0.55) !important;
   color: inherit;
-  border-radius: 2px;
+  border-radius: 3px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
 
-.article-content[data-theme="dark"] :where(mark.orbit-tts-pending-mark) {
-  background-color: rgba(255, 193, 7, 0.3);
+.article-content[data-theme="dark"] :where(mark.orbit-tts-pending-mark),
+.novel-chapter-stream :where(mark.orbit-tts-pending-mark) {
+  background-color: rgba(255, 193, 7, 0.35) !important;
 }
 
-.article-content :where(mark.orbit-tts-read-mark) {
-  background-color: rgba(88, 86, 214, 0.28);
+.article-content :where(mark.orbit-tts-active-mark),
+.novel-chapter-stream :where(mark.orbit-tts-active-mark) {
+  background-color: rgba(88, 86, 214, 0.55) !important;
   color: inherit;
-  border-radius: 2px;
+  border-radius: 3px;
+  box-shadow: 0 0 0 2px rgba(88, 86, 214, 0.35);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  animation: orbit-tts-active-pulse 1.6s ease-in-out infinite;
+}
+
+.article-content[data-theme="dark"] :where(mark.orbit-tts-active-mark),
+.novel-chapter-stream :where(mark.orbit-tts-active-mark) {
+  background-color: rgba(120, 118, 255, 0.5) !important;
+  box-shadow: 0 0 0 2px rgba(120, 118, 255, 0.4);
+}
+
+.article-content :where(mark.orbit-tts-read-mark),
+.novel-chapter-stream :where(mark.orbit-tts-read-mark) {
+  background-color: rgba(88, 86, 214, 0.3) !important;
+  color: inherit;
+  border-radius: 3px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
 
-.article-content[data-theme="dark"] :where(mark.orbit-tts-read-mark) {
-  background-color: rgba(88, 86, 214, 0.38);
+.article-content[data-theme="dark"] :where(mark.orbit-tts-read-mark),
+.novel-chapter-stream :where(mark.orbit-tts-read-mark) {
+  background-color: rgba(88, 86, 214, 0.42) !important;
+}
+
+@keyframes orbit-tts-active-pulse {
+  0%, 100% {
+    background-color: rgba(88, 86, 214, 0.42);
+  }
+  50% {
+    background-color: rgba(88, 86, 214, 0.68);
+  }
 }
 
 /* Novel background presets — override manga intro + reader chrome */
