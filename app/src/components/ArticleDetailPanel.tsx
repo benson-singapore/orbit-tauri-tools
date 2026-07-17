@@ -159,7 +159,7 @@ export function ArticleDetailPanel({
     setArticle(initialArticle);
     setCoverImageFailed(false);
     setChaptersDrawerOpen(false);
-  }, [initialArticle]);
+  }, [initialArticle.id, initialArticle.pluginId]);
 
   const effectiveHasDetail = resolveArticleHasDetail(
     article,

@@ -1,11 +1,15 @@
 package server
 
 import (
+	"bytes"
+	"image/jpeg"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"testing"
+
+	"golang.org/x/image/webp"
 )
 
 func TestIsLbupupImageHost(t *testing.T) {
@@ -123,6 +127,11 @@ func TestDecryptLbupupImageFixture(t *testing.T) {
 
 func testDecryptBgezuwImageURL(t *testing.T, encryptedURL string) {
 	t.Helper()
+	testDecryptBgezuwJPEGImageURL(t, encryptedURL, 0, 0)
+}
+
+func testDecryptBgezuwJPEGImageURL(t *testing.T, encryptedURL string, wantW, wantH int) {
+	t.Helper()
 
 	req, err := http.NewRequest(http.MethodGet, encryptedURL, nil)
 	if err != nil {
@@ -149,8 +158,15 @@ func testDecryptBgezuwImageURL(t *testing.T, encryptedURL string) {
 	if contentType != "image/jpeg" {
 		t.Fatalf("content-type %q", contentType)
 	}
-	if len(plain) < 2 || plain[0] != 0xFF || plain[1] != 0xD8 {
-		t.Fatalf("expected jpeg, got %02x %02x", plain[0], plain[1])
+	img, err := jpeg.Decode(bytes.NewReader(plain))
+	if err != nil {
+		t.Fatalf("jpeg decode: %v", err)
+	}
+	if wantW > 0 || wantH > 0 {
+		b := img.Bounds()
+		if b.Dx() != wantW || b.Dy() != wantH {
+			t.Fatalf("size got %dx%d want %dx%d", b.Dx(), b.Dy(), wantW, wantH)
+		}
 	}
 }
 
@@ -166,6 +182,63 @@ func TestDecryptBgezuwImageFixtureShortHeader(t *testing.T) {
 
 	const encryptedURL = "https://llksqimg.bgezuw.cn/v3/image/7q/1tf/11v/30h/38603059fc9cce1bec54fef54e5f2b35.jpg"
 	testDecryptBgezuwImageURL(t, encryptedURL)
+}
+
+func TestDecryptBgezuwImageFixtureUserJPEG(t *testing.T) {
+	t.Parallel()
+
+	const encryptedURL = "https://llksqimg.bgezuw.cn/v3/image/10k/1vu/2j9/v1/b32756808979961e353735d6ba68c59c.jpg"
+	testDecryptBgezuwJPEGImageURL(t, encryptedURL, 400, 533)
+}
+
+func TestDecryptBgezuwImageFixtureWebP(t *testing.T) {
+	t.Parallel()
+
+	const encryptedURL = "https://llksqimg.bgezuw.cn/v3/image/20u/b9/2r9/7s/e9214758cd9401d8e4e8ebead09a3a12.webp"
+	testDecryptBgezuwWebPImageURL(t, encryptedURL)
+}
+
+func TestDecryptBgezuwImageFixtureUserWebP(t *testing.T) {
+	t.Parallel()
+
+	const encryptedURL = "https://llksqimg.bgezuw.cn/v3/image/2d/2lr/1j0/6w/ac813b4dcd6864bf57dae4053aac361b.webp"
+	testDecryptBgezuwWebPImageURL(t, encryptedURL)
+}
+
+func testDecryptBgezuwWebPImageURL(t *testing.T, encryptedURL string) {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, encryptedURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target, err := url.Parse(encryptedURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, contentType, err := maybeDecryptProxyImage(target, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "image/webp" {
+		t.Fatalf("content-type %q", contentType)
+	}
+	if !isBgezuwWebPBytes(plain) {
+		t.Fatalf("expected webp, got %02x %02x %02x %02x", plain[0], plain[1], plain[2], plain[3])
+	}
+	if _, err := webp.Decode(bytes.NewReader(plain)); err != nil {
+		t.Fatalf("webp decode: %v", err)
+	}
 }
 
 func TestIsImageContentTypeBinaryOctetStream(t *testing.T) {

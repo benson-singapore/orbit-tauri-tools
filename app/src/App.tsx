@@ -446,6 +446,9 @@ export default function App() {
   const [chaptersOpenToken, setChaptersOpenToken] = useState(0);
   const chaptersParentRef = useRef<Article | null>(null);
   const [splitDetailArticle, setSplitDetailArticle] = useState<Article | null>(null);
+  const [splitDetailFeedChannel, setSplitDetailFeedChannel] = useState<string | null>(null);
+  const splitDetailArticleRef = useRef<Article | null>(null);
+  splitDetailArticleRef.current = splitDetailArticle;
   const [contentLoading, setContentLoading] = useState(false);
   const [novelPlaybackChapter, setNovelPlaybackChapter] = useState<Article | null>(null);
   const articleContentRef = useRef<HTMLDivElement>(null);
@@ -627,11 +630,6 @@ export default function App() {
     [activePlugin, pluginById],
   );
 
-  const activeChannelHasDetail = useMemo(
-    () => resolveChannelHasDetail(activePluginMeta, activeChannel, channelCapabilities),
-    [activePluginMeta, activeChannel, channelCapabilities],
-  );
-
   const activeChannelMeta = useMemo(() => {
     if (activePlugin === "all" || activeChannel === "all") return undefined;
     return activePluginChannels.find(ch => ch.id === activeChannel);
@@ -702,20 +700,25 @@ export default function App() {
   useEffect(() => {
     if (!isSplitDetailMode || activePlugin === "all") return;
 
-    const pluginArticles = filteredArticles.filter(item => item.pluginId === activePlugin);
-    if (pluginArticles.length === 0) {
-      setSplitDetailArticle(null);
-      return;
-    }
+    const prev = splitDetailArticleRef.current;
+    if (prev?.pluginId === activePlugin) return;
 
-    setSplitDetailArticle(prev => {
-      if (prev) {
-        const listItem = pluginArticles.find(article => article.id === prev.id);
-        if (listItem) return listItem;
-      }
-      return pluginArticles[0];
-    });
+    const pluginArticles = filteredArticles.filter(item => item.pluginId === activePlugin);
+    const first = pluginArticles[0] ?? null;
+    setSplitDetailArticle(first);
+    setSplitDetailFeedChannel(first ? activeChannel : null);
   }, [isSplitDetailMode, activePlugin, activeChannel, filteredArticles]);
+
+  const splitDetailActiveChannel = useMemo(() => {
+    const fromArticle = splitDetailArticle?.channelId?.trim();
+    if (fromArticle) return fromArticle;
+    return splitDetailFeedChannel ?? activeChannel;
+  }, [splitDetailArticle, splitDetailFeedChannel, activeChannel]);
+
+  const splitDetailHasDetail = useMemo(
+    () => resolveChannelHasDetail(activePluginMeta, splitDetailActiveChannel, channelCapabilities),
+    [activePluginMeta, splitDetailActiveChannel, channelCapabilities],
+  );
 
   const hideFeedPanel = !isReaderPreviewMode || !feedPanelVisible;
   const isPluginFocusMode = !isReaderPreviewMode && activePlugin !== "all";
@@ -1991,8 +1994,9 @@ export default function App() {
 
   const handleSplitDetailSelect = useCallback((article: Article) => {
     setSplitDetailArticle(article);
+    setSplitDetailFeedChannel(activeChannel);
     void markArticleRead(article);
-  }, [markArticleRead]);
+  }, [activeChannel, markArticleRead]);
 
   const handleSelectPreviewMode = useCallback((mode: PluginPreviewMode) => {
     if (activePlugin === "all") return;
@@ -2021,6 +2025,7 @@ export default function App() {
     }
     if (mode !== "splitDetail") {
       setSplitDetailArticle(null);
+      setSplitDetailFeedChannel(null);
     }
     setPluginPreviewMode(mode);
     if (mode !== "videoWall") {
@@ -3489,8 +3494,8 @@ export default function App() {
                       readerFontScale={readerFontScale}
                       comicPageWidth={comicPageWidth}
                       novelReaderSettings={novelReaderSettings}
-                      hasDetail={activeChannelHasDetail}
-                      activeChannel={activeChannel}
+                      hasDetail={splitDetailHasDetail}
+                      activeChannel={splitDetailActiveChannel}
                       pluginMeta={activePluginMeta}
                       channelCapabilities={channelCapabilities}
                       storedChannel={getStoredPluginChannel(activePlugin)}

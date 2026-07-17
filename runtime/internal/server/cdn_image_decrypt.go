@@ -7,16 +7,22 @@ import (
 	"fmt"
 	"image/jpeg"
 	"net/url"
+	"path/filepath"
 	"strings"
+
+	"golang.org/x/image/webp"
 )
 
 const (
 	lbupupDecryptKey = "f5d965df75336270"
 	lbupupDecryptIV  = "97b60394abc2fbe1"
 	lbupupReferer    = "https://away.vmkbnoiat.cc/"
-	bgezuwDecryptKey      = "2019ysapp7527"
-	bgezuwMaxHeaderScan   = 2048
+	bgezuwDecryptKey = "2019ysapp7527"
+	bgezuwDecryptLen = 100
+	bgezuwEncryptKey = 163
 )
+
+var bgezuwEncryptMagicNumber = []byte{136, 168, 48, 203, 16, 118}
 
 func isLbupupImageHost(host string) bool {
 	host = strings.ToLower(strings.TrimSpace(host))
@@ -86,6 +92,22 @@ func xorBgezuwHeader(ciphertext, key []byte, headerEnd int) []byte {
 	return plain
 }
 
+func xorBgezuwAll(ciphertext []byte, xorKey byte) []byte {
+	plain := make([]byte, len(ciphertext))
+	copy(plain, ciphertext)
+	for i := range plain {
+		if i < len(bgezuwEncryptMagicNumber) && ciphertext[i] == bgezuwEncryptMagicNumber[i] {
+			continue
+		}
+		plain[i] ^= xorKey
+	}
+	return plain
+}
+
+func isBgezuwWebPBytes(data []byte) bool {
+	return len(data) >= 12 && string(data[:4]) == "RIFF" && string(data[8:12]) == "WEBP"
+}
+
 func isDecodableBgezuwJPEG(data []byte) bool {
 	if len(data) < 2 || data[0] != 0xFF || data[1] != 0xD8 {
 		return false
@@ -94,56 +116,45 @@ func isDecodableBgezuwJPEG(data []byte) bool {
 	return err == nil
 }
 
-func bgezuwPlaintextMarkerEnd(ciphertext []byte) int {
-	if dqt := bytes.Index(ciphertext, []byte{0xFF, 0xDB}); dqt > 0 {
-		return dqt
+func isDecodableBgezuwWebP(data []byte) bool {
+	if !isBgezuwWebPBytes(data) {
+		return false
 	}
-	for _, marker := range []byte{0xC0, 0xC1, 0xC2} {
-		if idx := bytes.Index(ciphertext, []byte{0xFF, marker}); idx > 0 {
-			return idx
-		}
-	}
-	return -1
+	_, err := webp.Decode(bytes.NewReader(data))
+	return err == nil
 }
 
-func bgezuwEncryptedHeaderEnd(ciphertext, key []byte) (int, error) {
-	if markerEnd := bgezuwPlaintextMarkerEnd(ciphertext); markerEnd > 0 {
-		if isDecodableBgezuwJPEG(xorBgezuwHeader(ciphertext, key, markerEnd)) {
-			return markerEnd, nil
-		}
+func isDecodableBgezuwImage(data []byte, webpTarget bool) bool {
+	if webpTarget {
+		return isDecodableBgezuwWebP(data)
 	}
-
-	maxScan := bgezuwMaxHeaderScan
-	if maxScan > len(ciphertext) {
-		maxScan = len(ciphertext)
-	}
-
-	best := -1
-	for n := len(key); n <= maxScan; n++ {
-		if isDecodableBgezuwJPEG(xorBgezuwHeader(ciphertext, key, n)) {
-			best = n
-		}
-	}
-	if best < 0 {
-		return 0, fmt.Errorf("invalid bgezuw image: unable to detect header size")
-	}
-	return best, nil
+	return isDecodableBgezuwJPEG(data)
 }
 
-func decryptBgezuwImage(ciphertext []byte) ([]byte, error) {
-	if len(ciphertext) >= 2 && ciphertext[0] == 0xFF && ciphertext[1] == 0xD8 {
+func isBgezuwWebPTarget(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".webp")
+}
+
+func decryptBgezuwImage(ciphertext []byte, path string) ([]byte, error) {
+	webpTarget := isBgezuwWebPTarget(path)
+	if !webpTarget && len(ciphertext) >= 2 && ciphertext[0] == 0xFF && ciphertext[1] == 0xD8 {
+		return ciphertext, nil
+	}
+	if webpTarget && isBgezuwWebPBytes(ciphertext) && isDecodableBgezuwWebP(ciphertext) {
 		return ciphertext, nil
 	}
 
-	key := []byte(bgezuwDecryptKey)
-	headerEnd, err := bgezuwEncryptedHeaderEnd(ciphertext, key)
-	if err != nil {
-		return nil, err
+	if bytes.HasPrefix(ciphertext, bgezuwEncryptMagicNumber) {
+		plain := xorBgezuwAll(ciphertext, bgezuwEncryptKey)
+		if !isDecodableBgezuwImage(plain, webpTarget) {
+			return nil, fmt.Errorf("invalid bgezuw image after full decrypt")
+		}
+		return plain, nil
 	}
 
-	plain := xorBgezuwHeader(ciphertext, key, headerEnd)
-	if len(plain) < 2 || plain[0] != 0xFF || plain[1] != 0xD8 {
-		return nil, fmt.Errorf("invalid bgezuw image after decrypt")
+	plain := xorBgezuwHeader(ciphertext, []byte(bgezuwDecryptKey), bgezuwDecryptLen)
+	if !isDecodableBgezuwImage(plain, webpTarget) {
+		return nil, fmt.Errorf("invalid bgezuw image after fixed-length decrypt")
 	}
 	return plain, nil
 }
@@ -151,7 +162,7 @@ func decryptBgezuwImage(ciphertext []byte) ([]byte, error) {
 func maybeDecryptProxyImage(target *url.URL, body []byte) ([]byte, string, error) {
 	contentType := contentTypeFromImagePath(target.Path)
 	if needsBgezuwDecrypt(target) {
-		plain, err := decryptBgezuwImage(body)
+		plain, err := decryptBgezuwImage(body, target.Path)
 		if err != nil {
 			return nil, "", err
 		}
