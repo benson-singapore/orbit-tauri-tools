@@ -102,6 +102,17 @@ func (f *RSSFetcher) mapItem(m *Manifest, contentType string, item *gofeed.Item)
 	htmlContent := extractHTMLContent(item)
 	summary := truncateRunes(plainText(htmlContent), maxSummaryRunes)
 
+	if contentType == MediaAudio {
+		if audioURL := extractAudioEnclosureURL(item); audioURL != "" {
+			if strings.TrimSpace(htmlContent) == "" {
+				htmlContent = fmt.Sprintf(`<audio controls preload="metadata" src="%s"></audio>`, htmlEscapeAttr(audioURL))
+			}
+			if link == "" || !isDirectAudioURL(link) {
+				link = audioURL
+			}
+		}
+	}
+
 	author := ""
 	if item.Author != nil {
 		author = strings.TrimSpace(item.Author.Name)
@@ -157,6 +168,42 @@ func extractImage(item *gofeed.Item) string {
 	}
 	// Some feeds embed image in content HTML — keep MVP simple, skip parsing.
 	return ""
+}
+
+func extractAudioEnclosureURL(item *gofeed.Item) string {
+	for _, enc := range item.Enclosures {
+		if enc.URL == "" {
+			continue
+		}
+		encType := strings.ToLower(strings.TrimSpace(enc.Type))
+		if strings.HasPrefix(encType, "audio/") || isDirectAudioURL(enc.URL) {
+			return strings.TrimSpace(enc.URL)
+		}
+	}
+	return ""
+}
+
+func isDirectAudioURL(url string) bool {
+	lower := strings.ToLower(strings.TrimSpace(url))
+	return strings.Contains(lower, ".mp3") ||
+		strings.Contains(lower, ".m4a") ||
+		strings.Contains(lower, ".aac") ||
+		strings.Contains(lower, ".ogg") ||
+		strings.Contains(lower, ".wav") ||
+		strings.Contains(lower, ".flac") ||
+		strings.Contains(lower, ".opus") ||
+		strings.Contains(lower, ".m3u8")
+}
+
+func htmlEscapeAttr(s string) string {
+	replacer := strings.NewReplacer(
+		`&`, "&amp;",
+		`"`, "&quot;",
+		`'`, "&#39;",
+		`<`, "&lt;",
+		`>`, "&gt;",
+	)
+	return replacer.Replace(s)
 }
 
 func extractHTMLContent(item *gofeed.Item) string {

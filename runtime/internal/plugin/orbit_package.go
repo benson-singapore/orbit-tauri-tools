@@ -23,6 +23,7 @@ const (
 type MarketDownloader func(context.Context, string) ([]byte, error)
 
 // InstallOrbit extracts a .orbit zip package into the user plugins directory and registers it.
+// If the plugin is already installed, the package is applied as a full replace (same as update).
 func (r *Registry) InstallOrbit(ctx context.Context, data []byte) (*PluginRecord, error) {
 	if len(data) == 0 {
 		return nil, fmt.Errorf("empty orbit package")
@@ -31,15 +32,22 @@ func (r *Registry) InstallOrbit(ctx context.Context, data []byte) (*PluginRecord
 		return nil, fmt.Errorf("orbit package exceeds %d bytes", maxOrbitPackageBytes)
 	}
 
+	_, m, _, err := parseOrbitZip(data)
+	if err != nil {
+		return nil, err
+	}
+	if rec, exists := r.Get(m.ID); exists {
+		if rec.Bundled {
+			return nil, fmt.Errorf("cannot update bundled plugin: %s", m.ID)
+		}
+		return r.updateOrbitPackage(ctx, m.ID, data)
+	}
+
 	m, pluginDir, err := extractOrbitPackage(data)
 	if err != nil {
 		return nil, err
 	}
 	m.Bundled = false
-
-	if _, exists := r.Get(m.ID); exists {
-		return nil, fmt.Errorf("plugin already installed: %s", m.ID)
-	}
 
 	rec := &PluginRecord{
 		Manifest:     *m,

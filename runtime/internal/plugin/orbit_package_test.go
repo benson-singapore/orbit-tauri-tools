@@ -223,6 +223,63 @@ func TestUpdateOrbitPackage_ReplacesManifest(t *testing.T) {
 	}
 }
 
+func TestInstallOrbit_UpdatesWhenAlreadyInstalled(t *testing.T) {
+	manifestV1 := []byte(`{"id":"install-update-test","name":"Install Update Test","version":"1.0.0","mediaType":"article","source":"wasm","capabilities":["feed"],"config":{"channels":[{"id":"old","label":"Old","route":"list"}],"refreshInterval":999,"wasm":{"entry":"plugin.wasm"}},"meta":{"description":"old","icon":"text","color":"bg-blue-500","logoText":"U","logoImageUrl":"","marketCategory":"blog","categoryTag":"Test"}}`)
+	manifestV2 := []byte(`{"id":"install-update-test","name":"Install Update Test","version":"2.0.0","mediaType":"article","source":"wasm","capabilities":["feed"],"config":{"channels":[{"id":"new","label":"New","route":"list"}],"refreshInterval":1800,"wasm":{"entry":"plugin.wasm"}},"meta":{"description":"new","icon":"text","color":"bg-blue-500","logoText":"U","logoImageUrl":"","marketCategory":"blog","categoryTag":"Test"}}`)
+	wasmRaw := []byte("\x00asm\x01\x00\x00\x00")
+
+	buildPackage := func(manifest []byte) []byte {
+		var buf bytes.Buffer
+		zw := zip.NewWriter(&buf)
+		for name, data := range map[string][]byte{
+			"manifest.json": manifest,
+			"plugin.wasm":   wasmRaw,
+		} {
+			w, err := zw.Create(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := w.Write(data); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := zw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+
+	setTestHome(t)
+	st, err := store.Open()
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	defer st.Close()
+
+	reg := NewRegistry(st)
+	installed, err := reg.InstallOrbit(context.Background(), buildPackage(manifestV1))
+	if err != nil {
+		t.Fatalf("InstallOrbit first: %v", err)
+	}
+	if installed.Version != "1.0.0" {
+		t.Fatalf("expected version 1.0.0, got %q", installed.Version)
+	}
+
+	updated, err := reg.InstallOrbit(context.Background(), buildPackage(manifestV2))
+	if err != nil {
+		t.Fatalf("InstallOrbit update: %v", err)
+	}
+	if updated.Version != "2.0.0" {
+		t.Fatalf("expected version 2.0.0, got %q", updated.Version)
+	}
+	if updated.Config.RefreshInterval != 1800 {
+		t.Fatalf("expected refreshInterval 1800, got %d", updated.Config.RefreshInterval)
+	}
+	if len(updated.Config.Channels) != 1 || updated.Config.Channels[0].ID != "new" {
+		t.Fatalf("expected new channel, got %+v", updated.Config.Channels)
+	}
+}
+
 func TestApplyMarketPluginMetadata_PersistsContentRating(t *testing.T) {
 	manifest := []byte(`{"id":"rating-test","name":"Rating Test","version":"1.0.0","mediaType":"article","source":"wasm","capabilities":["feed"],"config":{"channels":[{"id":"all","label":"All","route":"list"}],"refreshInterval":3600,"wasm":{"entry":"plugin.wasm"}},"meta":{"description":"test","icon":"text","color":"bg-blue-500","logoText":"R","logoImageUrl":"","marketCategory":"blog","categoryTag":"Test"}}`)
 	wasmRaw := []byte("\x00asm\x01\x00\x00\x00")
