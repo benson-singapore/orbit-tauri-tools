@@ -60,7 +60,8 @@ export function ChannelAudioPlaylist({
           onTogglePlay={player.handleTogglePlay}
           onPrev={player.handlePrev}
           onNext={player.handleNext}
-          onProgressClick={player.handleProgressClick}
+          onProgressSeek={player.handleProgressSeek}
+          timelineStart={player.timelineStart}
           volume={player.volume}
           playbackRate={player.playbackRate}
           onVolumeChange={player.handleVolumeChange}

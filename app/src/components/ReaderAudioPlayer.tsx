@@ -84,7 +84,8 @@ export function ReaderAudioPlayer({
           onTogglePlay={player.handleTogglePlay}
           onPrev={player.handlePrev}
           onNext={player.handleNext}
-          onProgressClick={player.handleProgressClick}
+          onProgressSeek={player.handleProgressSeek}
+          timelineStart={player.timelineStart}
           showNavControls={hasMultipleTracks}
           volume={player.volume}
           playbackRate={player.playbackRate}

@@ -1,4 +1,4 @@
-import type { ChangeEvent, MouseEvent } from "react";
+import { useRef, type ChangeEvent, type PointerEvent } from "react";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { formatPlaybackRate } from "@/lib/audioPlaybackPrefs";
 import { CHANNEL_PLAYBACK_MODES } from "@/lib/channelPlaybackMode";
@@ -94,18 +94,93 @@ interface AudioPlayerHeroProps {
   isPlaying: boolean;
   currentTime: number;
   duration: number;
+  timelineStart?: number;
   currentIndex: number;
   trackCount: number;
   onTogglePlay: () => void;
   onPrev: () => void;
   onNext: () => void;
-  onProgressClick: (event: MouseEvent<HTMLDivElement>) => void;
+  onProgressSeek: (ratio: number) => void;
   showNavControls?: boolean;
   volume: number;
   playbackRate: number;
   onVolumeChange: (volume: number) => void;
   onPlaybackRateStep: (direction: -1 | 1) => void;
   runtimeBase: string | null;
+}
+
+function AudioProgressBar({
+  currentTime,
+  duration,
+  timelineStart = 0,
+  onProgressSeek,
+}: {
+  currentTime: number;
+  duration: number;
+  timelineStart?: number;
+  onProgressSeek: (ratio: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const timelineSpan = Math.max(0, duration - timelineStart);
+  const displayCurrent = Math.max(0, currentTime - timelineStart);
+  const progress = timelineSpan > 0 ? (displayCurrent / timelineSpan) * 100 : 0;
+
+  const seekFromPointer = (clientX: number) => {
+    const track = trackRef.current;
+    if (!track) return;
+    const rect = track.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    onProgressSeek(ratio);
+  };
+
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    seekFromPointer(event.clientX);
+  };
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+    seekFromPointer(event.clientX);
+  };
+
+  const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  return (
+    <div className="mt-4 space-y-2">
+      <div
+        className="cursor-pointer touch-none py-2 -my-2"
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+      >
+        <div
+          ref={trackRef}
+          role="slider"
+          aria-label="播放进度"
+          aria-valuemin={0}
+          aria-valuemax={timelineSpan}
+          aria-valuenow={displayCurrent}
+          className="relative h-1.5 rounded-full bg-[color-mix(in_srgb,var(--orbit-text)_10%,transparent)]"
+        >
+          <div
+            className="h-full rounded-full bg-[var(--orbit-accent)]"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+      </div>
+      <div className="flex items-center justify-between text-[11px] tabular-nums text-[var(--orbit-text-muted)]">
+        <span>{formatAudioTime(displayCurrent)}</span>
+        <span>{formatAudioTime(timelineSpan)}</span>
+      </div>
+    </div>
+  );
 }
 
 function VolumeIcon({ muted }: { muted: boolean }) {
@@ -204,12 +279,13 @@ export function AudioPlayerHero({
   isPlaying,
   currentTime,
   duration,
+  timelineStart = 0,
   currentIndex,
   trackCount,
   onTogglePlay,
   onPrev,
   onNext,
-  onProgressClick,
+  onProgressSeek,
   showNavControls = true,
   volume,
   playbackRate,
@@ -217,8 +293,6 @@ export function AudioPlayerHero({
   onPlaybackRateStep,
   runtimeBase,
 }: AudioPlayerHeroProps) {
-  const progress = duration > 0 ? (currentTime / duration) * 100 : 0;
-
   return (
     <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
       <TrackCover track={track} size="lg" runtimeBase={runtimeBase} />
@@ -236,26 +310,12 @@ export function AudioPlayerHero({
           ) : null}
         </div>
 
-        <div className="mt-4 space-y-2">
-          <div
-            role="slider"
-            aria-label="播放进度"
-            aria-valuemin={0}
-            aria-valuemax={duration}
-            aria-valuenow={currentTime}
-            className="group relative h-1.5 cursor-pointer rounded-full bg-[color-mix(in_srgb,var(--orbit-text)_10%,transparent)]"
-            onClick={onProgressClick}
-          >
-            <div
-              className="h-full rounded-full bg-[var(--orbit-accent)] transition-[width]"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <div className="flex items-center justify-between text-[11px] tabular-nums text-[var(--orbit-text-muted)]">
-            <span>{formatAudioTime(currentTime)}</span>
-            <span>{formatAudioTime(duration)}</span>
-          </div>
-        </div>
+        <AudioProgressBar
+          currentTime={currentTime}
+          duration={duration}
+          timelineStart={timelineStart}
+          onProgressSeek={onProgressSeek}
+        />
 
         <div className="mt-4 flex items-center justify-center gap-2">
           {showNavControls ? (

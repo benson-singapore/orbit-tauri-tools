@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MouseEvent, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import APlayer from "aplayer";
 import Hls from "hls.js";
 import { isHlsAudioUrl } from "@/lib/articleAudioUrl";
@@ -22,7 +22,14 @@ import {
   updateSessionPlaybackSnapshot,
 } from "@/lib/sessionVideoProgress";
 import type { APlayerAudioItem, ChannelPlaybackMode } from "aplayer";
+import {
+  resolveAudioTimeline,
+  seekTimeFromRatio,
+  timelineSpan,
+} from "@/lib/audioTimeline";
 import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
+
+const AUDIO_SEEK_STEP_SECONDS = 15;
 
 export interface UseOrbitAudioPlayerOptions {
   sessionId: string;
@@ -40,13 +47,14 @@ export interface UseOrbitAudioPlayerResult {
   isPlaying: boolean;
   currentTime: number;
   duration: number;
+  timelineStart: number;
+  handleProgressSeek: (ratio: number) => void;
   playbackMode: ChannelPlaybackMode;
   hasMultipleTracks: boolean;
   handlePlaybackModeChange: (mode: ChannelPlaybackMode) => void;
   handleTogglePlay: () => void;
   handlePrev: () => void;
   handleNext: () => void;
-  handleProgressClick: (event: MouseEvent<HTMLDivElement>) => void;
   switchToIndex: (index: number) => void;
   volume: number;
   playbackRate: number;
@@ -90,6 +98,8 @@ export function useOrbitAudioPlayer({
   const syncedTrackCountRef = useRef(0);
   const tracksLengthRef = useRef(tracks.length);
   const userNavigatingRef = useRef(false);
+  const userSeekingRef = useRef(false);
+  const initialRestoreDoneRef = useRef(false);
   const onTrackChangeRef = useRef(onTrackChange);
   const playbackModeRef = useRef<ChannelPlaybackMode>(
     readStoredChannelPlaybackMode(storageName),
@@ -102,6 +112,7 @@ export function useOrbitAudioPlayer({
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [timelineStart, setTimelineStart] = useState(0);
   const [playbackMode, setPlaybackMode] = useState<ChannelPlaybackMode>(
     () => readStoredChannelPlaybackMode(storageName),
   );
@@ -118,6 +129,12 @@ export function useOrbitAudioPlayer({
       playing: !audio.paused,
     });
   }, [sessionId]);
+
+  const syncTimeline = useCallback((audio: HTMLAudioElement) => {
+    const timeline = resolveAudioTimeline(audio);
+    setTimelineStart(timeline.start);
+    setDuration(timeline.end);
+  }, []);
 
   const restorePlaybackSnapshot = useCallback((position?: number) => {
     const player = playerRef.current;
@@ -138,10 +155,18 @@ export function useOrbitAudioPlayer({
     }
   }, [sessionId]);
 
-  const applyTrackIndex = useCallback((index: number) => {
+  const applyTrackIndex = useCallback((index: number, previousIndex?: number) => {
     if (index < 0 || index >= tracksLengthRef.current) return;
+    const switchedTrack = previousIndex !== undefined && previousIndex !== index;
     setCurrentIndex(index);
-    setCurrentTime(0);
+    if (switchedTrack) {
+      setCurrentTime(0);
+    } else {
+      const player = playerRef.current;
+      if (player) {
+        setCurrentTime(player.audio.currentTime);
+      }
+    }
     const player = playerRef.current;
     if (player) {
       setDuration(player.audio.duration || 0);
@@ -189,10 +214,16 @@ export function useOrbitAudioPlayer({
     });
   }, []);
 
+  const tracksSignature = useMemo(
+    () => tracks.map(track => `${track.url}\u0000${track.name}\u0000${track.artist ?? ""}`).join("\n"),
+    [tracks],
+  );
+
   useEffect(() => {
     const container = engineRef.current;
     if (!container || tracks.length === 0) return;
 
+    initialRestoreDoneRef.current = false;
     ensureAPlayerHlsGlobal();
     const initialMode = readStoredChannelPlaybackMode(storageName);
     playbackModeRef.current = initialMode;
@@ -219,16 +250,41 @@ export function useOrbitAudioPlayer({
     player.audio.volume = readStoredAudioVolume();
     player.audio.playbackRate = readStoredPlaybackRate();
     const originalSkipForward = player.skipForward.bind(player);
+    const originalSkipBack = player.skipBack.bind(player);
+    const seekByOffset = (offsetSeconds: number) => {
+      const timeline = resolveAudioTimeline(player.audio);
+      const span = timelineSpan(timeline);
+      if (span <= 0) return;
+      const target = Math.max(
+        timeline.start,
+        Math.min(timeline.end, player.audio.currentTime + offsetSeconds),
+      );
+      userSeekingRef.current = true;
+      player.seek(target);
+      setCurrentTime(target);
+      syncPlaybackSnapshot(player.audio);
+    };
     player.skipForward = () => {
+      if (player.list.audios.length <= 1) {
+        seekByOffset(AUDIO_SEEK_STEP_SECONDS);
+        return;
+      }
       if (player.audio.paused && !userNavigatingRef.current && !player.audio.ended) return;
       originalSkipForward();
+    };
+    player.skipBack = () => {
+      if (player.list.audios.length <= 1) {
+        seekByOffset(-AUDIO_SEEK_STEP_SECONDS);
+        return;
+      }
+      originalSkipBack();
     };
     playerRef.current = player;
     syncedTrackCountRef.current = tracks.length;
 
     const onTimeUpdate = () => {
       setCurrentTime(player.audio.currentTime);
-      setDuration(player.audio.duration || 0);
+      syncTimeline(player.audio);
       syncPlaybackSnapshot(player.audio);
     };
     const onPlay = () => {
@@ -240,13 +296,22 @@ export function useOrbitAudioPlayer({
       syncPlaybackSnapshot(player.audio);
     };
     const onLoadedMetadata = () => {
-      setDuration(player.audio.duration || 0);
+      syncTimeline(player.audio);
+      if (userSeekingRef.current || initialRestoreDoneRef.current) return;
       restorePlaybackSnapshot();
+      initialRestoreDoneRef.current = true;
+    };
+    const onTimelineChange = () => {
+      syncTimeline(player.audio);
+    };
+    const onSeeked = () => {
+      userSeekingRef.current = false;
     };
     const onListsSwitch = (...args: unknown[]) => {
       const detail = args[0] as { index?: number } | undefined;
-      const index = detail?.index ?? player.list.index ?? 0;
-      applyTrackIndex(index);
+      const previousIndex = player.list.index;
+      const index = detail?.index ?? previousIndex;
+      applyTrackIndex(index, previousIndex);
       userNavigatingRef.current = false;
     };
 
@@ -256,13 +321,22 @@ export function useOrbitAudioPlayer({
     player.on("loadedmetadata", onLoadedMetadata);
     player.on("listswitch", onListsSwitch);
     player.on("ended", onPause);
+    player.audio.addEventListener("durationchange", onTimelineChange);
+    player.audio.addEventListener("progress", onTimelineChange);
+    player.audio.addEventListener("seeked", onSeeked);
 
     if (player.audio.readyState >= 1) {
-      setDuration(player.audio.duration || 0);
-      restorePlaybackSnapshot();
+      syncTimeline(player.audio);
+      if (!initialRestoreDoneRef.current) {
+        restorePlaybackSnapshot();
+        initialRestoreDoneRef.current = true;
+      }
     }
 
     return () => {
+      player.audio.removeEventListener("durationchange", onTimelineChange);
+      player.audio.removeEventListener("progress", onTimelineChange);
+      player.audio.removeEventListener("seeked", onSeeked);
       player.destroy();
       playerRef.current = null;
       syncedTrackCountRef.current = 0;
@@ -270,15 +344,17 @@ export function useOrbitAudioPlayer({
       setIsPlaying(false);
       setCurrentTime(0);
       setDuration(0);
+      setTimelineStart(0);
     };
   }, [
     sessionId,
     storageName,
     preload,
     defaultLoop,
-    tracks,
+    tracksSignature,
     hasMultipleTracks,
     syncPlaybackSnapshot,
+    syncTimeline,
     restorePlaybackSnapshot,
     applyTrackIndex,
   ]);
@@ -343,15 +419,18 @@ export function useOrbitAudioPlayer({
     playerRef.current?.skipForward();
   };
 
-  const handleProgressClick = (event: MouseEvent<HTMLDivElement>) => {
+  const handleProgressSeek = useCallback((ratio: number) => {
     const player = playerRef.current;
-    if (!player || duration <= 0) return;
+    if (!player) return;
 
-    const rect = event.currentTarget.getBoundingClientRect();
-    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    player.seek(ratio * duration);
-    setCurrentTime(ratio * duration);
-  };
+    const target = seekTimeFromRatio(ratio, resolveAudioTimeline(player.audio));
+    if (target == null) return;
+
+    userSeekingRef.current = true;
+    player.seek(target);
+    setCurrentTime(target);
+    syncPlaybackSnapshot(player.audio);
+  }, [syncPlaybackSnapshot]);
 
   return {
     engineRef,
@@ -360,13 +439,14 @@ export function useOrbitAudioPlayer({
     isPlaying,
     currentTime,
     duration,
+    timelineStart,
+    handleProgressSeek,
     playbackMode,
     hasMultipleTracks,
     handlePlaybackModeChange,
     handleTogglePlay,
     handlePrev,
     handleNext,
-    handleProgressClick,
     switchToIndex,
     volume,
     playbackRate,
