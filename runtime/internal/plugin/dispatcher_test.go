@@ -27,6 +27,38 @@ func TestListItemsShouldRefresh(t *testing.T) {
 	}
 }
 
+func TestAutoListRefreshOnce(t *testing.T) {
+	sessions := NewSessionStore()
+	pluginID := "gequbao"
+	channelID := "douyin-hot"
+
+	if !sessions.BeginAutoListRefresh(pluginID, channelID) {
+		t.Fatal("first begin should succeed")
+	}
+	if !sessions.ListRefreshPending(pluginID, channelID) {
+		t.Fatal("expected pending after begin")
+	}
+	if sessions.BeginAutoListRefresh(pluginID, channelID) {
+		t.Fatal("second begin should be rejected while already requested")
+	}
+	if !sessions.ListRefreshPending(pluginID, channelID) {
+		t.Fatal("pending should remain true until settled")
+	}
+
+	sessions.MarkListRefreshSettled(pluginID, channelID)
+	if sessions.ListRefreshPending(pluginID, channelID) {
+		t.Fatal("expected pending cleared after settle")
+	}
+	if sessions.BeginAutoListRefresh(pluginID, channelID) {
+		t.Fatal("should not re-begin after settle without reset")
+	}
+
+	sessions.ResetAutoListRefresh(pluginID, channelID)
+	if !sessions.BeginAutoListRefresh(pluginID, channelID) {
+		t.Fatal("explicit reset should allow another begin")
+	}
+}
+
 func TestChapterContentNeedsDetailFetch(t *testing.T) {
 	cases := []struct {
 		name    string

@@ -205,6 +205,8 @@ func (q *RefreshQueue) runJob(ctx context.Context, job refreshJob) error {
 			log.Printf("refresh queue %s/%s panic: %v", job.pluginID, job.channelID, rec)
 		}
 	}()
+	defer q.registry.dispatch.sessions.MarkListRefreshSettled(job.pluginID, job.channelID)
+
 	rec, ok := q.registry.Get(job.pluginID)
 	if !ok || !rec.Active {
 		return nil

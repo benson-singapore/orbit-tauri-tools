@@ -8,6 +8,8 @@ export interface RuntimeDispatchResult {
   title?: string;
   item?: Article;
   next?: Record<string, string>;
+  /** True while an empty-list background refresh is still in flight. */
+  pending?: boolean;
 }
 
 async function apiBase(): Promise<string> {

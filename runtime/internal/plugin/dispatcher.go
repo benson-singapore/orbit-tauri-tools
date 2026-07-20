@@ -16,6 +16,9 @@ type DispatchResult struct {
 	Title   string            `json:"title,omitempty"`
 	Item    *FeedItem         `json:"item,omitempty"`
 	Next    map[string]string `json:"next,omitempty"`
+	// Pending is true when an empty list has a background refresh still in flight.
+	// Clients should keep polling while Pending is true, then stop when it clears.
+	Pending bool `json:"pending,omitempty"`
 }
 
 type FeatureDispatcher struct {
@@ -60,13 +63,24 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 		}
 		if itemCount == 0 {
 			if listItemsShouldRefresh(features, offset, itemCount) {
-				if _, err := d.registry.MergePluginVars(ctx, rec); err != nil {
-					return DispatchResult{}, err
+				if d.sessions.BeginAutoListRefresh(pluginID, channelID) {
+					if _, err := d.registry.MergePluginVars(ctx, rec); err != nil {
+						d.sessions.ResetAutoListRefresh(pluginID, channelID)
+						return DispatchResult{}, err
+					}
+					d.registry.refreshQueue.EnqueueInteractive(pluginID, channelID)
 				}
-				d.registry.refreshQueue.EnqueueInteractive(pluginID, channelID)
-				return DispatchResult{Items: []FeedItem{}, HasMore: false}, nil
+				return DispatchResult{
+					Items:   []FeedItem{},
+					HasMore: false,
+					Pending: d.sessions.ListRefreshPending(pluginID, channelID),
+				}, nil
 			}
-			return DispatchResult{Items: []FeedItem{}, HasMore: false}, nil
+			return DispatchResult{
+				Items:   []FeedItem{},
+				HasMore: false,
+				Pending: d.sessions.ListRefreshPending(pluginID, channelID),
+			}, nil
 		}
 		items := paginateItems(sess.Ephemeral, limit, offset)
 		if items == nil {
@@ -84,11 +98,18 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 		return DispatchResult{}, err
 	}
 	if len(rows) == 0 && listItemsShouldRefresh(features, offset, 0) {
-		if _, err := d.registry.MergePluginVars(ctx, rec); err != nil {
-			return DispatchResult{}, err
+		if d.sessions.BeginAutoListRefresh(pluginID, channelID) {
+			if _, err := d.registry.MergePluginVars(ctx, rec); err != nil {
+				d.sessions.ResetAutoListRefresh(pluginID, channelID)
+				return DispatchResult{}, err
+			}
+			d.registry.refreshQueue.EnqueueInteractive(pluginID, channelID)
 		}
-		d.registry.refreshQueue.EnqueueInteractive(pluginID, channelID)
-		return DispatchResult{Items: []FeedItem{}, HasMore: false}, nil
+		return DispatchResult{
+			Items:   []FeedItem{},
+			HasMore: false,
+			Pending: d.sessions.ListRefreshPending(pluginID, channelID),
+		}, nil
 	}
 	items := make([]FeedItem, 0, len(rows))
 	for _, row := range rows {
@@ -136,7 +157,11 @@ func (d *FeatureDispatcher) ClearChannelSession(pluginID, channelID string) {
 }
 
 func (d *FeatureDispatcher) Refresh(ctx context.Context, pluginID, channelID string) (DispatchResult, error) {
-	return d.dispatch(ctx, pluginID, channelID, TriggerRefresh, dispatchExtra{})
+	d.sessions.ResetAutoListRefresh(pluginID, channelID)
+	d.sessions.BeginAutoListRefresh(pluginID, channelID)
+	result, err := d.dispatch(ctx, pluginID, channelID, TriggerRefresh, dispatchExtra{})
+	d.sessions.MarkListRefreshSettled(pluginID, channelID)
+	return result, err
 }
 
 func (d *FeatureDispatcher) ClearAndRefresh(ctx context.Context, pluginID, channelID string) (DispatchResult, error) {
@@ -163,6 +188,8 @@ func (d *FeatureDispatcher) ClearAndRefresh(ctx context.Context, pluginID, chann
 		return DispatchResult{}, err
 	}
 	d.sessions.Clear(rec.ID, ch.ID)
+	d.sessions.BeginAutoListRefresh(pluginID, channelID)
+	defer d.sessions.MarkListRefreshSettled(pluginID, channelID)
 
 	params := ParamsForRefresh(ch, features)
 	result, err := d.registry.wasmExec.Fetch(ctx, dir, rec, FetchRequest{
@@ -264,6 +291,7 @@ func (d *FeatureDispatcher) OpenChapterDetail(ctx context.Context, pluginID, cha
 
 func (d *FeatureDispatcher) ScheduledRefresh(ctx context.Context, pluginID, channelID string) error {
 	_, err := d.dispatch(ctx, pluginID, channelID, TriggerScheduled, dispatchExtra{})
+	d.sessions.MarkListRefreshSettled(pluginID, channelID)
 	return err
 }
 

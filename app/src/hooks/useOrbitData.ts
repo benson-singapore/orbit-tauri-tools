@@ -131,8 +131,9 @@ function shouldScheduleBackgroundFeedReload(
   plugins: Plugin[],
   capabilities: ChannelCapabilities,
   search: string,
+  pending: boolean,
 ): boolean {
-  if (append || itemCount !== 0) return false;
+  if (append || itemCount !== 0 || !pending) return false;
   if (pluginId === "all" || feedChannel === "all") return false;
 
   const plugin = plugins.find(p => p.id === pluginId);
@@ -145,6 +146,7 @@ function shouldScheduleBackgroundFeedReload(
 function scheduleFeedReloadAfterBackgroundFetch(
   loadFeedPage: (options?: { offset?: number; append?: boolean }) => Promise<number>,
   getContext: () => { pluginId: string; channelId: string },
+  isPending?: () => boolean,
 ) {
   void (async () => {
     const context = getContext();
@@ -159,6 +161,7 @@ function scheduleFeedReloadAfterBackgroundFetch(
       await new Promise(resolve => window.setTimeout(resolve, delay));
       const itemCount = await loadFeedPage({ offset: 0, append: false });
       if (itemCount > 0 || itemCount < 0) return;
+      if (isPending && !isPending()) return;
     }
   })().catch(console.error);
 }
@@ -274,6 +277,7 @@ export function useOrbitData(
   const loadMoreInFlightRef = useRef(false);
   const loadMoreBlockedRef = useRef(false);
   const backgroundPollGenerationRef = useRef(0);
+  const feedListPendingRef = useRef(false);
   const settledFeedKeyRef = useRef<string | null>(null);
   const reorderPersistQueue = useRef(Promise.resolve());
   const pluginFilterRef = useRef(pluginFilter);
@@ -364,7 +368,8 @@ export function useOrbitData(
     const offset = options?.offset ?? 0;
     const activeChannel = pluginChannels.find(ch => ch.id === feedChannel);
 
-    const finishFeedPage = (itemCount: number) => {
+    const finishFeedPage = (itemCount: number, pending = false) => {
+      feedListPendingRef.current = pending;
       commitFeedSettled();
       return itemCount;
     };
@@ -411,7 +416,7 @@ export function useOrbitData(
         if (!append) {
           setUnreadTotal(items.filter(item => !item.isRead).length);
         }
-        return finishFeedPage(items.length);
+        return finishFeedPage(items.length, Boolean(result.pending));
       }
 
       const cap = channelCapabilitiesRef.current;
@@ -462,7 +467,7 @@ export function useOrbitData(
           paginated,
           paginationExhausted: feedPaginationExhaustedRef.current,
         }));
-        return finishFeedPage(items.length);
+        return finishFeedPage(items.length, Boolean(result.pending));
       }
 
       feedNextParamsRef.current = null;
@@ -490,7 +495,7 @@ export function useOrbitData(
       if (!append) {
         setUnreadTotal(items.filter(item => !item.isRead).length);
       }
-      return finishFeedPage(items.length);
+      return finishFeedPage(items.length, Boolean(result.pending));
     }
 
     let scopeIds: string[] = [];
@@ -584,6 +589,8 @@ export function useOrbitData(
 
         const itemCount = await loadFeedPage({ offset: 0, append: false });
         if (itemCount > 0 || itemCount < 0) return;
+        // Refresh finished with an empty list — stop polling instead of retrying for ~2 minutes.
+        if (!feedListPendingRef.current) return;
       }
     } finally {
       if (pollGeneration === backgroundPollGenerationRef.current) {
@@ -627,6 +634,7 @@ export function useOrbitData(
           pluginsRef.current,
           channelCapabilitiesRef.current,
           searchFilterRef.current.trim(),
+          feedListPendingRef.current,
         )
       ) {
         await pollFeedUntilData({
@@ -748,6 +756,7 @@ export function useOrbitData(
         pluginsRef.current,
         channelCapabilitiesRef.current,
         searchFilterRef.current.trim(),
+        feedListPendingRef.current,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -889,10 +898,14 @@ export function useOrbitData(
     ) => {
       const plugin = await installMarketPlugin(marketId, contentRating);
       await loadPlugins();
-      scheduleFeedReloadAfterBackgroundFetch(loadFeedPage, () => ({
-        pluginId: pluginFilterRef.current,
-        channelId: channelFilterRef.current,
-      }));
+      scheduleFeedReloadAfterBackgroundFetch(
+        loadFeedPage,
+        () => ({
+          pluginId: pluginFilterRef.current,
+          channelId: channelFilterRef.current,
+        }),
+        () => feedListPendingRef.current,
+      );
       return plugin;
     },
     [loadPlugins, loadFeedPage],
@@ -906,10 +919,14 @@ export function useOrbitData(
     ) => {
       const plugin = await updateMarketPlugin(marketId, pluginId, contentRating);
       await loadPlugins();
-      scheduleFeedReloadAfterBackgroundFetch(loadFeedPage, () => ({
-        pluginId: pluginFilterRef.current,
-        channelId: channelFilterRef.current,
-      }));
+      scheduleFeedReloadAfterBackgroundFetch(
+        loadFeedPage,
+        () => ({
+          pluginId: pluginFilterRef.current,
+          channelId: channelFilterRef.current,
+        }),
+        () => feedListPendingRef.current,
+      );
       return plugin;
     },
     [loadPlugins, loadFeedPage],
@@ -940,10 +957,14 @@ export function useOrbitData(
         await setPluginActive(id, nextActive);
         void loadFeedPage({ offset: 0, append: false }).catch(console.error);
         if (nextActive) {
-          scheduleFeedReloadAfterBackgroundFetch(loadFeedPage, () => ({
-        pluginId: pluginFilterRef.current,
-        channelId: channelFilterRef.current,
-      }));
+          scheduleFeedReloadAfterBackgroundFetch(
+            loadFeedPage,
+            () => ({
+              pluginId: pluginFilterRef.current,
+              channelId: channelFilterRef.current,
+            }),
+            () => feedListPendingRef.current,
+          );
         }
       } catch (err) {
         setPlugins(prev => prev.map(plugin => (

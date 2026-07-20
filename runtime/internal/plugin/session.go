@@ -20,6 +20,13 @@ type ChannelSession struct {
 	LastParams   map[string]string
 	Ephemeral    []FeedItem
 	HasMore      bool
+	// AutoListRefreshRequested is set when ListItems kicks off a one-shot
+	// background refresh for an empty channel. Prevents re-enqueue storms
+	// while the frontend polls for results.
+	AutoListRefreshRequested bool
+	// ListRefreshPending is true while that auto (or interactive) refresh is
+	// still queued/running for an empty list.
+	ListRefreshPending bool
 }
 
 type ChapterSession struct {
@@ -115,6 +122,57 @@ func (s *SessionStore) Clear(pluginID, channelID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.sessions, s.key(pluginID, channelID))
+}
+
+// BeginAutoListRefresh marks a one-shot empty-list refresh as requested+pending.
+// Returns false if an auto refresh was already requested for this session.
+func (s *SessionStore) BeginAutoListRefresh(pluginID, channelID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := s.key(pluginID, channelID)
+	sess := s.sessions[k]
+	if sess == nil {
+		sess = &ChannelSession{}
+		s.sessions[k] = sess
+	}
+	if sess.AutoListRefreshRequested {
+		return false
+	}
+	sess.AutoListRefreshRequested = true
+	sess.ListRefreshPending = true
+	return true
+}
+
+// ListRefreshPending reports whether an empty-list refresh is still in flight.
+func (s *SessionStore) ListRefreshPending(pluginID, channelID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess := s.sessions[s.key(pluginID, channelID)]
+	return sess != nil && sess.ListRefreshPending
+}
+
+// MarkListRefreshSettled clears the in-flight flag after a refresh attempt finishes.
+func (s *SessionStore) MarkListRefreshSettled(pluginID, channelID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess := s.sessions[s.key(pluginID, channelID)]
+	if sess == nil {
+		return
+	}
+	sess.ListRefreshPending = false
+}
+
+// ResetAutoListRefresh allows the next empty ListItems call to enqueue again
+// (used after an explicit user refresh).
+func (s *SessionStore) ResetAutoListRefresh(pluginID, channelID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess := s.sessions[s.key(pluginID, channelID)]
+	if sess == nil {
+		return
+	}
+	sess.AutoListRefreshRequested = false
+	sess.ListRefreshPending = false
 }
 
 func (s *SessionStore) ResetFeedPagination(
