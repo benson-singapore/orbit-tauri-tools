@@ -83,6 +83,8 @@ export function useArticleChapters({
   const [activeChapter, setActiveChapter] = useState<Article | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const resumeSeekLockRef = useRef(false);
+  // One-shot gate: chapter list pagination must not keep re-applying resume.
+  const initialResumeDoneRef = useRef(false);
   const itemsRef = useRef<Article[]>([]);
   const hasMoreRef = useRef(false);
   const loadingMoreRef = useRef(false);
@@ -97,15 +99,34 @@ export function useArticleChapters({
   onChapterDetailLoadedRef.current = onChapterDetailLoaded;
   const initialChapterIdRef = useRef(initialChapterId);
   initialChapterIdRef.current = initialChapterId;
+  const pluginMetaRef = useRef(pluginMeta);
+  pluginMetaRef.current = pluginMeta;
+  const activeChannelRef = useRef(activeChannel);
+  activeChannelRef.current = activeChannel;
+  const storedChannelRef = useRef(storedChannel);
+  storedChannelRef.current = storedChannel;
+  const parentRef = useRef(parent);
+  parentRef.current = parent;
+  const openSessionKeyRef = useRef<string | null>(null);
 
   const resolveChannelId = useCallback(
     (article: Article) =>
-      resolveArticleDetailChannel(article, pluginMeta, activeChannel, storedChannel),
-    [pluginMeta, activeChannel, storedChannel],
+      resolveArticleDetailChannel(
+        article,
+        pluginMetaRef.current,
+        activeChannelRef.current,
+        storedChannelRef.current,
+      ),
+    [],
   );
 
   const loadChapterDetail = useCallback(
-    (chapter: Article, parentArticle: Article) => {
+    (chapter: Article, parentArticle: Article, options?: { force?: boolean }) => {
+      // Avoid re-fetching the chapter already on screen (list pagination / resume
+      // re-entry used to flip detailLoading and remount comic images → CDN 403).
+      if (!options?.force && activeChapterRef.current?.id === chapter.id) {
+        return Promise.resolve(activeChapterRef.current);
+      }
       const channelId = resolveChannelId(parentArticle);
       setActiveChapter(chapter);
       setDetailLoading(true);
@@ -126,10 +147,14 @@ export function useArticleChapters({
           console.error("open chapter detail failed", err);
           return chapter;
         })
-        .finally(() => setDetailLoading(false));
+        .finally(() => {
+          setDetailLoading(false);
+        });
     },
     [resolveChannelId],
   );
+  const loadChapterDetailRef = useRef(loadChapterDetail);
+  loadChapterDetailRef.current = loadChapterDetail;
 
   const applyRefreshResult = useCallback(
     (result: { items?: Article[]; hasMore?: boolean; title?: string }) => {
@@ -142,8 +167,9 @@ export function useArticleChapters({
       if (result.title) {
         setTitle(result.title);
       }
+      const parentArticle = parentRef.current;
       const first = nextItems[0];
-      if (!first || !parent) {
+      if (!first || !parentArticle) {
         setActiveChapter(null);
         return Promise.resolve(null);
       }
@@ -154,13 +180,16 @@ export function useArticleChapters({
         : null)
         ?? (resumeId ? nextItems.find(item => item.id === resumeId) : null)
         ?? first;
-      return loadChapterDetail(target, parent);
+      return loadChapterDetailRef.current(target, parentArticle, { force: true });
     },
-    [parent, loadChapterDetail],
+    [],
   );
 
   useEffect(() => {
     if (!enabled || !parent) {
+      openSessionKeyRef.current = null;
+      initialResumeDoneRef.current = false;
+      resumeSeekLockRef.current = false;
       itemsRef.current = [];
       hasMoreRef.current = false;
       setItems([]);
@@ -172,8 +201,17 @@ export function useArticleChapters({
     }
 
     if (
-      !shouldOpenChaptersForArticle(parent, pluginMeta, activeChannel, capabilities, storedChannel)
+      !shouldOpenChaptersForArticle(
+        parent,
+        pluginMetaRef.current,
+        activeChannel,
+        capabilities,
+        storedChannel,
+      )
     ) {
+      openSessionKeyRef.current = null;
+      initialResumeDoneRef.current = false;
+      resumeSeekLockRef.current = false;
       itemsRef.current = [];
       hasMoreRef.current = false;
       setItems([]);
@@ -184,7 +222,20 @@ export function useArticleChapters({
     }
 
     let cancelled = false;
-    const channelId = resolveChannelId(parent);
+    const parentArticle = parent;
+    const channelId = resolveChannelId(parentArticle);
+    const sessionKey = `${parentArticle.pluginId}:${parentArticle.id}:${channelId}:${openToken}`;
+    const sessionChanged = openSessionKeyRef.current !== sessionKey;
+    openSessionKeyRef.current = sessionKey;
+
+    // Soft re-entry from unstable effect deps must not re-open chapters: that
+    // would replace a paginated list with page-1 and remount comic images.
+    if (!sessionChanged && itemsRef.current.length > 0) {
+      return;
+    }
+
+    initialResumeDoneRef.current = false;
+    resumeSeekLockRef.current = false;
     itemsRef.current = [];
     hasMoreRef.current = false;
     setItems([]);
@@ -197,9 +248,9 @@ export function useArticleChapters({
       if (capabilities.canRefreshChapters) {
         try {
           const cached = await fetchRuntimeChapters({
-            pluginId: parent.pluginId,
+            pluginId: parentArticle.pluginId,
             channelId,
-            parentId: parent.id,
+            parentId: parentArticle.id,
           });
           if ((cached.items ?? []).length > 0) {
             return cached;
@@ -208,7 +259,7 @@ export function useArticleChapters({
           console.error("load cached chapters failed", err);
         }
       }
-      return runtimeOpenChapters(parent.pluginId, channelId, parent.id);
+      return runtimeOpenChapters(parentArticle.pluginId, channelId, parentArticle.id);
     };
 
     void loadChapters()
@@ -230,7 +281,10 @@ export function useArticleChapters({
         const target = targetId
           ? nextItems.find(item => item.id === targetId) ?? first
           : first;
-        return loadChapterDetail(target, parent);
+        if (target.id === targetId || !targetId) {
+          initialResumeDoneRef.current = true;
+        }
+        return loadChapterDetailRef.current(target, parentArticle, { force: true });
       })
       .catch(err => {
         if (!cancelled) console.error("open chapters failed", err);
@@ -248,50 +302,69 @@ export function useArticleChapters({
     enabled,
     openToken,
     activeChannel,
-    pluginMeta,
     capabilities.hasChapters,
     capabilities.chaptersLabel,
     capabilities.canRefreshChapters,
     storedChannel,
     resolveChannelId,
-    loadChapterDetail,
   ]);
 
   useEffect(() => {
-    if (!enabled || !parent) return;
+    const parentArticle = parentRef.current;
+    if (!enabled || !parentArticle) return;
     if (!initialChapterId) return;
+    if (initialResumeDoneRef.current) return;
     if (items.length === 0) return;
     if (loading || detailLoading) return;
-    if (activeChapter?.id === initialChapterId) return;
+    if (activeChapter?.id === initialChapterId) {
+      initialResumeDoneRef.current = true;
+      return;
+    }
 
     const target = items.find(item => item.id === initialChapterId);
     if (!target) return;
 
-    void loadChapterDetail(target, parent);
+    // Don't steal focus once the user has moved past the default first chapter.
+    const firstId = items[0]?.id;
+    if (activeChapter?.id && activeChapter.id !== firstId) {
+      initialResumeDoneRef.current = true;
+      return;
+    }
+
+    initialResumeDoneRef.current = true;
+    void loadChapterDetailRef.current(target, parentArticle);
   }, [
     enabled,
-    parent,
+    parent?.id,
+    parent?.pluginId,
     initialChapterId,
-    items,
+    items.length,
     loading,
     detailLoading,
     activeChapter?.id,
-    loadChapterDetail,
   ]);
 
   useEffect(() => {
-    if (!enabled || !parent) return;
+    const parentArticle = parentRef.current;
+    if (!enabled || !parentArticle) return;
     if (!initialChapterId) return;
+    if (initialResumeDoneRef.current) return;
     if (items.length === 0) return;
     if (loading || loadingMore || refreshing || detailLoading) return;
     if (!capabilities.canLoadMoreChapters) return;
     if (!hasMore) return;
     if (resumeSeekLockRef.current) return;
-    if (activeChapter?.id === initialChapterId) return;
+    if (activeChapter?.id === initialChapterId) {
+      initialResumeDoneRef.current = true;
+      return;
+    }
 
     const firstId = items[0]?.id;
     const autoSeekAllowed = !activeChapter?.id || activeChapter.id === firstId;
-    if (!autoSeekAllowed) return;
+    if (!autoSeekAllowed) {
+      initialResumeDoneRef.current = true;
+      return;
+    }
 
     if (items.some(item => item.id === initialChapterId)) return;
 
@@ -300,13 +373,17 @@ export function useArticleChapters({
 
     const run = async () => {
       try {
-        const channelId = resolveChannelId(parent);
+        const channelId = resolveChannelId(parentArticle);
         let merged = [...itemsRef.current];
         // Avoid runaway loops if a plugin returns inconsistent pagination.
         for (let i = 0; i < 25; i += 1) {
           if (cancelled) return;
 
-          const result = await runtimeLoadMoreChapters(parent.pluginId, channelId, parent.id);
+          const result = await runtimeLoadMoreChapters(
+            parentArticle.pluginId,
+            channelId,
+            parentArticle.id,
+          );
           const nextItems = result.items ?? [];
 
           if (nextItems.length > 0) {
@@ -323,7 +400,8 @@ export function useArticleChapters({
 
           const target = merged.find(item => item.id === initialChapterId);
           if (target) {
-            void loadChapterDetail(target, parent);
+            initialResumeDoneRef.current = true;
+            void loadChapterDetailRef.current(target, parentArticle);
             return;
           }
 
@@ -343,9 +421,10 @@ export function useArticleChapters({
     };
   }, [
     enabled,
-    parent,
+    parent?.id,
+    parent?.pluginId,
     initialChapterId,
-    items,
+    items.length,
     loading,
     loadingMore,
     refreshing,
@@ -354,7 +433,6 @@ export function useArticleChapters({
     hasMore,
     activeChapter?.id,
     resolveChannelId,
-    loadChapterDetail,
   ]);
 
   const selectChapter = useCallback(

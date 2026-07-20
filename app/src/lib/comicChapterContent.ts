@@ -577,6 +577,8 @@ export function prepareComicStreamSlotHtml(contentHtml: string): string {
 
   // Some plugin chapters inject a sticky "简介" card before pages.
   // In stream mode this card can persist across chapter boundaries.
+  // Only strip intro chrome — never remove the whole `.comic-detail` wrapper,
+  // because page images / `.comic-reader` often live inside it.
   let removed = false;
   for (const detailBody of body.querySelectorAll<HTMLElement>(".comic-detail-body")) {
     const text = (detailBody.textContent ?? "").replace(/\s+/g, "");
@@ -584,8 +586,16 @@ export function prepareComicStreamSlotHtml(contentHtml: string): string {
     const looksLikeIntro = /来源|打开原网页|简介|介绍/.test(text);
     if (!looksLikeIntro) continue;
 
-    const removableRoot = detailBody.closest(".comic-detail") ?? detailBody;
-    removableRoot.remove();
+    // Gallery chapters put page images inside the same detail-body as "共 N 张".
+    // Keep those intact; only remove pure intro/synopsis cards.
+    if (collectComicPageImageElements(detailBody).length > 0) {
+      continue;
+    }
+
+    const detail = detailBody.closest(".comic-detail");
+    const stickyHeader = detail?.querySelector(":scope > header") ?? null;
+    detailBody.remove();
+    stickyHeader?.remove();
     removed = true;
   }
 

@@ -980,6 +980,30 @@ func (d *FeatureDispatcher) loadChapterListResult(
 	return items, title, nil
 }
 
+// chapterContentNeedsDetailFetch reports whether cached chapter HTML is only a
+// list/meta shell (e.g. "共 10 张 · 打开原网页") and the detail route should run.
+func chapterContentNeedsDetailFetch(content string) bool {
+	c := strings.TrimSpace(content)
+	if c == "" {
+		return true
+	}
+	if strings.HasPrefix(c, "[") {
+		return false
+	}
+	lower := strings.ToLower(c)
+	if strings.Contains(lower, "<img") || strings.Contains(lower, "comic-reader") {
+		return false
+	}
+	compact := strings.Join(strings.Fields(c), "")
+	if strings.Contains(compact, "打开原网页") {
+		return true
+	}
+	if strings.Contains(compact, "共") && strings.Contains(compact, "张") {
+		return true
+	}
+	return false
+}
+
 func (d *FeatureDispatcher) handleOpenChapterDetail(
 	ctx context.Context,
 	rec *PluginRecord,
@@ -992,7 +1016,7 @@ func (d *FeatureDispatcher) handleOpenChapterDetail(
 	if features.Chapters == nil || features.Chapters.Detail == nil {
 		return DispatchResult{}, fmt.Errorf("channel has no chapter detail feature")
 	}
-	if strings.TrimSpace(chapterItem.Content) != "" {
+	if !chapterContentNeedsDetailFetch(chapterItem.Content) {
 		return DispatchResult{Item: &chapterItem}, nil
 	}
 	route, params := ParamsForChapterDetail(features, parentItem, chapterItem)
@@ -1081,6 +1105,12 @@ func (d *FeatureDispatcher) persistChapterList(
 	limit int,
 	mode string,
 ) error {
+	// Chapter list payloads often include partial HTML (title / "共 N 张" cards).
+	// That must not overwrite previously fetched detail bodies, and must not
+	// short-circuit openChapterDetail on the next click.
+	for i := range items {
+		items[i].Content = ""
+	}
 	d.preserveExistingChapterContent(ctx, items, rec.ID, ch.ID, parentID)
 	startOrder := 0
 	if mode == "append" || mode == "incremental" {

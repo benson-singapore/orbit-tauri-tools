@@ -283,18 +283,17 @@ export function ArticleDetailPanel({
 
   const baseDisplayContent = comicHtml;
 
+  // Keep stream enabled without requiring activeChapter — brief clears during
+  // reload must not disable the hook or remount page images (CDN 403).
   const canUseComicChapterStream = Boolean(
     isComicReaderContent
     && chapters.isActive
     && hasChaptersMode
-    && initialArticle
-    && chapters.activeChapter,
+    && initialArticle,
   );
 
-  const useComicChapterStreamMode = canUseComicChapterStream;
-
   const comicStream = useComicChapterStream({
-    enabled: useComicChapterStreamMode,
+    enabled: canUseComicChapterStream,
     parent: hasChaptersMode ? initialArticle : null,
     chapterItems: chapters.items,
     activeChapter: chapters.activeChapter,
@@ -306,7 +305,8 @@ export function ArticleDetailPanel({
     scrollRootRef,
   });
 
-  const comicChapterStreamActive = useComicChapterStreamMode && comicStream.slots.length > 0;
+  const useComicChapterStreamMode = canUseComicChapterStream;
+  const comicChapterStreamActive = comicStream.slots.length > 0;
 
   const canUseNovelChapterStream = Boolean(
     pluginMeta?.mediaType === "novel"
@@ -335,8 +335,6 @@ export function ArticleDetailPanel({
   });
 
   const novelChapterStreamActive = canUseNovelChapterStream && novelStream.slots.length > 0;
-  const serialStreamContentReady = canUseNovelChapterStream
-    || (useComicChapterStreamMode && comicStream.slots.length > 0);
 
   useEffect(() => {
     if (pluginMeta?.mediaType !== "novel") {
@@ -447,6 +445,14 @@ export function ArticleDetailPanel({
   const showContentLoading = loading
     || chapters.detailLoading
     || (chapters.isActive && chapters.loading);
+  const hasRenderableContent = Boolean(
+    comicPageUrls?.length
+    || comicHtml
+    || displayContent
+    || comicStream.slots.some(slot => slot.status === "ready")
+    || (canUseNovelChapterStream && novelStream.slots.some(slot => slot.status === "ready")),
+  );
+  const showContentLoadingPlaceholder = showContentLoading && !hasRenderableContent;
 
   usePlaybackProgress({
     pluginMeta,
@@ -842,12 +848,12 @@ export function ArticleDetailPanel({
               </div>
             ) : null}
 
-            {showContentLoading && !serialStreamContentReady ? (
+            {showContentLoadingPlaceholder ? (
               <div className="mt-6 flex items-center gap-2 text-sm orbit-detail-meta">
                 <span className="inline-block w-4 h-4 border-2 border-[color-mix(in_srgb,var(--orbit-accent)_35%,transparent)] border-t-[var(--orbit-accent)] rounded-full animate-spin" />
                 加载正文中…
               </div>
-            ) : useComicChapterStreamMode && comicStream.slots.length > 0 ? (
+            ) : comicChapterStreamActive ? (
                 <ComicChapterStream
                   slots={comicStream.slots}
                   streamContainerRef={comicStream.streamContainerRef}

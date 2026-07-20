@@ -1,6 +1,9 @@
 package plugin
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestListItemsShouldRefresh(t *testing.T) {
 	refreshOn := ResolvedFeatures{
@@ -21,6 +24,40 @@ func TestListItemsShouldRefresh(t *testing.T) {
 	}
 	if listItemsShouldRefresh(refreshOff, 0, 0) {
 		t.Fatal("expected no auto refresh when feed.refresh is false")
+	}
+}
+
+func TestChapterContentNeedsDetailFetch(t *testing.T) {
+	cases := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{name: "empty", content: "", want: true},
+		{name: "whitespace", content: "  \n", want: true},
+		{name: "json pages", content: `["https://cdn.example.com/1.webp"]`, want: false},
+		{name: "comic reader html", content: `<div class="comic-reader"><p>hi</p></div>`, want: false},
+		{name: "html with images", content: `<p>x</p><img src="https://cdn.example.com/1.jpg">`, want: false},
+		{
+			name:    "gallery meta shell",
+			content: `<article class="comic-detail"><section class="comic-detail-body">共 10 张 · 打开原网页</section></article>`,
+			want:    true,
+		},
+		{
+			name:    "open original link only",
+			content: `<p><a href="#">打开原网页</a></p>`,
+			want:    true,
+		},
+		{name: "novel text", content: `<p>` + strings.Repeat("章节正文", 20) + `</p>`, want: false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := chapterContentNeedsDetailFetch(tc.content)
+			if got != tc.want {
+				t.Fatalf("chapterContentNeedsDetailFetch() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

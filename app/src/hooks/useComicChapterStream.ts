@@ -461,7 +461,7 @@ export function useComicChapterStream({
   }, [scrollRootRef, syncVisibleChapter, tryPrefetchNextChapter, tryTrimLeadingSlot, runtimeBase]);
 
   useEffect(() => {
-    if (!enabled || !parent || !activeChapter) {
+    if (!enabled || !parent) {
       setSlots([]);
       setReachedEnd(false);
       setVisibleChapter(null);
@@ -475,6 +475,12 @@ export function useComicChapterStream({
       streamInteractedRef.current = false;
       pendingScrollToChapterRef.current = null;
       pendingScrollGenerationRef.current = 0;
+      return;
+    }
+
+    // Keep rendered slots if activeChapter is briefly cleared during a same-parent
+    // reload — remounting page images is what triggers CDN 403s.
+    if (!activeChapter) {
       return;
     }
 

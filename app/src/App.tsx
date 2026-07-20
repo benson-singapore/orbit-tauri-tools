@@ -724,6 +724,10 @@ export default function App() {
   );
   const splitDetailVideoArticle = useMemo(() => null, []);
 
+  const hasFilteredArticles = filteredArticles.length > 0;
+  const filteredArticlesRef = useRef(filteredArticles);
+  filteredArticlesRef.current = filteredArticles;
+
   useEffect(() => {
     if (!isSplitDetailMode || activePlugin === "all") return;
 
@@ -737,11 +741,13 @@ export default function App() {
       return;
     }
 
-    const pluginArticles = filteredArticles.filter(item => item.pluginId === activePlugin);
+    const pluginArticles = filteredArticlesRef.current.filter(item => item.pluginId === activePlugin);
     const first = pluginArticles[0] ?? null;
     setSplitDetailArticle(first);
     setSplitDetailFeedChannel(first ? activeChannel : null);
-  }, [isSplitDetailMode, activePlugin, activeChannel, filteredArticles]);
+    // Depend on hasFilteredArticles (boolean) rather than the articles array so feed
+    // pagination does not re-enter this effect and disturb the open detail.
+  }, [isSplitDetailMode, activePlugin, activeChannel, hasFilteredArticles]);
 
   const splitDetailActiveChannel = useMemo(() => {
     const fromArticle = splitDetailArticle?.channelId?.trim();
@@ -831,17 +837,16 @@ export default function App() {
     },
   });
 
+  // Keep stream enabled without requiring activeChapter — brief clears during
+  // reload must not disable the hook or remount page images (CDN 403).
   const canUseComicChapterStream = Boolean(
     isComicReaderContent
     && chapters.isActive
-    && chaptersParent
-    && chapters.activeChapter,
+    && chaptersParent,
   );
 
-  const useComicChapterStreamMode = canUseComicChapterStream;
-
   const comicStream = useComicChapterStream({
-    enabled: useComicChapterStreamMode,
+    enabled: canUseComicChapterStream,
     parent: chaptersParent,
     chapterItems: chapters.items,
     activeChapter: chapters.activeChapter,
@@ -853,7 +858,8 @@ export default function App() {
     scrollRootRef: readerPanelRef,
   });
 
-  const comicChapterStreamActive = useComicChapterStreamMode && comicStream.slots.length > 0;
+  const useComicChapterStreamMode = canUseComicChapterStream;
+  const comicChapterStreamActive = comicStream.slots.length > 0;
 
   const canUseNovelChapterStream = Boolean(
     chaptersPluginMeta?.mediaType === "novel"
@@ -881,8 +887,6 @@ export default function App() {
   });
 
   const novelChapterStreamActive = canUseNovelChapterStream && novelStream.slots.length > 0;
-  const serialStreamContentReady = canUseNovelChapterStream
-    || (useComicChapterStreamMode && comicStream.slots.length > 0);
 
   useEffect(() => {
     const isNovelMode = chaptersPluginMeta?.mediaType === "novel"
@@ -1058,6 +1062,14 @@ export default function App() {
   const showContentLoading = contentLoading
     || chapters.detailLoading
     || (chapters.isActive && chapters.loading);
+  const hasRenderableInlineContent = Boolean(
+    comicPageUrls?.length
+    || comicHtml
+    || selectedItemDisplayContent
+    || comicStream.slots.some(slot => slot.status === "ready")
+    || (canUseNovelChapterStream && novelStream.slots.some(slot => slot.status === "ready")),
+  );
+  const showContentLoadingPlaceholder = showContentLoading && !hasRenderableInlineContent;
   usePlaybackProgress({
     pluginMeta: inlinePlaybackPluginMeta,
     channelId: inlinePlaybackChannelId,
@@ -2206,6 +2218,10 @@ export default function App() {
     setSplitDetailFeedChannel(activeChannel);
     void markArticleRead(article);
   }, [activeChannel, markArticleRead]);
+
+  const handleSplitDetailLoadMore = useCallback(() => {
+    void loadMore().catch(console.error);
+  }, [loadMore]);
 
   const handleSelectPreviewMode = useCallback((mode: PluginPreviewMode) => {
     if (activePlugin === "all") return;
@@ -3739,9 +3755,7 @@ export default function App() {
                       loadingMore={feedLoadingMore}
                       searching={feedSearching}
                       hasMore={feedHasMore}
-                      onLoadMore={() => {
-                        void loadMore().catch(console.error);
-                      }}
+                      onLoadMore={handleSplitDetailLoadMore}
                       onItemSelect={handleSplitDetailSelect}
                     />
                   </div>
@@ -3990,12 +4004,12 @@ export default function App() {
                 ) : null}
 
                 {/* Content body */}
-                {showContentLoading && !serialStreamContentReady ? (
+                {showContentLoadingPlaceholder ? (
                   <div className="mt-6 flex items-center gap-2 text-sm text-neutral-400">
                     <span className="inline-block w-4 h-4 border-2 border-neutral-300 border-t-indigo-500 rounded-full animate-spin" />
                     加载正文中…
                   </div>
-                ) : useComicChapterStreamMode && comicStream.slots.length > 0 ? (
+                ) : comicChapterStreamActive ? (
                   <ComicChapterStream
                     slots={comicStream.slots}
                     streamContainerRef={comicStream.streamContainerRef}
