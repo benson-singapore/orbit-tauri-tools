@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
+import { prepareArticleHtmlContent } from "@/lib/articleContent";
 import { downloadArticleContentImage } from "@/lib/articleContentImagePreview";
 
 export interface GalleryImageItem {
@@ -9,15 +10,64 @@ export interface GalleryImageItem {
   title: string;
   author?: string;
   content?: string;
+  summary?: string;
+  sourceUrl?: string;
 }
+
+export type GalleryImageItemDetail = Pick<GalleryImageItem, "content" | "summary" | "sourceUrl">;
+
+const PROMPT_SECTION_LABEL_PATTERN = /^(英文提示词|中文提示词|正向提示词|反向提示词|negative prompt|positive prompt)$/i;
+const PROMPT_META_LINE_PATTERN = /^模型[：:]/;
 
 function contentToPlainText(html: string): string {
   const trimmed = html.trim();
   if (!trimmed) return "";
-  if (typeof DOMParser !== "undefined") {
-    return (new DOMParser().parseFromString(trimmed, "text/html").body.textContent ?? "").trim();
+  if (typeof DOMParser === "undefined") {
+    return trimmed.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
   }
-  return trimmed.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+
+  const doc = new DOMParser().parseFromString(trimmed, "text/html");
+  const blockSelector = "p, div, li, h1, h2, h3, h4, h5, h6, blockquote, pre, tr";
+  doc.body.querySelectorAll(blockSelector).forEach(element => {
+    element.prepend(doc.createTextNode("\n"));
+    element.append(doc.createTextNode("\n"));
+  });
+  doc.body.querySelectorAll("br").forEach(element => {
+    element.replaceWith(doc.createTextNode("\n"));
+  });
+
+  return (doc.body.textContent ?? "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function enhancePromptContentHtml(html: string): string {
+  const trimmed = html.trim();
+  if (!trimmed || typeof DOMParser === "undefined") {
+    return html;
+  }
+
+  const doc = new DOMParser().parseFromString(trimmed, "text/html");
+  let changed = false;
+
+  doc.body.querySelectorAll("p, div, h3, h4, h5, h6, strong, b").forEach(element => {
+    const text = (element.textContent ?? "").trim();
+    if (!text) return;
+
+    if (PROMPT_SECTION_LABEL_PATTERN.test(text)) {
+      element.classList.add("image-lightbox-prompt-label");
+      changed = true;
+      return;
+    }
+
+    if (PROMPT_META_LINE_PATTERN.test(text)) {
+      element.classList.add("image-lightbox-prompt-meta");
+      changed = true;
+    }
+  });
+
+  return changed ? doc.body.innerHTML : html;
 }
 
 interface ImageLightboxProps {
@@ -27,6 +77,7 @@ interface ImageLightboxProps {
   onClose: () => void;
   onIndexChange: (index: number) => void;
   onNearEnd?: () => void;
+  onResolveDetail?: (item: GalleryImageItem) => Promise<GalleryImageItemDetail>;
 }
 
 const DEFAULT_CONTENT_PANEL_WIDTH = 320;
@@ -45,6 +96,7 @@ export function ImageLightbox({
   onClose,
   onIndexChange,
   onNearEnd,
+  onResolveDetail,
 }: ImageLightboxProps) {
   const thumbStripRef = useRef<HTMLDivElement>(null);
   const mainAreaRef = useRef<HTMLDivElement>(null);
@@ -54,9 +106,28 @@ export function ImageLightbox({
   const [contentCopied, setContentCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [showContent, setShowContent] = useState(false);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [resolvedDetails, setResolvedDetails] = useState<Record<string, GalleryImageItemDetail>>({});
   const [contentPanelWidth, setContentPanelWidth] = useState(DEFAULT_CONTENT_PANEL_WIDTH);
   const current = images[currentIndex];
-  const plainContent = contentToPlainText(current?.content ?? "");
+  const resolvedDetail = current ? resolvedDetails[current.id] : undefined;
+  const effectiveContent = resolvedDetail?.content ?? current?.content;
+  const effectiveSummary = (resolvedDetail?.summary ?? current?.summary ?? "").trim();
+  const effectiveSourceUrl = resolvedDetail?.sourceUrl ?? current?.sourceUrl;
+  const plainContent = useMemo(
+    () => contentToPlainText(effectiveContent ?? ""),
+    [effectiveContent],
+  );
+  const displayContentHtml = useMemo(() => {
+    const raw = effectiveContent?.trim();
+    if (!raw) return "";
+    return enhancePromptContentHtml(
+      prepareArticleHtmlContent(raw, runtimeBase, { darkTheme: true }),
+    );
+  }, [effectiveContent, runtimeBase]);
+  const hasResolvableDetail = Boolean(
+    plainContent || effectiveSummary || onResolveDetail,
+  );
 
   const copyImageUrl = useCallback(async () => {
     const url = current?.url?.trim();
@@ -77,9 +148,10 @@ export function ImageLightbox({
   }, [current?.url]);
 
   const copyContent = useCallback(async () => {
-    if (!plainContent) return;
+    const text = plainContent || effectiveSummary;
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(plainContent);
+      await navigator.clipboard.writeText(text);
       setContentCopied(true);
       if (contentCopyResetTimerRef.current !== null) {
         window.clearTimeout(contentCopyResetTimerRef.current);
@@ -91,7 +163,34 @@ export function ImageLightbox({
     } catch {
       // ignore clipboard errors
     }
-  }, [plainContent]);
+  }, [plainContent, effectiveSummary]);
+
+  const loadDetailIfNeeded = useCallback(async (item: GalleryImageItem) => {
+    if (!onResolveDetail) return;
+    if (resolvedDetails[item.id]) return;
+    const hasLocalContent = Boolean(contentToPlainText(item.content ?? "") || item.summary?.trim());
+    if (hasLocalContent) return;
+
+    setDetailLoading(true);
+    try {
+      const detail = await onResolveDetail(item);
+      setResolvedDetails(prev => ({ ...prev, [item.id]: detail }));
+    } catch {
+      // ignore detail fetch errors
+    } finally {
+      setDetailLoading(false);
+    }
+  }, [onResolveDetail, resolvedDetails]);
+
+  const toggleContentPanel = useCallback(() => {
+    setShowContent(prev => {
+      const next = !prev;
+      if (next && current) {
+        void loadDetailIfNeeded(current);
+      }
+      return next;
+    });
+  }, [current, loadDetailIfNeeded]);
 
   const downloadImage = useCallback(async () => {
     const url = current?.url?.trim();
@@ -120,7 +219,13 @@ export function ImageLightbox({
   useEffect(() => {
     setUrlCopied(false);
     setContentCopied(false);
+    setDetailLoading(false);
   }, [currentIndex]);
+
+  useEffect(() => {
+    if (!showContent || !current) return;
+    void loadDetailIfNeeded(current);
+  }, [showContent, current, loadDetailIfNeeded]);
 
   const goPrev = useCallback(() => {
     if (currentIndex > 0) {
@@ -246,10 +351,10 @@ export function ImageLightbox({
                 className={`w-4 h-4${downloading ? " animate-pulse" : ""}`}
               />
             </button>
-            {plainContent || showContent ? (
+            {hasResolvableDetail ? (
               <button
                 type="button"
-                onClick={() => setShowContent(prev => !prev)}
+                onClick={toggleContentPanel}
                 className={`shrink-0 p-1.5 rounded-lg transition-colors ${
                   showContent
                     ? "text-white bg-white/15"
@@ -339,10 +444,58 @@ export function ImageLightbox({
               style={{ width: contentPanelWidth }}
               aria-label="图片内容"
             >
-              {plainContent ? (
+              {detailLoading ? (
+                <div className="flex items-center gap-2 py-2 text-sm text-white/50">
+                  <span className="inline-block w-4 h-4 border-2 border-white/20 border-t-white/70 rounded-full animate-spin" />
+                  正在加载内容…
+                </div>
+              ) : displayContentHtml || plainContent ? (
                 <>
-                  <p className="text-sm text-white/90 leading-relaxed whitespace-pre-wrap break-words select-text">
-                    {plainContent}
+                  {displayContentHtml ? (
+                    <div
+                      className="image-lightbox-content article-content text-sm select-text"
+                      data-theme="dark"
+                      dangerouslySetInnerHTML={{ __html: displayContentHtml }}
+                    />
+                  ) : (
+                    <p className="text-sm text-white/90 leading-relaxed whitespace-pre-wrap break-words select-text">
+                      {plainContent}
+                    </p>
+                  )}
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => void copyContent()}
+                      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-white/70 hover:text-white hover:bg-white/10 transition-colors"
+                      title={contentCopied ? "已复制" : "复制文字"}
+                      aria-label={contentCopied ? "已复制文字" : "复制文字"}
+                    >
+                      {contentCopied ? (
+                        <Icon name="check" className="w-3.5 h-3.5" />
+                      ) : (
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          className="w-3.5 h-3.5"
+                          aria-hidden
+                        >
+                          <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+                          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                        </svg>
+                      )}
+                      {contentCopied ? "已复制" : "复制"}
+                    </button>
+                  </div>
+                </>
+              ) : effectiveSummary ? (
+                <>
+                  <p className="text-sm text-white/70 leading-relaxed italic whitespace-pre-wrap break-words select-text">
+                    “ {effectiveSummary} ”
                   </p>
                   <div className="mt-3 flex justify-end">
                     <button
@@ -377,6 +530,18 @@ export function ImageLightbox({
               ) : (
                 <p className="text-sm text-white/40 select-text">暂无内容</p>
               )}
+              {effectiveSourceUrl ? (
+                <div className="mt-4 pt-4 border-t border-white/10">
+                  <a
+                    href={effectiveSourceUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-indigo-300 hover:text-indigo-200 hover:underline"
+                  >
+                    阅读原文 →
+                  </a>
+                </div>
+              ) : null}
             </aside>
           </>
         ) : null}

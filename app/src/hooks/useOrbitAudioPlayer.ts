@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import APlayer from "aplayer";
 import Hls from "hls.js";
-import { isHlsAudioUrl } from "@/lib/articleAudioUrl";
+import { isHlsAudioUrl, isPendingAudioTrackUrl } from "@/lib/articleAudioUrl";
 import {
   persistAudioVolume,
   persistPlaybackRate,
@@ -38,6 +38,7 @@ export interface UseOrbitAudioPlayerOptions {
   preload?: "none" | "metadata" | "auto";
   defaultLoop?: "all" | "one" | "none";
   onTrackChange?: (index: number) => void;
+  resolveTrackUrl?: (index: number, track: ReaderAudioTrack) => Promise<string | null>;
 }
 
 export interface UseOrbitAudioPlayerResult {
@@ -60,6 +61,7 @@ export interface UseOrbitAudioPlayerResult {
   playbackRate: number;
   handleVolumeChange: (volume: number) => void;
   handlePlaybackRateStep: (direction: -1 | 1) => void;
+  resolvingIndex: number | null;
 }
 
 function readOrbitAccentColor(): string {
@@ -92,11 +94,14 @@ export function useOrbitAudioPlayer({
   preload = "metadata",
   defaultLoop = "all",
   onTrackChange,
+  resolveTrackUrl,
 }: UseOrbitAudioPlayerOptions): UseOrbitAudioPlayerResult {
   const engineRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<APlayer | null>(null);
   const syncedTrackCountRef = useRef(0);
   const tracksLengthRef = useRef(tracks.length);
+  const tracksRef = useRef(tracks);
+  const resolveTrackUrlRef = useRef(resolveTrackUrl);
   const userNavigatingRef = useRef(false);
   const userSeekingRef = useRef(false);
   const initialRestoreDoneRef = useRef(false);
@@ -106,7 +111,9 @@ export function useOrbitAudioPlayer({
   );
 
   onTrackChangeRef.current = onTrackChange;
+  resolveTrackUrlRef.current = resolveTrackUrl;
   tracksLengthRef.current = tracks.length;
+  tracksRef.current = tracks;
 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -118,6 +125,7 @@ export function useOrbitAudioPlayer({
   );
   const [volume, setVolume] = useState(() => readStoredAudioVolume());
   const [playbackRate, setPlaybackRate] = useState(() => readStoredPlaybackRate());
+  const [resolvingIndex, setResolvingIndex] = useState<number | null>(null);
 
   const hasMultipleTracks = tracks.length > 1;
   const currentTrack = tracks[currentIndex] ?? tracks[0];
@@ -174,12 +182,58 @@ export function useOrbitAudioPlayer({
     onTrackChangeRef.current?.(index);
   }, []);
 
-  const switchToIndex = useCallback((index: number) => {
+  const applyTrackUrlToPlayer = useCallback((index: number, url: string) => {
     const player = playerRef.current;
-    if (!player || index < 0 || index >= tracksLengthRef.current) return;
-    userNavigatingRef.current = true;
-    player.list.switch(index);
-    applyTrackIndex(index);
+    if (!player || index < 0 || index >= player.list.audios.length) return;
+
+    const audio = player.list.audios[index];
+    if (!audio || audio.url === url) return;
+
+    audio.url = url;
+    audio.type = isHlsAudioUrl(url) ? "hls" : "auto";
+
+    if (player.list.index === index) {
+      player.list.switch(index);
+    }
+  }, []);
+
+  const ensureTrackReady = useCallback(async (index: number): Promise<boolean> => {
+    const track = tracksRef.current[index];
+    if (!track) return false;
+    if (track.url.trim() && !isPendingAudioTrackUrl(track.url)) {
+      return true;
+    }
+
+    const resolver = resolveTrackUrlRef.current;
+    if (!resolver) return false;
+
+    setResolvingIndex(index);
+    try {
+      const url = await resolver(index, track);
+      if (!url?.trim()) return false;
+      applyTrackUrlToPlayer(index, url);
+      return true;
+    } finally {
+      setResolvingIndex(current => (current === index ? null : current));
+    }
+  }, [applyTrackUrlToPlayer]);
+
+  const ensureTrackReadyRef = useRef(ensureTrackReady);
+  ensureTrackReadyRef.current = ensureTrackReady;
+
+  const switchToIndex = useCallback((index: number) => {
+    void (async () => {
+      const player = playerRef.current;
+      if (!player || index < 0 || index >= tracksLengthRef.current) return;
+
+      const ready = await ensureTrackReadyRef.current(index);
+      if (!ready) return;
+
+      userNavigatingRef.current = true;
+      player.list.switch(index);
+      applyTrackIndex(index);
+      void player.audio.play().catch(() => {});
+    })();
   }, [applyTrackIndex]);
 
   const handlePlaybackModeChange = useCallback((mode: ChannelPlaybackMode) => {
@@ -215,7 +269,7 @@ export function useOrbitAudioPlayer({
   }, []);
 
   const tracksSignature = useMemo(
-    () => tracks.map(track => `${track.url}\u0000${track.name}\u0000${track.artist ?? ""}`).join("\n"),
+    () => tracks.map(track => `${track.articleId ?? track.name}\u0000${track.name}\u0000${track.artist ?? ""}`).join("\n"),
     [tracks],
   );
 
@@ -270,11 +324,49 @@ export function useOrbitAudioPlayer({
         return;
       }
       if (player.audio.paused && !userNavigatingRef.current && !player.audio.ended) return;
+
+      const nextIndex = (player.list.index + 1) % player.list.audios.length;
+      const nextTrack = tracksRef.current[nextIndex];
+      if (nextTrack && isPendingAudioTrackUrl(nextTrack.url)) {
+        userNavigatingRef.current = true;
+        void (async () => {
+          player.pause();
+          const ready = await ensureTrackReadyRef.current(nextIndex);
+          if (!ready) {
+            userNavigatingRef.current = false;
+            return;
+          }
+          player.list.switch(nextIndex);
+          applyTrackIndex(nextIndex);
+          userNavigatingRef.current = false;
+          void player.audio.play().catch(() => {});
+        })();
+        return;
+      }
       originalSkipForward();
     };
     player.skipBack = () => {
       if (player.list.audios.length <= 1) {
         seekByOffset(-AUDIO_SEEK_STEP_SECONDS);
+        return;
+      }
+
+      const prevIndex = (player.list.index - 1 + player.list.audios.length) % player.list.audios.length;
+      const prevTrack = tracksRef.current[prevIndex];
+      if (prevTrack && isPendingAudioTrackUrl(prevTrack.url)) {
+        userNavigatingRef.current = true;
+        void (async () => {
+          player.pause();
+          const ready = await ensureTrackReadyRef.current(prevIndex);
+          if (!ready) {
+            userNavigatingRef.current = false;
+            return;
+          }
+          player.list.switch(prevIndex);
+          applyTrackIndex(prevIndex);
+          userNavigatingRef.current = false;
+          void player.audio.play().catch(() => {});
+        })();
         return;
       }
       originalSkipBack();
@@ -307,12 +399,38 @@ export function useOrbitAudioPlayer({
     const onSeeked = () => {
       userSeekingRef.current = false;
     };
+    let listSwitchResolving = false;
     const onListsSwitch = (...args: unknown[]) => {
+      if (listSwitchResolving) return;
       const detail = args[0] as { index?: number } | undefined;
-      const previousIndex = player.list.index;
-      const index = detail?.index ?? previousIndex;
-      applyTrackIndex(index, previousIndex);
-      userNavigatingRef.current = false;
+      const index = detail?.index ?? player.list.index;
+      const shouldResume = userNavigatingRef.current || !player.audio.paused;
+
+      const track = tracksRef.current[index];
+      if (track && !isPendingAudioTrackUrl(track.url)) {
+        applyTrackIndex(index);
+        userNavigatingRef.current = false;
+        return;
+      }
+
+      listSwitchResolving = true;
+      void (async () => {
+        player.pause();
+        try {
+          const ready = await ensureTrackReadyRef.current(index);
+          if (!ready) {
+            userNavigatingRef.current = false;
+            return;
+          }
+          applyTrackIndex(index);
+          userNavigatingRef.current = false;
+          if (shouldResume) {
+            void player.audio.play().catch(() => {});
+          }
+        } finally {
+          listSwitchResolving = false;
+        }
+      })();
     };
 
     player.on("timeupdate", onTimeUpdate);
@@ -363,6 +481,16 @@ export function useOrbitAudioPlayer({
     const player = playerRef.current;
     if (!player) return;
 
+    tracks.forEach((track, index) => {
+      if (!track.url.trim() || isPendingAudioTrackUrl(track.url)) return;
+      applyTrackUrlToPlayer(index, track.url);
+    });
+  }, [tracks, applyTrackUrlToPlayer]);
+
+  useEffect(() => {
+    const player = playerRef.current;
+    if (!player) return;
+
     const synced = syncedTrackCountRef.current;
     if (tracks.length <= synced) return;
 
@@ -404,7 +532,17 @@ export function useOrbitAudioPlayer({
   }, [sessionId, restorePlaybackSnapshot]);
 
   const handleTogglePlay = () => {
-    playerRef.current?.toggle();
+    void (async () => {
+      const player = playerRef.current;
+      if (!player) return;
+
+      if (player.audio.paused) {
+        const ready = await ensureTrackReadyRef.current(player.list.index);
+        if (!ready) return;
+      }
+
+      player.toggle();
+    })();
   };
 
   const handlePrev = () => {
@@ -452,5 +590,6 @@ export function useOrbitAudioPlayer({
     playbackRate,
     handleVolumeChange,
     handlePlaybackRateStep,
+    resolvingIndex,
   };
 }

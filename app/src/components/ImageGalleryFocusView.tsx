@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { isDarkTheme } from "@/lib/themeMode";
-import { ImageLightbox, type GalleryImageItem } from "@/components/ImageLightbox";
+import { ImageLightbox, type GalleryImageItem, type GalleryImageItemDetail } from "@/components/ImageLightbox";
 import { ProxiedImage } from "@/components/ProxiedImage";
-import type { Article, ThemeMode } from "@/types";
+import { mergeArticleListWithDetail } from "@/lib/articleContent";
+import { resolveArticleDetailChannel } from "@/lib/browseDynamicFeed";
+import { fetchFeedItem } from "@/lib/feed";
+import { browserSessionOptionsFromPlugin, runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
+import type { Article, Plugin, ThemeMode } from "@/types";
 
 interface ImageGalleryFocusViewProps {
   theme: ThemeMode;
   runtimeBase: string | null;
   articles: Article[];
+  activeChannel: string;
+  pluginMeta?: Plugin;
   columnCount?: number;
   loading: boolean;
   loadingMore: boolean;
@@ -38,6 +44,8 @@ function articleToGalleryItem(article: Article): GalleryImageItem | null {
     title: article.title,
     author: article.author,
     content: article.content,
+    summary: article.summary,
+    sourceUrl: article.sourceUrl,
   };
 }
 
@@ -72,6 +80,8 @@ export function ImageGalleryFocusView({
   theme,
   runtimeBase,
   articles,
+  activeChannel,
+  pluginMeta,
   columnCount,
   loading,
   loadingMore,
@@ -214,6 +224,38 @@ export function ImageGalleryFocusView({
     }
   }, [hasMore, loadingMore, onLoadMore]);
 
+  const resolveItemDetail = useCallback(async (item: GalleryImageItem): Promise<GalleryImageItemDetail> => {
+    const article = articles.find(entry => entry.id === item.id);
+    if (!article) {
+      return {};
+    }
+
+    const channelId = resolveArticleDetailChannel(article, pluginMeta, activeChannel);
+    let detail: Article;
+
+    if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && channelId !== "all") {
+      const result = await runtimeOpenDetail(article.pluginId, channelId, article.id, {
+        ...browserSessionOptionsFromPlugin(pluginMeta),
+      });
+      if (!result.item) {
+        return { summary: article.summary, sourceUrl: article.sourceUrl };
+      }
+      detail = mergeArticleListWithDetail(article, result.item);
+    } else {
+      detail = await fetchFeedItem(article.id, {
+        pluginId: article.pluginId,
+        channelId,
+      });
+      detail = mergeArticleListWithDetail(article, detail);
+    }
+
+    return {
+      content: detail.content,
+      summary: detail.summary,
+      sourceUrl: detail.sourceUrl,
+    };
+  }, [activeChannel, articles, pluginMeta]);
+
   if (loading || searching) {
     return (
       <div className="flex items-center justify-center py-24">
@@ -302,6 +344,7 @@ export function ImageGalleryFocusView({
           onClose={() => setLightboxIndex(null)}
           onIndexChange={setLightboxIndex}
           onNearEnd={handleNearEnd}
+          onResolveDetail={resolveItemDetail}
         />
       ) : null}
     </>

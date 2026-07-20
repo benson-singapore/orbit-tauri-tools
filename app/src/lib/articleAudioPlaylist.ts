@@ -1,5 +1,8 @@
 import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
-import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
+import {
+  PENDING_AUDIO_TRACK_URL,
+  resolveArticleAudioUrl,
+} from "@/lib/articleAudioUrl";
 import type { Article } from "@/types";
 
 export interface ArticleCoverImageContext {
@@ -56,6 +59,33 @@ export function articlesToAudioTracks(
     if (track) tracks.push(track);
   }
   return tracks;
+}
+
+/** Build list tracks for audio mode, including items that need detail resolution. */
+export function articleToListAudioTrack(
+  article: Article,
+  resolvedUrl?: string | null,
+  context?: ArticleCoverImageContext,
+): ReaderAudioTrack {
+  const url = resolvedUrl ?? resolveArticleAudioUrl(article) ?? PENDING_AUDIO_TRACK_URL;
+
+  return {
+    name: article.title,
+    artist: article.author?.trim() || undefined,
+    url,
+    cover: resolveArticleCoverImage(article, context),
+    articleId: article.id,
+  };
+}
+
+export function articlesToListAudioTracks(
+  articles: Article[],
+  resolvedUrls?: Record<string, string>,
+  context?: ArticleCoverImageContext,
+): ReaderAudioTrack[] {
+  return articles.map(article =>
+    articleToListAudioTrack(article, resolvedUrls?.[article.id], context),
+  );
 }
 
 /** Build a channel playlist with the selected article first. */

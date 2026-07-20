@@ -13,6 +13,7 @@ export interface ReaderAudioTrack {
   url: string;
   cover?: string;
   lrc?: string;
+  articleId?: string;
 }
 
 interface ReaderAudioPlayerProps {

@@ -1,7 +1,17 @@
+import { extractRycjVideoUrlFromContent } from "@/lib/articleContentPlayer";
+import { extractVideoUrlFromContent } from "@/lib/articleVideoUrl";
 import type { Article } from "@/types";
 
 const BLOB_SRC_RE = /^blob:/i;
 const DIRECT_MEDIA_URL_RE = /\.(mp3|m4a|aac|ogg|wav|flac|opus|m3u8)(\?|$)/i;
+
+/** Placeholder URL for list items whose audio must be resolved from detail content. */
+export const PENDING_AUDIO_TRACK_URL =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+
+export function isPendingAudioTrackUrl(url: string): boolean {
+  return url === PENDING_AUDIO_TRACK_URL;
+}
 
 function isUsableAudioSrc(src: string): boolean {
   const trimmed = src.trim();
@@ -77,7 +87,7 @@ export function extractAudioUrlFromContent(
 
 /** Prefer explicit `audioUrl`, then URLs embedded in article HTML. */
 export function resolveArticleAudioUrl(
-  article: Pick<Article, "audioUrl" | "content" | "sourceUrl" | "type">,
+  article: Pick<Article, "audioUrl" | "videoUrl" | "content" | "sourceUrl" | "type">,
 ): string | null {
   const baseUrl = article.sourceUrl?.trim() || undefined;
 
@@ -89,10 +99,21 @@ export function resolveArticleAudioUrl(
   if (article.content?.trim()) {
     const fromContent = extractAudioUrlFromContent(article.content, baseUrl);
     if (fromContent) return fromContent;
+
+    const fromRycj = extractRycjVideoUrlFromContent(article.content);
+    if (fromRycj) return resolveRelativeMediaUrl(fromRycj, baseUrl);
+
+    const fromVideo = extractVideoUrlFromContent(article.content);
+    if (fromVideo) return resolveRelativeMediaUrl(fromVideo, baseUrl);
+  }
+
+  const video = article.videoUrl?.trim();
+  if (video) {
+    return resolveRelativeMediaUrl(video, baseUrl);
   }
 
   const source = article.sourceUrl?.trim();
-  if (source && article.type === "audio" && isDirectMediaUrl(source)) {
+  if (source && isDirectMediaUrl(source)) {
     return resolveRelativeMediaUrl(source, baseUrl);
   }
 

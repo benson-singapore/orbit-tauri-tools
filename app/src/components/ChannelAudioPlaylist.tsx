@@ -14,6 +14,7 @@ interface ChannelAudioPlaylistProps {
   loadMoreLabel?: string;
   onLoadMore?: () => void;
   onTrackChange?: (index: number) => void;
+  resolveTrackUrl?: (index: number, track: ReaderAudioTrack) => Promise<string | null>;
   className?: string;
 }
 
@@ -27,6 +28,7 @@ export function ChannelAudioPlaylist({
   loadMoreLabel = "加载更多",
   onLoadMore,
   onTrackChange,
+  resolveTrackUrl,
   className = "",
 }: ChannelAudioPlaylistProps) {
   const storageName = `orbit-aplayer-channel-${sessionId}`;
@@ -37,6 +39,7 @@ export function ChannelAudioPlaylist({
     preload: "none",
     defaultLoop: "all",
     onTrackChange,
+    resolveTrackUrl,
   });
 
   const { currentTrack } = player;
@@ -62,6 +65,7 @@ export function ChannelAudioPlaylist({
           onNext={player.handleNext}
           onProgressSeek={player.handleProgressSeek}
           timelineStart={player.timelineStart}
+          isResolving={player.resolvingIndex === player.currentIndex}
           volume={player.volume}
           playbackRate={player.playbackRate}
           onVolumeChange={player.handleVolumeChange}
@@ -85,6 +89,7 @@ export function ChannelAudioPlaylist({
           onLoadMore={onLoadMore}
           fillHeight
           runtimeBase={runtimeBase}
+          resolvingIndex={player.resolvingIndex}
         />
       </section>
     </div>

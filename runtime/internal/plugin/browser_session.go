@@ -47,7 +47,8 @@ func matchesBrowserFallback(msg string, fallbackOn []string) bool {
 			if strings.HasPrefix(lower, "captcha:") ||
 				strings.Contains(lower, "cloudflare") ||
 				strings.Contains(lower, "cf-browser-verification") ||
-				strings.Contains(lower, "just a moment") {
+				strings.Contains(lower, "just a moment") ||
+				strings.Contains(lower, "人机验证") {
 				return true
 			}
 		case "http_403":

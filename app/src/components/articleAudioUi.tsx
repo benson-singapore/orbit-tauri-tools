@@ -107,6 +107,7 @@ interface AudioPlayerHeroProps {
   onVolumeChange: (volume: number) => void;
   onPlaybackRateStep: (direction: -1 | 1) => void;
   runtimeBase: string | null;
+  isResolving?: boolean;
 }
 
 function AudioProgressBar({
@@ -292,6 +293,7 @@ export function AudioPlayerHero({
   onVolumeChange,
   onPlaybackRateStep,
   runtimeBase,
+  isResolving = false,
 }: AudioPlayerHeroProps) {
   return (
     <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
@@ -335,10 +337,13 @@ export function AudioPlayerHero({
           <button
             type="button"
             onClick={onTogglePlay}
-            className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--orbit-accent)] text-white shadow-sm transition-transform hover:scale-105"
-            aria-label={isPlaying ? "暂停" : "播放"}
+            disabled={isResolving}
+            className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--orbit-accent)] text-white shadow-sm transition-transform hover:scale-105 disabled:cursor-wait disabled:opacity-70"
+            aria-label={isResolving ? "正在加载音频" : isPlaying ? "暂停" : "播放"}
           >
-            {isPlaying ? (
+            {isResolving ? (
+              <span className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+            ) : isPlaying ? (
               <svg viewBox="0 0 24 24" className="h-5 w-5" aria-hidden="true">
                 <path fill="currentColor" d="M6 5h4v14H6V5zm8 0h4v14h-4V5z" />
               </svg>
@@ -389,6 +394,7 @@ interface AudioTrackListProps {
   onLoadMore?: () => void;
   fillHeight?: boolean;
   runtimeBase: string | null;
+  resolvingIndex?: number | null;
 }
 
 export function AudioTrackList({
@@ -405,6 +411,7 @@ export function AudioTrackList({
   onLoadMore,
   fillHeight = false,
   runtimeBase,
+  resolvingIndex = null,
 }: AudioTrackListProps) {
   const showPlaybackModes = playbackMode !== undefined && onPlaybackModeChange !== undefined;
 
@@ -431,9 +438,10 @@ export function AudioTrackList({
           {tracks.map((track, index) => {
             const isActive = index === currentIndex;
             const isActivePlaying = isActive && isPlaying;
+            const isResolving = resolvingIndex === index;
 
             return (
-              <li key={`${track.url}-${index}`}>
+              <li key={track.articleId ?? `${track.name}-${index}`}>
                 <button
                   type="button"
                   onClick={() => onSelectTrack(index)}
@@ -446,7 +454,9 @@ export function AudioTrackList({
                   <span className={`w-6 shrink-0 text-center text-xs tabular-nums ${
                     isActive ? "text-[var(--orbit-accent)] font-semibold" : "text-[var(--orbit-text-muted)]"
                   }`}>
-                    {isActivePlaying ? <PlayingBars /> : index + 1}
+                    {isResolving ? (
+                      <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--orbit-accent)]/30 border-t-[var(--orbit-accent)]" />
+                    ) : isActivePlaying ? <PlayingBars /> : index + 1}
                   </span>
 
                   <TrackCover track={track} size="sm" runtimeBase={runtimeBase} />

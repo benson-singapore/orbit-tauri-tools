@@ -57,6 +57,7 @@ export function isLikelyBrowserSessionMessage(message: string): boolean {
     lower.startsWith("captcha:")
     || lower.includes("cloudflare")
     || lower.includes("403")
+    || lower.includes("人机验证")
   );
 }
 

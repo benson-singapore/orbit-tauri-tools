@@ -38,7 +38,6 @@ import { usePluginGroups } from "@/hooks/usePluginGroups";
 import { useAppUpdateSummary } from "@/hooks/useAppUpdateSummary";
 import { useExperienceModeShortcut } from "@/hooks/useExperienceModeShortcut";
 import { mergeArticleListWithDetail } from "@/lib/articleContent";
-import { filterArticlesWithAudio } from "@/lib/articleAudioPlaylist";
 import {
   filterGroupedPluginsForExperienceMode,
   EXPERIENCE_MODE_SHORTCUT_LABEL,
@@ -3353,9 +3352,7 @@ export default function App() {
                         ) : null}
                         {isAudioFocusPreviewMode && activePlugin !== "all" ? (
                           <span className="text-xs text-neutral-400 truncate">
-                            音频模式 · 共 {filterArticlesWithAudio(
-                              filteredArticles.filter(item => item.pluginId === activePlugin),
-                            ).length} 首
+                            音频模式 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 首
                           </span>
                         ) : null}
                       </div>
@@ -3779,6 +3776,8 @@ export default function App() {
                     theme={theme}
                     runtimeBase={runtimeBase}
                     articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                    activeChannel={activeChannel}
+                    pluginMeta={activePluginMeta}
                     columnCount={gridColumnCount}
                     loading={feedLoading}
                     loadingMore={feedLoadingMore}
@@ -3807,6 +3806,7 @@ export default function App() {
                       runtimeBase={runtimeBase}
                       pluginId={activePlugin}
                       channelId={activeChannel}
+                      pluginMeta={activePluginMeta}
                       articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
                       loading={feedLoading}
                       loadingMore={feedLoadingMore}

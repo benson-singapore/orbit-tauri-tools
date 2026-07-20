@@ -1120,3 +1120,45 @@
   .article-content--manga-intro :where(.manga-intro__misc) {
   color: var(--novel-muted-color);
 }
+
+/* Image lightbox — prompt / metadata side panel */
+.image-lightbox-content.article-content {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.image-lightbox-content.article-content :where(p, ul, ol, blockquote, pre, table, figure) {
+  margin-bottom: 0.85em;
+}
+
+.image-lightbox-content.article-content :where(img) {
+  display: none;
+}
+
+.image-lightbox-content .image-lightbox-prompt-meta {
+  margin-bottom: 0.5em;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.image-lightbox-content .image-lightbox-prompt-label {
+  display: block;
+  margin-top: 1.1em;
+  margin-bottom: 0.35em;
+  padding-top: 0.85em;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(165, 180, 252, 0.9);
+}
+
+.image-lightbox-content > :first-child.image-lightbox-prompt-label,
+.image-lightbox-content :where(p, div):first-child .image-lightbox-prompt-label {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}

@@ -1,18 +1,26 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ChannelAudioPlaylist } from "@/components/ChannelAudioPlaylist";
 import { Icon } from "@/components/Icon";
+import { articlesToListAudioTracks } from "@/lib/articleAudioPlaylist";
+import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
+import { mergeArticleListWithDetail } from "@/lib/articleContent";
+import { resolveArticleDetailChannel } from "@/lib/browseDynamicFeed";
+import { fetchFeedItem } from "@/lib/feed";
 import {
-  articlesToAudioTracks,
-  filterArticlesWithAudio,
-} from "@/lib/articleAudioPlaylist";
+  browserSessionOptionsFromPlugin,
+  runtimeOpenDetail,
+  shouldUseRuntimeV2,
+} from "@/lib/runtimeV2";
 import { isDarkTheme } from "@/lib/themeMode";
-import type { Article, ThemeMode } from "@/types";
+import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
+import type { Article, Plugin, ThemeMode } from "@/types";
 
 interface AudioFocusViewProps {
   theme: ThemeMode;
   runtimeBase: string | null;
   pluginId: string;
   channelId: string;
+  pluginMeta?: Plugin | null;
   articles: Article[];
   loading: boolean;
   loadingMore: boolean;
@@ -28,6 +36,7 @@ export function AudioFocusView({
   runtimeBase,
   pluginId,
   channelId,
+  pluginMeta,
   articles,
   loading,
   loadingMore,
@@ -38,21 +47,68 @@ export function AudioFocusView({
   onTrackPlay,
 }: AudioFocusViewProps) {
   const isDark = isDarkTheme(theme);
-
-  const playableArticles = useMemo(
-    () => filterArticlesWithAudio(articles),
-    [articles],
-  );
+  const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
 
   const tracks = useMemo(
-    () => articlesToAudioTracks(playableArticles, runtimeBase),
-    [playableArticles, runtimeBase],
+    () => articlesToListAudioTracks(articles, resolvedUrls, { listArticles: articles }),
+    [articles, resolvedUrls],
   );
 
   const sessionId = `${pluginId}-${channelId}-audio-playlist`;
 
+  const resolveTrackUrl = useCallback(async (
+    index: number,
+    _track: ReaderAudioTrack,
+  ): Promise<string | null> => {
+    const article = articles[index];
+    if (!article) return null;
+
+    const cached = resolvedUrls[article.id] ?? resolveArticleAudioUrl(article);
+    if (cached) {
+      return cached;
+    }
+
+    try {
+      const detailChannelId = resolveArticleDetailChannel(
+        article,
+        pluginMeta,
+        channelId,
+      );
+      let detail: Article;
+
+      if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && detailChannelId !== "all") {
+        const result = await runtimeOpenDetail(article.pluginId, detailChannelId, article.id, {
+          ...browserSessionOptionsFromPlugin(pluginMeta),
+        });
+        if (!result.item) {
+          return null;
+        }
+        detail = mergeArticleListWithDetail(article, result.item);
+      } else {
+        detail = mergeArticleListWithDetail(
+          article,
+          await fetchFeedItem(article.id, {
+            pluginId,
+            channelId: detailChannelId,
+          }),
+        );
+      }
+
+      const url = resolveArticleAudioUrl(detail);
+      if (!url) {
+        return null;
+      }
+
+      setResolvedUrls(prev => ({ ...prev, [article.id]: url }));
+      return url;
+    } catch (error) {
+      console.error("resolve audio track url failed", error);
+      return null;
+    }
+  }, [articles, channelId, pluginId, pluginMeta, resolvedUrls]);
+
   const handleTrackChange = (index: number) => {
-    const article = playableArticles[index];
+    const article = articles[index];
     if (article) {
       onTrackPlay?.(article);
     }
@@ -69,7 +125,7 @@ export function AudioFocusView({
     );
   }
 
-  if (playableArticles.length === 0) {
+  if (articles.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center py-24 px-6 text-center">
         <div>
@@ -101,6 +157,7 @@ export function AudioFocusView({
         loadMoreLabel={loadMoreLabel}
         onLoadMore={onLoadMore}
         onTrackChange={handleTrackChange}
+        resolveTrackUrl={resolveTrackUrl}
       />
     </div>
   );

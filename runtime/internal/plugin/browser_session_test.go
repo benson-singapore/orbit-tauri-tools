@@ -21,6 +21,10 @@ func TestClassifyBrowserSessionError(t *testing.T) {
 	if !ok || payload == nil {
 		t.Fatal("expected browser session classification for captcha error")
 	}
+	_, ok = ClassifyBrowserSessionError(rec, errString("play-url response invalid: 请完成人机验证后继续"))
+	if !ok {
+		t.Fatal("expected browser session classification for human verification error")
+	}
 	if payload.PluginID != "gequbao" {
 		t.Fatalf("pluginId = %q, want gequbao", payload.PluginID)
 	}
