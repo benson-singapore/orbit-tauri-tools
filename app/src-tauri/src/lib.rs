@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::net::TcpListener;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -9,8 +9,15 @@ use tauri::{Emitter, Manager, State};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
+mod plugin_session;
+mod plugin_session_http;
 mod youtube_login;
 
+use plugin_session::{
+    acquire_plugin_session, close_plugin_session_window, complete_plugin_session_window,
+    open_plugin_session_window, PluginSessionRegistry,
+};
+use plugin_session_http::{serve, WebviewHttpState};
 use youtube_login::open_youtube_login_window;
 
 struct RuntimeState {
@@ -111,6 +118,21 @@ fn parse_ready_line(line: &str) -> Option<u16> {
     let line = line.trim();
     let rest = line.strip_prefix("ORBIT_READY port=")?;
     rest.parse().ok()
+}
+
+fn write_webview_http_addr_file(addr: &str) {
+    let port = std::env::var("ORBIT_RUNTIME_URL")
+        .ok()
+        .and_then(|raw| url::Url::parse(&raw).ok())
+        .and_then(|parsed| parsed.port())
+        .or_else(|| std::env::var("ORBIT_PORT").ok()?.parse().ok())
+        .unwrap_or(17890);
+    let path = std::env::temp_dir().join(format!("orbit-webview-http-{port}.addr"));
+    if let Err(err) = std::fs::write(&path, addr) {
+        eprintln!("[orbit] failed to write webview http addr file: {err}");
+    } else {
+        eprintln!("[orbit] ORBIT_WEBVIEW_HTTP_ADDR_FILE={}", path.display());
+    }
 }
 
 fn reserve_local_port() -> Result<u16, String> {
@@ -295,6 +317,11 @@ fn spawn_runtime(app: &tauri::AppHandle) -> Result<(), String> {
         sidecar = sidecar.env("ORBIT_PLUGINS_DIR", plugins_dir);
     }
 
+    if let Some(state) = app.try_state::<WebviewHttpState>() {
+        eprintln!("[orbit] ORBIT_WEBVIEW_HTTP_ADDR={}", state.addr);
+        sidecar = sidecar.env("ORBIT_WEBVIEW_HTTP_ADDR", state.addr.clone());
+    }
+
     let (rx, child) = sidecar
         .spawn()
         .map_err(|e| format!("sidecar spawn: {e}"))?;
@@ -324,9 +351,27 @@ pub fn run() {
             get_runtime_url,
             get_app_platform,
             runtime_http,
-            open_youtube_login_window
+            open_youtube_login_window,
+            open_plugin_session_window,
+            acquire_plugin_session,
+            complete_plugin_session_window,
+            close_plugin_session_window
         ])
         .setup(|app| {
+            let registry = Arc::new(PluginSessionRegistry::new());
+            app.manage(registry.clone());
+
+            let webview_port = reserve_local_port()?;
+            let webview_addr = format!("127.0.0.1:{webview_port}");
+            app.manage(WebviewHttpState {
+                addr: webview_addr.clone(),
+            });
+            write_webview_http_addr_file(&webview_addr);
+            let app_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                serve(app_handle, registry, webview_port).await;
+            });
+
             if !use_external_runtime(app.handle()) {
                 spawn_runtime(app.handle())?;
             }

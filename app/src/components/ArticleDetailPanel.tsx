@@ -56,7 +56,7 @@ import {
   novelReaderSettingsToStyle,
   type NovelReaderSettings,
 } from "@/lib/novelReaderSettings";
-import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
+import { runtimeOpenDetail, shouldUseRuntimeV2, browserSessionOptionsFromPlugin } from "@/lib/runtimeV2";
 import { resolveYouTubeVideoId } from "@/lib/youtube";
 import { resolveArticleAudioUrl, stripEmbeddedAudioFromContent } from "@/lib/articleAudioUrl";
 import { resolveArticleCoverImage } from "@/lib/articleAudioPlaylist";
@@ -193,7 +193,9 @@ export function ArticleDetailPanel({
     if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && channelId !== "all" && effectiveHasDetail) {
       let cancelled = false;
       setLoading(true);
-      void runtimeOpenDetail(article.pluginId, channelId, itemId)
+      void runtimeOpenDetail(article.pluginId, channelId, itemId, {
+        ...browserSessionOptionsFromPlugin(pluginMeta),
+      })
         .then(result => {
           if (cancelled || !result.item) return;
           setArticle(prev => (

@@ -239,7 +239,8 @@ func (s *Server) handleRuntimeAction(
 	}
 	result, err := fn(body)
 	if err != nil {
-		writeJSON(w, http.StatusBadRequest, errorBody(err.Error()))
+		rec, _ := s.registry.Get(body.PluginID)
+		writePluginActionError(w, http.StatusBadRequest, rec, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

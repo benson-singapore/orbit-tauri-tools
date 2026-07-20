@@ -85,6 +85,24 @@ func (s *Store) DeletePluginVariables(ctx context.Context, pluginID string) erro
 	return err
 }
 
+func (s *Store) DeletePluginVariablesByKeys(ctx context.Context, pluginID string, keys []string) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	placeholders := strings.TrimRight(strings.Repeat("?,", len(keys)), ",")
+	args := make([]any, 0, len(keys)+1)
+	args = append(args, pluginID)
+	for _, key := range keys {
+		args = append(args, key)
+	}
+	_, err := s.DB.ExecContext(
+		ctx,
+		`DELETE FROM plugin_variables WHERE plugin_id = ? AND key IN (`+placeholders+`)`,
+		args...,
+	)
+	return err
+}
+
 func (s *Store) FeedItemExists(ctx context.Context, id string) (bool, error) {
 	var count int
 	err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM feed_items WHERE id = ?`, id).Scan(&count)

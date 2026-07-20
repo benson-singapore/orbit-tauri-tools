@@ -1,6 +1,14 @@
-import type { Article, ChannelCapabilities, VariableDefinition } from "@/types";
+import type {
+  Article,
+  BrowserSessionPluginContext,
+  ChannelCapabilities,
+  Plugin as OrbitPlugin,
+  VariableDefinition,
+} from "@/types";
 import { runtimeFetch } from "@/lib/runtimeFetch";
 import { waitForRuntimeReady } from "@/lib/runtime";
+import { parseRuntimeErrorResponse, inferBrowserSessionForPlugin } from "@/lib/browserSessionError";
+import { withBrowserSessionRetry } from "@/lib/browserSessionFlow";
 
 export interface RuntimeDispatchResult {
   items?: Article[];
@@ -15,15 +23,6 @@ export interface RuntimeDispatchResult {
 async function apiBase(): Promise<string> {
   const base = await waitForRuntimeReady();
   return base.replace(/\/$/, "");
-}
-
-async function parseError(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    return body.error ?? `HTTP ${res.status}`;
-  } catch {
-    return `HTTP ${res.status}`;
-  }
 }
 
 function normalizeArticle(article: Article): Article {
@@ -43,7 +42,7 @@ export async function fetchChannelCapabilities(
   const params = new URLSearchParams({ plugin_id: pluginId, channel_id: channelId });
   const res = await runtimeFetch(`${base}/v2/runtime/capabilities?${params}`);
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    throw await parseRuntimeErrorResponse(res);
   }
   return (await res.json()) as ChannelCapabilities;
 }
@@ -63,7 +62,7 @@ export async function fetchRuntimeItems(options: {
   });
   const res = await runtimeFetch(`${base}/v2/runtime/items?${params}`);
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    throw await parseRuntimeErrorResponse(res);
   }
   const data = (await res.json()) as RuntimeDispatchResult;
   return {
@@ -86,7 +85,7 @@ export async function fetchRuntimeChapters(options: {
   });
   const res = await runtimeFetch(`${base}/v2/runtime/chapters?${params}`);
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    throw await parseRuntimeErrorResponse(res);
   }
   const data = (await res.json()) as RuntimeDispatchResult;
   return {
@@ -101,6 +100,7 @@ const variablesReadyCache = new Map<string, boolean>();
 export type RuntimeCallOptions = {
   variablesSchema?: Record<string, VariableDefinition>;
   variablesReady?: boolean;
+  browserSessionPlugin?: BrowserSessionPluginContext;
 };
 
 export function invalidatePluginVariablesCache(pluginId: string) {
@@ -182,29 +182,37 @@ async function runtimePost(
   body: Record<string, string | Record<string, string> | undefined>,
   options?: RuntimeCallOptions,
 ): Promise<RuntimeDispatchResult> {
-  const pluginId = typeof body.pluginId === "string" ? body.pluginId : "";
-  if (pluginId) {
-    await assertPluginVariablesReady(
-      pluginId,
-      options?.variablesSchema,
-      options?.variablesReady,
-    );
-  }
-  const base = await apiBase();
-  const res = await runtimeFetch(`${base}/v2/runtime/${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    throw new Error(await parseError(res));
-  }
-  const data = (await res.json()) as RuntimeDispatchResult;
-  return {
-    ...data,
-    items: (data.items ?? []).map(normalizeArticle),
-    item: data.item ? normalizeArticle(data.item) : undefined,
+  const execute = async (): Promise<RuntimeDispatchResult> => {
+    const pluginId = typeof body.pluginId === "string" ? body.pluginId : "";
+    if (pluginId) {
+      await assertPluginVariablesReady(
+        pluginId,
+        options?.variablesSchema,
+        options?.variablesReady,
+      );
+    }
+    const base = await apiBase();
+    const res = await runtimeFetch(`${base}/v2/runtime/${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw await parseRuntimeErrorResponse(res);
+    }
+    const data = (await res.json()) as RuntimeDispatchResult;
+    return {
+      ...data,
+      items: (data.items ?? []).map(normalizeArticle),
+      item: data.item ? normalizeArticle(data.item) : undefined,
+    };
   };
+
+  if (options?.browserSessionPlugin) {
+    const channelId = typeof body.channelId === "string" ? body.channelId : undefined;
+    return withBrowserSessionRetry(options.browserSessionPlugin, execute, { channelId });
+  }
+  return execute();
 }
 
 export function runtimeRefresh(
@@ -247,6 +255,23 @@ export function runtimeSearch(
   options?: RuntimeCallOptions,
 ) {
   return runtimePost("search", { pluginId, channelId, query }, options);
+}
+
+export function browserSessionOptionsFromPlugin(
+  plugin?: OrbitPlugin | null,
+): RuntimeCallOptions | undefined {
+  if (!plugin) return undefined;
+  const context: BrowserSessionPluginContext = {
+    id: plugin.id,
+    name: plugin.name,
+    browser: plugin.browser,
+    variablesSchema: plugin.variablesSchema,
+    channels: plugin.channels,
+    lastError: plugin.lastError,
+  };
+  const session = inferBrowserSessionForPlugin(context);
+  if (!session) return undefined;
+  return { browserSessionPlugin: context };
 }
 
 export function runtimeOpenDetail(
@@ -331,7 +356,7 @@ export async function fetchVariablesSchema(
   const base = await apiBase();
   const res = await runtimeFetch(`${base}/v2/plugins/${encodeURIComponent(pluginId)}/variables/schema`);
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    throw await parseRuntimeErrorResponse(res);
   }
   const data = (await res.json()) as { variables?: Record<string, VariableDefinition> };
   return data.variables ?? {};
@@ -343,7 +368,7 @@ export async function fetchPluginVariables(
   const base = await apiBase();
   const res = await runtimeFetch(`${base}/v2/plugins/${encodeURIComponent(pluginId)}/variables`);
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    throw await parseRuntimeErrorResponse(res);
   }
   const data = (await res.json()) as { values?: Record<string, string> };
   return data.values ?? {};
@@ -382,7 +407,7 @@ export async function savePluginVariables(
     body: JSON.stringify({ values }),
   });
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    throw await parseRuntimeErrorResponse(res);
   }
   invalidatePluginVariablesCache(pluginId);
   markPluginVariablesReady(pluginId);

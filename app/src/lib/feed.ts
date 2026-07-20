@@ -10,6 +10,7 @@ import type {
 } from "@/types";
 import { runtimeFetch } from "@/lib/runtimeFetch";
 import { getRuntimeBaseUrl, waitForRuntimeReady } from "@/lib/runtime";
+import { parseRuntimeErrorResponse } from "@/lib/browserSessionError";
 
 const inFlightGetRequests = new Map<string, Promise<Response>>();
 
@@ -380,7 +381,7 @@ export async function refreshPluginFeed(
     method: "POST",
   });
   if (!res.ok) {
-    throw new Error(await parseError(res));
+    throw await parseRuntimeErrorResponse(res);
   }
 }
 

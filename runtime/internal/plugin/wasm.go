@@ -95,22 +95,22 @@ type wasmFeedResult struct {
 }
 
 type wasmFeedItem struct {
-	ID           string           `json:"id"`
-	Title        string           `json:"title"`
-	URL          string           `json:"url"`
-	Content      string           `json:"content,omitempty"`
-	Summary      string           `json:"summary,omitempty"`
-	Author       string           `json:"author,omitempty"`
-	Cover        string           `json:"cover,omitempty"`
-	Image        string           `json:"image,omitempty"`
-	PublishedAt  string           `json:"published_at"`
-	Tags         []string         `json:"tags,omitempty"`
-	Kind         string           `json:"kind,omitempty"`
-	AuthorAvatar string           `json:"author_avatar,omitempty"`
-	AuthorHandle string           `json:"author_handle,omitempty"`
-	Stats        *wasmSocialStats `json:"stats,omitempty"`
+	ID           string            `json:"id"`
+	Title        string            `json:"title"`
+	URL          string            `json:"url"`
+	Content      string            `json:"content,omitempty"`
+	Summary      string            `json:"summary,omitempty"`
+	Author       string            `json:"author,omitempty"`
+	Cover        string            `json:"cover,omitempty"`
+	Image        string            `json:"image,omitempty"`
+	PublishedAt  string            `json:"published_at"`
+	Tags         []string          `json:"tags,omitempty"`
+	Kind         string            `json:"kind,omitempty"`
+	AuthorAvatar string            `json:"author_avatar,omitempty"`
+	AuthorHandle string            `json:"author_handle,omitempty"`
+	Stats        *wasmSocialStats  `json:"stats,omitempty"`
 	Media        []wasmSocialMedia `json:"media,omitempty"`
-	Quote        *wasmSocialQuote `json:"quote,omitempty"`
+	Quote        *wasmSocialQuote  `json:"quote,omitempty"`
 }
 
 type wasmSocialStats struct {
@@ -206,8 +206,9 @@ func (e *WASMExecutor) Fetch(ctx context.Context, pluginDir string, rec *PluginR
 		"[orbit-v2] wasm fetch plugin=%q channel=%q route=%q params=%s",
 		rec.ID, req.ChannelID, req.Route, mustJSONMap(req.Params),
 	)
+	logPluginVars(rec.ID, req.Vars)
 
-	raw, err := e.run(runCtx, data, stdinLine, rec, timeout)
+	raw, err := e.run(runCtx, data, stdinLine, rec, req.Vars, timeout)
 	if err != nil {
 		return FetchResult{}, err
 	}
@@ -271,7 +272,7 @@ func (e *WASMExecutor) FetchChannelWithParams(ctx context.Context, pluginDir str
 		rec.ID, ch.ID, mustJSONMap(params), mustJSONMap(fetchData.Params), strings.TrimSpace(string(env)),
 	)
 
-	raw, err := e.run(runCtx, data, stdinLine, rec, timeout)
+	raw, err := e.run(runCtx, data, stdinLine, rec, nil, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +330,7 @@ func (e *WASMExecutor) InvokeAction(
 	stdinLine := string(env) + "\n"
 	log.Printf("[orbit-playback] wasm action=%q plugin=%q", action, rec.ID)
 
-	raw, err := e.run(runCtx, bin, stdinLine, rec, timeout)
+	raw, err := e.run(runCtx, bin, stdinLine, rec, nil, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +348,7 @@ func (e *WASMExecutor) InvokeAction(
 	return resp.Data, nil
 }
 
-func (e *WASMExecutor) run(ctx context.Context, wasmBin []byte, stdinLine string, rec *PluginRecord, httpTimeout time.Duration) ([]byte, error) {
+func (e *WASMExecutor) run(ctx context.Context, wasmBin []byte, stdinLine string, rec *PluginRecord, vars map[string]string, httpTimeout time.Duration) ([]byte, error) {
 	rt := wazero.NewRuntime(ctx)
 	defer rt.Close(ctx)
 
@@ -358,7 +359,7 @@ func (e *WASMExecutor) run(ctx context.Context, wasmBin []byte, stdinLine string
 	hostBuilder := rt.NewHostModuleBuilder(wasmHostModule)
 	hostBuilder.NewFunctionBuilder().
 		WithFunc(func(ctx context.Context, mod api.Module, reqPtr, reqLen, respPtr, respCap uint32) uint32 {
-			return wasmHostHTTP(ctx, mod, httpClient, rec, reqPtr, reqLen, respPtr, respCap)
+			return wasmHostHTTP(ctx, mod, httpClient, rec, vars, reqPtr, reqLen, respPtr, respCap)
 		}).
 		Export("http_request")
 	hostBuilder.NewFunctionBuilder().
@@ -403,6 +404,7 @@ func wasmHostHTTP(
 	mod api.Module,
 	client *http.Client,
 	rec *PluginRecord,
+	vars map[string]string,
 	reqPtr, reqLen, respPtr, respCap uint32,
 ) uint32 {
 	reqJSON, ok := mod.Memory().Read(reqPtr, reqLen)
@@ -421,14 +423,63 @@ func wasmHostHTTP(
 	if err != nil {
 		return writeHostResp(mod, respPtr, respCap, hostHTTPResponse{Error: err.Error()})
 	}
+
+	headers := make(map[string]string, len(req.Headers)+2)
+	if vars != nil {
+		if ua := strings.TrimSpace(vars["userAgent"]); ua != "" {
+			headers["User-Agent"] = ua
+		}
+		if cookie := strings.TrimSpace(vars["cookie"]); cookie != "" {
+			headers["Cookie"] = cookie
+		}
+	}
 	ua := strings.TrimSpace(rec.Config.UserAgent)
 	if ua == "" {
 		ua = defaultUserAgent
 	}
-	httpReq.Header.Set("User-Agent", ua)
-	for k, v := range req.Headers {
-		httpReq.Header.Set(k, v)
+	if _, ok := headers["User-Agent"]; !ok {
+		headers["User-Agent"] = ua
 	}
+	for key, value := range req.Headers {
+		headers[key] = value
+	}
+	for key, value := range headers {
+		httpReq.Header.Set(key, value)
+	}
+
+	logHTTPRequest(
+		rec.ID,
+		method,
+		req.URL,
+		httpReq.Header.Get("Cookie"),
+		httpReq.Header.Get("User-Agent"),
+	)
+
+	if rec.Config.Browser.HasSessionConfig() && vars != nil &&
+		(strings.TrimSpace(vars["cookie"]) != "" || strings.TrimSpace(vars["userAgent"]) != "") &&
+		!webviewHTTPAvailable() {
+		return writeHostResp(mod, respPtr, respCap, hostHTTPResponse{
+			Error: "captcha: webview session transport unavailable",
+		})
+	}
+
+	if shouldUseWebviewHTTP(rec, vars) {
+		if hostResp, err := doWebviewHTTP(ctx, rec.ID, method, req.URL, req.Body, headers); err == nil {
+			return writeHostResp(mod, respPtr, respCap, hostResp)
+		} else {
+			if strings.Contains(err.Error(), "session webview missing") &&
+				(vars == nil || (strings.TrimSpace(vars["cookie"]) == "" && strings.TrimSpace(vars["userAgent"]) == "")) {
+				log.Printf("[orbit-webview-http] plugin=%q initial request fallback to direct http: %v", rec.ID, err)
+			} else {
+				return writeHostResp(mod, respPtr, respCap, hostHTTPResponse{
+					Error: "captcha: webview session request failed: " + err.Error(),
+				})
+			}
+		}
+	} else if webviewHTTPAvailable() && vars != nil && strings.TrimSpace(vars["cookie"]) != "" {
+		log.Printf("[orbit-webview-http] plugin=%q skipped webview http (no session config)", rec.ID)
+	}
+
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return writeHostResp(mod, respPtr, respCap, hostHTTPResponse{Error: err.Error()})

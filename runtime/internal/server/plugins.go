@@ -80,6 +80,7 @@ type pluginView struct {
 	ContentRating   string               `json:"contentRating,omitempty"`
 	Playback        *plugin.PlaybackConfig `json:"playback,omitempty"`
 	Capabilities    []string             `json:"capabilities,omitempty"`
+	Browser         *plugin.BrowserConfig `json:"browser,omitempty"`
 }
 
 func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
@@ -116,7 +117,20 @@ func pluginRecordToView(rec *plugin.PluginRecord) pluginView {
 		ContentRating:   rec.ContentRating,
 		Playback:        rec.Config.Playback,
 		Capabilities:    rec.Capabilities,
+		Browser:         browserConfigForView(rec.Config.Browser),
 	}
+}
+
+func browserConfigForView(cfg plugin.BrowserConfig) *plugin.BrowserConfig {
+	if strings.TrimSpace(cfg.Purpose) == "" &&
+		len(cfg.Origins) == 0 &&
+		len(cfg.FallbackOn) == 0 &&
+		len(cfg.Persist) == 0 &&
+		!cfg.Required {
+		return nil
+	}
+	cp := cfg
+	return &cp
 }
 
 func pluginRecordsToViews(recs []*plugin.PluginRecord) []pluginView {

@@ -1,6 +1,9 @@
 package plugin
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	SourceRSS    = "rss"
@@ -69,10 +72,19 @@ type WasmConfig struct {
 	MaxMemoryMB int    `json:"maxMemoryMB,omitempty"` // default 64
 }
 
-// BrowserConfig reserves Phase 3 browser/hybrid execution (not implemented yet).
+// BrowserConfig describes session-assisted browser fallback for CF/captcha sites.
 type BrowserConfig struct {
+	Purpose    string   `json:"purpose,omitempty"`    // "session"
 	Required   bool     `json:"required,omitempty"`
-	FallbackOn []string `json:"fallbackOn,omitempty"`
+	FallbackOn []string `json:"fallbackOn,omitempty"` // captcha, http_403
+	Persist    []string `json:"persist,omitempty"`    // cookie, userAgent
+	Origins    []string `json:"origins,omitempty"`
+}
+
+const BrowserSessionPurpose = "session"
+
+func (c BrowserConfig) HasSessionConfig() bool {
+	return strings.TrimSpace(c.Purpose) == BrowserSessionPurpose && len(c.Origins) > 0
 }
 
 func DefaultWasmConfig() WasmConfig {

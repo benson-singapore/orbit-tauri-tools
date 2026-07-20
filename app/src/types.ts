@@ -324,6 +324,32 @@ export interface PluginCategoryCountsResponse {
   };
 }
 
+export interface BrowserConfig {
+  purpose?: string;
+  required?: boolean;
+  fallbackOn?: string[];
+  persist?: string[];
+  origins?: string[];
+}
+
+export interface BrowserSessionInfo {
+  pluginId: string;
+  pluginName?: string;
+  origins: string[];
+  persist: string[];
+  /** Prefer opening this URL (e.g. channel page) instead of origin root. */
+  startUrl?: string;
+}
+
+export interface BrowserSessionPluginContext {
+  id: string;
+  name?: string;
+  browser?: BrowserConfig;
+  variablesSchema?: Record<string, VariableDefinition>;
+  channels?: PluginChannel[];
+  lastError?: string;
+}
+
 export interface Plugin {
   id: string;
   name: string;
@@ -356,6 +382,7 @@ export interface Plugin {
   variablesReady?: boolean;
   playback?: PlaybackConfig;
   capabilities?: string[];
+  browser?: BrowserConfig;
 }
 
 export interface FeedResponse {

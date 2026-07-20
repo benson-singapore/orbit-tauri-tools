@@ -34,7 +34,7 @@ import {
   bindArticleContentPlayers,
   destroyArticleContentPlayers,
 } from "@/lib/articleContentPlayer";
-import { runtimeOpenDetail, shouldUseRuntimeV2 } from "@/lib/runtimeV2";
+import { runtimeOpenDetail, shouldUseRuntimeV2, browserSessionOptionsFromPlugin } from "@/lib/runtimeV2";
 import { ChaptersDrawer } from "@/components/ChaptersDrawer";
 import { ChaptersList } from "@/components/ChaptersList";
 import { ChaptersOpenButton } from "@/components/ChaptersOpenButton";
@@ -252,7 +252,9 @@ export function ArticleReaderModal({
     if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && channelId !== "all" && effectiveHasDetail) {
       let cancelled = false;
       setLoading(true);
-      void runtimeOpenDetail(article.pluginId, channelId, itemId)
+      void runtimeOpenDetail(article.pluginId, channelId, itemId, {
+        ...browserSessionOptionsFromPlugin(pluginMeta),
+      })
         .then(result => {
           if (cancelled || !result.item) return;
           setArticle(prev => {

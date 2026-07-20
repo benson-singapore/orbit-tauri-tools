@@ -24,6 +24,7 @@ import { ComicPagesView } from "@/components/ComicPagesView";
 import { ComicPageWidthSlider } from "@/components/ComicPageWidthSlider";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import { ExperienceModeUnlockModal } from "@/components/ExperienceModeUnlockModal";
+import { BrowserSessionHost } from "@/components/BrowserSessionHost";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { PlaybackHistoryButton } from "@/components/PlaybackHistoryButton";
 import { PlaybackHistoryPanel } from "@/components/PlaybackHistoryPanel";
@@ -76,6 +77,7 @@ import { highlightArticleCode } from "@/lib/highlightArticleCode";
 import { fetchFeedItem } from "@/lib/feed";
 import {
   runtimeOpenDetail,
+  browserSessionOptionsFromPlugin,
   resolveChannelHasDetail,
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
@@ -1640,7 +1642,9 @@ export default function App() {
     ) {
       let cancelled = false;
       setContentLoading(true);
-      void runtimeOpenDetail(selectedItem.pluginId, channelId, itemId)
+      void runtimeOpenDetail(selectedItem.pluginId, channelId, itemId, {
+        ...browserSessionOptionsFromPlugin(pluginMeta),
+      })
         .then(result => {
           if (cancelled || !result.item) return;
           setSelectedItem(prev =>
@@ -4235,6 +4239,8 @@ export default function App() {
           onUnlock={handleUnlock}
         />
       ) : null}
+
+      <BrowserSessionHost />
 
     </div>
     </VideoSessionMountProvider>

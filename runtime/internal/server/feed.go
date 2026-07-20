@@ -234,7 +234,8 @@ func (s *Server) handleRefreshFeed(w http.ResponseWriter, r *http.Request) {
 		items, err = s.registry.RefreshPlugin(r.Context(), pluginID, channelID)
 	}
 	if err != nil {
-		writeJSON(w, http.StatusBadGateway, errorBody(err.Error()))
+		rec, _ := s.registry.Get(pluginID)
+		writePluginActionError(w, http.StatusBadGateway, rec, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{

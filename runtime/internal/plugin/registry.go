@@ -174,20 +174,24 @@ func (r *Registry) scanDir(root string, out map[string]manifestOnDisk) error {
 		}
 		data, err := os.ReadFile(manifestPath)
 		if err != nil {
-			return fmt.Errorf("read %s: %w", manifestPath, err)
+			log.Printf("plugin scan: skip %s: read manifest: %v", manifestPath, err)
+			continue
 		}
 		m, err := ParseManifestBytes(data)
 		if err != nil {
-			return fmt.Errorf("parse %s: %w", manifestPath, err)
+			log.Printf("plugin scan: skip %s: parse manifest: %v", manifestPath, err)
+			continue
 		}
 		pluginDir := filepath.Join(root, ent.Name())
 		if err := ValidateManifestOnDisk(pluginDir, m); err != nil {
-			return fmt.Errorf("%s: %w", manifestPath, err)
+			log.Printf("plugin scan: skip %s: %v", manifestPath, err)
+			continue
 		}
 		bundled := filepath.Clean(root) != userDir
 		if !bundled && rawManifestHasLegacyV1Fields(data) {
 			if err := SaveManifest(pluginDir, m); err != nil {
-				return fmt.Errorf("migrate manifest %s: %w", manifestPath, err)
+				log.Printf("plugin scan: skip %s: migrate manifest: %v", manifestPath, err)
+				continue
 			}
 		}
 		dir := pluginDir

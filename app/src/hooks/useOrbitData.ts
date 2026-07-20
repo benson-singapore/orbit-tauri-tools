@@ -30,6 +30,14 @@ import {
 } from "@/lib/runtimeV2";
 import { isSocialPlugin } from "@/lib/socialPlugin";
 import { resolveDefaultPluginChannel } from "@/lib/browseDynamicFeed";
+import { withBrowserSessionRetry } from "@/lib/browserSessionFlow";
+import {
+  inferBrowserSessionForPlugin,
+  pluginNeedsBrowserSessionRecovery,
+} from "@/lib/browserSessionError";
+import { isPluginSessionActive } from "@/lib/pluginSession";
+import { requestBrowserSession } from "@/lib/browserSessionGate";
+import { savePluginVariables } from "@/lib/runtimeV2";
 import {
   buildFeedLoadMoreParams,
   buildSearchLoadMoreParams,
@@ -41,6 +49,7 @@ import type {
   ChannelCapabilities,
   InstallRSSPluginRequest,
   Plugin,
+  BrowserSessionPluginContext,
 } from "@/types";
 
 const ALL_PLUGIN: Plugin = INITIAL_PLUGINS[0]!;
@@ -117,10 +126,27 @@ function mergeArticlesPreservingReadState(prev: Article[], items: Article[]): Ar
 
 function runtimeOptionsForPlugin(plugin?: Plugin): RuntimeCallOptions | undefined {
   if (!plugin) return undefined;
+  const context: BrowserSessionPluginContext = {
+    id: plugin.id,
+    name: plugin.name,
+    browser: plugin.browser,
+    variablesSchema: plugin.variablesSchema,
+    channels: plugin.channels,
+    lastError: plugin.lastError,
+  };
+  const session = inferBrowserSessionForPlugin(context);
   return {
     variablesSchema: plugin.variablesSchema,
     variablesReady: plugin.variablesReady,
+    browserSessionPlugin: session ? context : undefined,
   };
+}
+
+async function refreshPluginWithSession(
+  plugin: Plugin | undefined,
+  refreshFn: () => Promise<void>,
+): Promise<void> {
+  await withBrowserSessionRetry(plugin, refreshFn);
 }
 
 function shouldScheduleBackgroundFeedReload(
@@ -147,6 +173,7 @@ function scheduleFeedReloadAfterBackgroundFetch(
   loadFeedPage: (options?: { offset?: number; append?: boolean }) => Promise<number>,
   getContext: () => { pluginId: string; channelId: string },
   isPending?: () => boolean,
+  recoverSession?: (pluginId: string) => Promise<boolean>,
 ) {
   void (async () => {
     const context = getContext();
@@ -161,7 +188,13 @@ function scheduleFeedReloadAfterBackgroundFetch(
       await new Promise(resolve => window.setTimeout(resolve, delay));
       const itemCount = await loadFeedPage({ offset: 0, append: false });
       if (itemCount > 0 || itemCount < 0) return;
-      if (isPending && !isPending()) return;
+      if (isPending && !isPending()) {
+        if (recoverSession) {
+          const recovered = await recoverSession(context.pluginId);
+          if (recovered) continue;
+        }
+        return;
+      }
     }
   })().catch(console.error);
 }
@@ -277,6 +310,12 @@ export function useOrbitData(
   const loadMoreInFlightRef = useRef(false);
   const loadMoreBlockedRef = useRef(false);
   const backgroundPollGenerationRef = useRef(0);
+  const browserSessionRecoveryAttemptedRef = useRef<string | null>(null);
+  const recoverBrowserSessionRef = useRef<
+    (pluginId: string, options?: { allowEmptyFeed?: boolean }) => Promise<boolean>
+  >(
+    async () => false,
+  );
   const feedListPendingRef = useRef(false);
   const settledFeedKeyRef = useRef<string | null>(null);
   const reorderPersistQueue = useRef(Promise.resolve());
@@ -312,7 +351,7 @@ export function useOrbitData(
     );
   }, []);
 
-  const loadPlugins = useCallback(async () => {
+  const loadPlugins = useCallback(async (): Promise<Plugin[]> => {
     const remote = await fetchPlugins();
     for (const plugin of remote) {
       if (plugin.variablesReady) {
@@ -322,6 +361,7 @@ export function useOrbitData(
       }
     }
     setPlugins([ALL_PLUGIN, ...remote]);
+    return remote;
   }, []);
 
   const loadChannelCapabilities = useCallback(async (pluginId: string, channelId: string) => {
@@ -495,7 +535,20 @@ export function useOrbitData(
       if (!append) {
         setUnreadTotal(items.filter(item => !item.isRead).length);
       }
-      return finishFeedPage(items.length, Boolean(result.pending));
+      const itemCount = finishFeedPage(items.length, Boolean(result.pending));
+      if (
+        !append
+        && items.length === 0
+        && !result.pending
+        && pluginId !== "all"
+      ) {
+        void recoverBrowserSessionRef.current(pluginId, { allowEmptyFeed: true }).then(recovered => {
+          if (recovered) {
+            void loadFeedPage({ offset: 0, append: false });
+          }
+        });
+      }
+      return itemCount;
     }
 
     let scopeIds: string[] = [];
@@ -561,6 +614,62 @@ export function useOrbitData(
     setAwaitingBackgroundRefresh(false);
   }, []);
 
+  const recoverBrowserSessionIfNeeded = useCallback(async (
+    pluginId: string,
+    options?: { allowEmptyFeed?: boolean },
+  ) => {
+    if (browserSessionRecoveryAttemptedRef.current === pluginId) return false;
+    if (isPluginSessionActive(pluginId)) return false;
+
+    const remote = await loadPlugins();
+    const plugin = remote.find(item => item.id === pluginId);
+    if (!pluginNeedsBrowserSessionRecovery(plugin, options)) return false;
+
+    const session = inferBrowserSessionForPlugin(plugin!);
+    if (!session) return false;
+
+    browserSessionRecoveryAttemptedRef.current = pluginId;
+    const feedChannel = resolveFeedChannelId(
+      plugin,
+      plugin?.channels,
+      channelFilterRef.current,
+      pluginId,
+    );
+    const channel = plugin?.channels?.find(item => item.id === feedChannel);
+    const startUrl = channel?.params?.url?.trim();
+    const sessionWithUrl = startUrl ? { ...session, startUrl } : session;
+    try {
+      await savePluginVariables(session.pluginId, { cookie: "", userAgent: "" });
+      const values = await requestBrowserSession(sessionWithUrl);
+      if (!values) {
+        browserSessionRecoveryAttemptedRef.current = null;
+        return false;
+      }
+      console.info("[browser-session] saving variables", {
+        pluginId: session.pluginId,
+        keys: Object.keys(values),
+        cookieLen: values.cookie?.length ?? 0,
+        userAgentLen: values.userAgent?.length ?? 0,
+      });
+      await savePluginVariables(session.pluginId, values);
+      if (shouldUseRuntimeV2(pluginId, plugin) && feedChannel !== "all") {
+        await runtimeRefresh(pluginId, feedChannel, runtimeOptionsForPlugin(plugin));
+      } else {
+        await refreshPluginFeed(pluginId, feedChannel, { force: true });
+      }
+      await loadPlugins();
+      await loadFeedPage({ offset: 0, append: false });
+      browserSessionRecoveryAttemptedRef.current = null;
+      return true;
+    } catch (err) {
+      console.error("browser session recovery failed", err);
+      browserSessionRecoveryAttemptedRef.current = null;
+      return false;
+    }
+  }, [loadPlugins, loadFeedPage]);
+
+  recoverBrowserSessionRef.current = recoverBrowserSessionIfNeeded;
+
   const pollFeedUntilData = useCallback(async (
     context: { pluginId: string; channelId: string },
   ) => {
@@ -589,15 +698,20 @@ export function useOrbitData(
 
         const itemCount = await loadFeedPage({ offset: 0, append: false });
         if (itemCount > 0 || itemCount < 0) return;
-        // Refresh finished with an empty list — stop polling instead of retrying for ~2 minutes.
-        if (!feedListPendingRef.current) return;
+        if (!feedListPendingRef.current) {
+          const recovered = await recoverBrowserSessionIfNeeded(context.pluginId, {
+            allowEmptyFeed: true,
+          });
+          if (recovered) continue;
+          return;
+        }
       }
     } finally {
       if (pollGeneration === backgroundPollGenerationRef.current) {
         setAwaitingBackgroundRefresh(false);
       }
     }
-  }, [loadFeedPage]);
+  }, [loadFeedPage, recoverBrowserSessionIfNeeded]);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -804,6 +918,10 @@ export function useOrbitData(
   reloadFeedOnlyRef.current = reloadFeedOnly;
 
   useEffect(() => {
+    browserSessionRecoveryAttemptedRef.current = null;
+  }, [pluginFilter]);
+
+  useEffect(() => {
     void reloadRef.current();
     const timer = window.setInterval(() => {
       void refreshInBackgroundRef.current();
@@ -905,6 +1023,7 @@ export function useOrbitData(
           channelId: channelFilterRef.current,
         }),
         () => feedListPendingRef.current,
+        pluginId => recoverBrowserSessionRef.current(pluginId),
       );
       return plugin;
     },
@@ -926,6 +1045,7 @@ export function useOrbitData(
           channelId: channelFilterRef.current,
         }),
         () => feedListPendingRef.current,
+        pluginId => recoverBrowserSessionRef.current(pluginId),
       );
       return plugin;
     },
@@ -964,6 +1084,7 @@ export function useOrbitData(
               channelId: channelFilterRef.current,
             }),
             () => feedListPendingRef.current,
+            pluginId => recoverBrowserSessionRef.current(pluginId),
           );
         }
       } catch (err) {
@@ -1031,7 +1152,9 @@ export function useOrbitData(
         if (shouldUseRuntimeV2(id, plugin) && feedChannel !== "all") {
           await runtimeRefresh(id, feedChannel, runtimeOptionsForPlugin(plugin));
         } else {
-          await refreshPluginFeed(id, undefined, { force: true });
+          await refreshPluginWithSession(plugin, () =>
+            refreshPluginFeed(id, undefined, { force: true }),
+          );
         }
         await loadPlugins();
         await loadFeedPage({ offset: 0, append: false });
@@ -1058,7 +1181,9 @@ export function useOrbitData(
       if (shouldUseRuntimeV2(pluginId, plugin)) {
         await runtimeRefresh(pluginId, feedChannel, runtimeOptionsForPlugin(plugin));
       } else {
-        await refreshPluginFeed(pluginId, feedChannel);
+        await refreshPluginWithSession(plugin, () =>
+          refreshPluginFeed(pluginId, feedChannel),
+        );
       }
       await loadFeedPage({ offset: 0, append: false });
     } catch (err) {
@@ -1082,7 +1207,9 @@ export function useOrbitData(
       if (shouldUseRuntimeV2(pluginId, plugin)) {
         await runtimeClearRefresh(pluginId, feedChannel, runtimeOptionsForPlugin(plugin));
       } else {
-        await refreshPluginFeed(pluginId, feedChannel, { force: true });
+        await refreshPluginWithSession(plugin, () =>
+          refreshPluginFeed(pluginId, feedChannel, { force: true }),
+        );
       }
       await loadFeedPage({ offset: 0, append: false });
     } catch (err) {
@@ -1096,7 +1223,7 @@ export function useOrbitData(
       .then(() => reorderPlugins(orderedIds))
       .catch(err => {
         console.error("failed to persist plugin order:", err);
-        return loadPlugins();
+        void loadPlugins();
       });
   }, [loadPlugins]);
 
