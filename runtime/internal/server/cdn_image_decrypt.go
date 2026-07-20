@@ -29,7 +29,10 @@ func isLbupupImageHost(host string) bool {
 	if host == "pic.lbupup.cn" || strings.HasSuffix(host, ".lbupup.cn") {
 		return true
 	}
-	return host == "pic.uforxk.cn" || strings.HasSuffix(host, ".uforxk.cn")
+	if host == "pic.uforxk.cn" || strings.HasSuffix(host, ".uforxk.cn") {
+		return true
+	}
+	return host == "pic.ssyxpo.cn" || strings.HasSuffix(host, ".ssyxpo.cn")
 }
 
 func needsLbupupDecrypt(target *url.URL) bool {
@@ -68,19 +71,10 @@ func decryptLbupupImage(ciphertext []byte) ([]byte, error) {
 		return nil, err
 	}
 
+	// AES-128-CBC with NoPadding: return CBC output as-is (JPEG/PNG tolerate trailing pad).
 	plain := make([]byte, len(ciphertext))
 	cipher.NewCBCDecrypter(block, []byte(lbupupDecryptIV)).CryptBlocks(plain, ciphertext)
-
-	pad := int(plain[len(plain)-1])
-	if pad <= 0 || pad > aes.BlockSize || pad > len(plain) {
-		return nil, fmt.Errorf("invalid image padding")
-	}
-	for i := 0; i < pad; i++ {
-		if plain[len(plain)-1-i] != byte(pad) {
-			return nil, fmt.Errorf("invalid image padding bytes")
-		}
-	}
-	return plain[:len(plain)-pad], nil
+	return plain, nil
 }
 
 func xorBgezuwHeader(ciphertext, key []byte, headerEnd int) []byte {

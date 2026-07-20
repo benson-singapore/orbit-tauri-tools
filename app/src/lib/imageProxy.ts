@@ -8,6 +8,7 @@ const PROXY_IMAGE_HOST_SUFFIXES = [
   "hellogithub.com",
   "lbupup.cn",
   "uforxk.cn",
+  "ssyxpo.cn",
   "bgezuw.cn",
   "g-mh.online",
   "mh.online",
