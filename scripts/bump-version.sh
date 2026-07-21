@@ -66,5 +66,20 @@ if [[ -f "$TAURI_DIR/Cargo.lock" ]]; then
   ok "app/src-tauri/Cargo.lock"
 fi
 
+# appInfo.ts — 浏览器 / 非 Tauri 环境下的版本 fallback
+APPINFO_TS="$APP_DIR/src/lib/appInfo.ts"
+node - "$APPINFO_TS" "$NEW_VERSION" <<'NODE'
+const fs = require("fs");
+const [filePath, version] = process.argv.slice(2);
+const src = fs.readFileSync(filePath, "utf8");
+const pattern = /(import\.meta\.env\.VITE_APP_VERSION\s*\?\?\s*")([^"]+)(")/;
+if (!pattern.test(src)) {
+  console.error("Failed to find VITE_APP_VERSION fallback in appInfo.ts");
+  process.exit(1);
+}
+fs.writeFileSync(filePath, src.replace(pattern, `$1${version}$3`));
+NODE
+ok "app/src/lib/appInfo.ts"
+
 echo ""
 ok "版本号已统一为 $NEW_VERSION"

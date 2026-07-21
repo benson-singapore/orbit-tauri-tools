@@ -14,7 +14,7 @@ function isTauriRuntime(): boolean {
 export { isTauriRuntime };
 
 export async function loadAppInfo(): Promise<AppInfo> {
-  const fallbackVersion = import.meta.env.VITE_APP_VERSION ?? "1.1.0";
+  const fallbackVersion = import.meta.env.VITE_APP_VERSION ?? "1.1.4";
 
   if (!isTauriRuntime()) {
     return {
