@@ -1,4 +1,4 @@
-import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useRef, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ArticleDetailPanel } from "@/components/ArticleDetailPanel";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import { useSplitPaneAutoGridColumns } from "@/hooks/useSplitPaneAutoGridColumns";
@@ -37,6 +37,9 @@ interface SplitGridDetailViewProps {
   hasMore: boolean;
   onLoadMore: () => void;
   onItemSelect: (article: Article) => void;
+  showFavorites?: boolean;
+  favoritedArticleIds?: Set<string>;
+  onToggleFavorite?: (article: Article, event: MouseEvent) => void;
 }
 
 export function splitDetailSessionId(article: Pick<Article, "id" | "pluginId">): string {
@@ -69,6 +72,9 @@ export function SplitGridDetailView({
   hasMore,
   onLoadMore,
   onItemSelect,
+  showFavorites = false,
+  favoritedArticleIds,
+  onToggleFavorite,
 }: SplitGridDetailViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPaneRef = useRef<HTMLDivElement>(null);
@@ -127,6 +133,9 @@ export function SplitGridDetailView({
           onLoadMore={onLoadMore}
           onItemSelect={onItemSelect}
           scrollRootRef={leftPaneRef}
+          showFavorites={showFavorites}
+          favoritedArticleIds={favoritedArticleIds}
+          onToggleFavorite={onToggleFavorite}
         />
       </div>
 

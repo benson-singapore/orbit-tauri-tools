@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
 import { ChannelAudioPlaylist } from "@/components/ChannelAudioPlaylist";
 import { Icon } from "@/components/Icon";
 import { articlesToListAudioTracks } from "@/lib/articleAudioPlaylist";
@@ -12,6 +12,7 @@ import {
   shouldUseRuntimeV2,
 } from "@/lib/runtimeV2";
 import { isDarkTheme } from "@/lib/themeMode";
+import { isPluginFavoritesChannel } from "@/lib/pluginFavorites";
 import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
 import type { Article, Plugin, ThemeMode } from "@/types";
 
@@ -29,6 +30,9 @@ interface AudioFocusViewProps {
   loadMoreLabel?: string;
   onLoadMore: () => void;
   onTrackPlay?: (article: Article) => void;
+  showFavorites?: boolean;
+  favoritedArticleIds?: Set<string>;
+  onToggleFavorite?: (article: Article, event: MouseEvent) => void;
 }
 
 export function AudioFocusView({
@@ -45,6 +49,9 @@ export function AudioFocusView({
   loadMoreLabel,
   onLoadMore,
   onTrackPlay,
+  showFavorites = false,
+  favoritedArticleIds,
+  onToggleFavorite,
 }: AudioFocusViewProps) {
   const isDark = isDarkTheme(theme);
   const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
@@ -131,6 +138,13 @@ export function AudioFocusView({
     }
   };
 
+  const handleToggleFavorite = (articleId: string, event: MouseEvent) => {
+    const article = articles.find(item => item.id === articleId);
+    if (article) {
+      onToggleFavorite?.(article, event);
+    }
+  };
+
   if (loading || searching) {
     return (
       <div className="flex flex-1 items-center justify-center py-24">
@@ -152,10 +166,12 @@ export function AudioFocusView({
             <Icon name="audio" className="h-7 w-7" />
           </div>
           <p className={`text-sm font-medium ${isDark ? "text-neutral-300" : "text-neutral-700"}`}>
-            当前频道没有可播放的音频
+            {isPluginFavoritesChannel(channelId) ? "暂无收藏音频" : "当前频道没有可播放的音频"}
           </p>
           <p className="mt-1 text-xs text-neutral-400">
-            切换到其他频道，或刷新订阅源后再试
+            {isPluginFavoritesChannel(channelId)
+              ? "在其他频道点击爱心即可加入收藏"
+              : "切换到其他频道，或刷新订阅源后再试"}
           </p>
         </div>
       </div>
@@ -175,6 +191,9 @@ export function AudioFocusView({
         onLoadMore={onLoadMore}
         onTrackChange={handleTrackChange}
         resolveTrackUrl={resolveTrackUrl}
+        showFavorites={showFavorites}
+        favoritedArticleIds={favoritedArticleIds}
+        onToggleFavorite={handleToggleFavorite}
       />
     </div>
   );

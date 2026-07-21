@@ -156,6 +156,8 @@ interface PluginManagerModalProps {
   onUninstall: (id: string) => void | Promise<void>;
   onToggleActive: (id: string) => void;
   onToggleIncludeInAll: (id: string) => void;
+  onToggleFavoritesEnabled: (id: string) => void;
+  favoritesEnabledPluginIds: Set<string>;
   onMove: (id: string, direction: "up" | "down") => void;
   onReorder: (orderedIds: string[]) => void;
   onImport: (payload: InstallRSSPluginRequest, targetGroupId?: string) => void;
@@ -561,6 +563,8 @@ interface PluginSectionProps {
   onUninstall: (id: string) => void;
   onToggleActive: (id: string) => void;
   onToggleIncludeInAll: (id: string) => void;
+  onToggleFavoritesEnabled: (id: string) => void;
+  favoritesEnabledPluginIds: Set<string>;
   onMove: (id: string, direction: "up" | "down") => void;
   onReorder: (orderedIds: string[]) => void;
   onAssignGroup: (pluginId: string, groupId: string) => void;
@@ -582,6 +586,8 @@ function PluginSection(props: PluginSectionProps) {
     onUninstall,
     onToggleActive,
     onToggleIncludeInAll,
+    onToggleFavoritesEnabled,
+    favoritesEnabledPluginIds,
     onMove,
     onReorder,
     onAssignGroup,
@@ -631,6 +637,7 @@ function PluginSection(props: PluginSectionProps) {
         const isEnabled = plugin.active !== false;
         const needsVariables = pluginNeedsVariablesConfiguration(plugin);
         const includeInAll = resolvePluginIncludeInAll(plugin);
+        const favoritesEnabled = favoritesEnabledPluginIds.has(plugin.id);
         const canMoveUp = index > 0;
         const canMoveDown = index < installedPlugins.length - 1;
         const isCustom = !plugin.official;
@@ -798,6 +805,25 @@ function PluginSection(props: PluginSectionProps) {
                   </button>
                   <span className="text-[11px] font-medium text-neutral-500">
                     阅读
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={favoritesEnabled}
+                    onClick={() => onToggleFavoritesEnabled(plugin.id)}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors cursor-pointer ${
+                      favoritesEnabled ? "bg-rose-500" : "bg-neutral-300 dark:bg-neutral-600"
+                    }`}
+                    title={favoritesEnabled ? "已开启收藏，点击关闭" : "开启收藏功能"}
+                  >
+                    <span
+                      className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${
+                        favoritesEnabled ? "translate-x-5" : "translate-x-1"
+                      }`}
+                    />
+                  </button>
+                  <span className={`text-[11px] font-medium ${favoritesEnabled ? "text-rose-600" : "text-neutral-500"}`}>
+                    收藏
                   </span>
                   <button
                     type="button"
@@ -3728,6 +3754,8 @@ export function PluginManagerModal({
   onUninstall,
   onToggleActive,
   onToggleIncludeInAll,
+  onToggleFavoritesEnabled,
+  favoritesEnabledPluginIds,
   onMove,
   onReorder,
   onImport,
@@ -4366,6 +4394,8 @@ export function PluginManagerModal({
                       onReorder={onReorder}
                       onToggleActive={onToggleActive}
                       onToggleIncludeInAll={onToggleIncludeInAll}
+                      onToggleFavoritesEnabled={onToggleFavoritesEnabled}
+                      favoritesEnabledPluginIds={favoritesEnabledPluginIds}
                       onUninstall={onUninstall}
                       onForceRefresh={onForceRefresh}
                       onAssignGroup={onAssignPluginGroup}

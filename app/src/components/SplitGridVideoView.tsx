@@ -1,4 +1,4 @@
-import { useCallback, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useRef, type MouseEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { RatingFocusView } from "@/components/RatingFocusView";
 import { VideoWallFocusView } from "@/components/VideoWallFocusView";
 import { useSplitPaneAutoGridColumns } from "@/hooks/useSplitPaneAutoGridColumns";
@@ -30,6 +30,9 @@ interface SplitGridVideoViewProps {
   onItemSelect: (article: Article) => void;
   onExpandSession: (sessionId: string) => void;
   onCloseSession: (sessionId: string) => void;
+  showFavorites?: boolean;
+  favoritedArticleIds?: Set<string>;
+  onToggleFavorite?: (article: Article, event: MouseEvent) => void;
 }
 
 export function SplitGridVideoView({
@@ -52,6 +55,9 @@ export function SplitGridVideoView({
   onItemSelect,
   onExpandSession,
   onCloseSession,
+  showFavorites = false,
+  favoritedArticleIds,
+  onToggleFavorite,
 }: SplitGridVideoViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const leftPaneRef = useRef<HTMLDivElement>(null);
@@ -109,6 +115,9 @@ export function SplitGridVideoView({
           onLoadMore={onLoadMore}
           onItemSelect={onItemSelect}
           scrollRootRef={leftPaneRef}
+          showFavorites={showFavorites}
+          favoritedArticleIds={favoritedArticleIds}
+          onToggleFavorite={onToggleFavorite}
         />
       </div>
 

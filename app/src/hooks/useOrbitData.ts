@@ -15,6 +15,7 @@ import {
   updatePluginManifest,
 } from "@/lib/feed";
 import { isChannelEnabled } from "@/lib/channelStatus";
+import { isPluginFavoritesChannel } from "@/lib/pluginFavorites";
 import { resolvePluginIncludeInAll } from "@/lib/pluginIncludeInAll";
 import {
   fetchChannelCapabilities,
@@ -366,7 +367,11 @@ export function useOrbitData(
 
   const loadChannelCapabilities = useCallback(async (pluginId: string, channelId: string) => {
     const plugin = pluginsRef.current.find(p => p.id === pluginId);
-    if (!shouldUseRuntimeV2(pluginId, plugin) || channelId === "all") {
+    if (
+      !shouldUseRuntimeV2(pluginId, plugin)
+      || channelId === "all"
+      || isPluginFavoritesChannel(channelId)
+    ) {
       channelCapabilitiesRef.current = DEFAULT_CAPABILITIES;
       setChannelCapabilities(DEFAULT_CAPABILITIES);
       return;
@@ -413,6 +418,16 @@ export function useOrbitData(
       commitFeedSettled();
       return itemCount;
     };
+
+    if (isPluginFavoritesChannel(channel) || isPluginFavoritesChannel(feedChannel)) {
+      if (!isStaleRequest()) {
+        setArticles([]);
+        setHasMore(false);
+        setFeedTotal(0);
+        feedNextParamsRef.current = null;
+      }
+      return finishFeedPage(0);
+    }
 
     if (shouldUseRuntimeV2(pluginId, plugin) && feedChannel !== "all") {
       const runtimeOptions = runtimeOptionsForPlugin(plugin);
@@ -811,6 +826,18 @@ export function useOrbitData(
     feedRequestId.current += 1;
     feedPaginationExhaustedRef.current = false;
     loadMoreBlockedRef.current = false;
+
+    if (isPluginFavoritesChannel(channelFilterRef.current)) {
+      feedNextParamsRef.current = null;
+      setArticles([]);
+      setHasMore(false);
+      setFeedTotal(0);
+      setLoading(false);
+      setSearching(false);
+      setError(null);
+      return;
+    }
+
     const feedKey = buildFeedKey(
       pluginFilterRef.current,
       channelFilterRef.current,

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type RefObject } from "react";
-import { isDarkTheme } from "@/lib/themeMode";
+import { useEffect, useRef, useState, type MouseEvent, type RefObject } from "react";
+import { FavoriteHeartButton } from "@/components/FavoriteHeartButton";
 import { ProxiedImage } from "@/components/ProxiedImage";
+import { isDarkTheme } from "@/lib/themeMode";
 import { parseRatingScore, ratingDisplayTags } from "@/lib/ratingPlugin";
 import {
   DEFAULT_GRID_COVER_ASPECT_RATIO,
@@ -25,6 +26,9 @@ interface RatingFocusViewProps {
   onItemSelect?: (article: Article) => void;
   selectedArticleId?: string;
   scrollRootRef?: RefObject<HTMLElement | null>;
+  showFavorites?: boolean;
+  favoritedArticleIds?: Set<string>;
+  onToggleFavorite?: (article: Article, event: MouseEvent) => void;
 }
 
 export function RatingFocusView({
@@ -41,6 +45,9 @@ export function RatingFocusView({
   onItemSelect,
   selectedArticleId,
   scrollRootRef,
+  showFavorites = false,
+  favoritedArticleIds,
+  onToggleFavorite,
 }: RatingFocusViewProps) {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set());
@@ -78,7 +85,7 @@ export function RatingFocusView({
   if (articles.length === 0) {
     return (
       <div className="text-center py-24">
-        <p className="text-sm text-neutral-400">暂无影视数据</p>
+        <p className="text-sm text-neutral-400">暂无数据</p>
       </div>
     );
   }
@@ -103,6 +110,7 @@ export function RatingFocusView({
           const hasImage = Boolean(item.image?.trim()) && !failedIds.has(item.id);
           const isSelected = selectedArticleId === item.id;
           const rowShowsSummary = rowsWithSummary.has(Math.floor(index / columnCount));
+          const favorited = Boolean(favoritedArticleIds?.has(item.id));
 
           return (
             <button
@@ -142,9 +150,24 @@ export function RatingFocusView({
                   </div>
                 )}
                 {score ? (
-                  <div className="absolute top-2 right-2 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-sm text-[11px] font-semibold text-amber-400 tabular-nums">
+                  <div
+                    className={`absolute top-2 px-1.5 py-0.5 rounded-md bg-black/70 backdrop-blur-sm text-[11px] font-semibold text-amber-400 tabular-nums ${
+                      showFavorites ? "left-2" : "right-2"
+                    }`}
+                  >
                     {score}
                   </div>
+                ) : null}
+                {showFavorites && onToggleFavorite ? (
+                  <FavoriteHeartButton
+                    favorited={favorited}
+                    onToggle={(event) => {
+                      event.stopPropagation();
+                      onToggleFavorite(item, event);
+                    }}
+                    className="absolute top-2 right-2 z-10 rounded-full bg-black/55 p-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
+                    iconClassName="h-3.5 w-3.5"
+                  />
                 ) : null}
                 <div className="absolute inset-0 bg-black/0 group-hover:bg-black/15 transition-colors pointer-events-none" />
               </div>

@@ -124,6 +124,17 @@ import {
   readIgnoredArticleIds,
 } from "@/lib/ignoredArticles";
 import {
+  createFavoritesChannel,
+  getFavoriteArticlesForPlugin,
+  isPluginFavoritesChannel,
+  loadFavoriteArticlesByPlugin,
+  loadFavoritesEnabledPluginIds,
+  persistFavoriteArticlesByPlugin,
+  persistFavoritesEnabledPluginIds,
+  toggleFavoriteArticleInMap,
+} from "@/lib/pluginFavorites";
+import { FavoriteHeartButton } from "@/components/FavoriteHeartButton";
+import {
   getStoredPluginChannel,
   persistPluginChannel,
 } from "@/lib/pluginChannelMemory";
@@ -439,6 +450,12 @@ export default function App() {
 
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
   const [ignoredIds, setIgnoredIds] = useState<Set<string>>(() => readIgnoredArticleIds());
+  const [favoritesEnabledPluginIds, setFavoritesEnabledPluginIds] = useState<Set<string>>(
+    () => loadFavoritesEnabledPluginIds(),
+  );
+  const [favoriteArticlesByPlugin, setFavoriteArticlesByPlugin] = useState<Record<string, Article[]>>(
+    () => loadFavoriteArticlesByPlugin(),
+  );
   const articlesWithBookmarks = useMemo(
     () =>
       articles.map(item => ({
@@ -622,6 +639,37 @@ export default function App() {
     });
   }, [visibleArticles, activeTab]);
 
+  const isFavoritesChannelActive = isPluginFavoritesChannel(activeChannel)
+    && activePlugin !== "all"
+    && favoritesEnabledPluginIds.has(activePlugin);
+
+  const pluginFavoriteArticles = useMemo(() => {
+    if (activePlugin === "all") return [];
+    return getFavoriteArticlesForPlugin(favoriteArticlesByPlugin, activePlugin);
+  }, [activePlugin, favoriteArticlesByPlugin]);
+
+  const favoritedArticleIds = useMemo(() => {
+    if (activePlugin === "all") return new Set<string>();
+    return new Set(pluginFavoriteArticles.map(item => item.id));
+  }, [activePlugin, pluginFavoriteArticles]);
+
+  const isPluginFavoritesEnabled = activePlugin !== "all"
+    && favoritesEnabledPluginIds.has(activePlugin);
+
+  const pluginFeedArticles = useMemo(() => {
+    if (isFavoritesChannelActive) {
+      return pluginFavoriteArticles;
+    }
+    return filteredArticles.filter(item => item.pluginId === activePlugin);
+  }, [isFavoritesChannelActive, pluginFavoriteArticles, filteredArticles, activePlugin]);
+
+  const listDisplayArticles = useMemo(() => {
+    if (isFavoritesChannelActive) {
+      return pluginFavoriteArticles;
+    }
+    return filteredArticles;
+  }, [isFavoritesChannelActive, pluginFavoriteArticles, filteredArticles]);
+
   const selectedAudioPlaylist = useMemo(() => {
     if (!selectedItem || !selectedAudioUrl) return undefined;
     const samePluginArticles = filteredArticles.filter(
@@ -663,8 +711,14 @@ export default function App() {
 
   const activePluginChannels = useMemo(() => {
     if (activePlugin === "all") return [];
-    return (pluginById.get(activePlugin)?.channels ?? []).filter(ch => isChannelEnabled(ch.status));
-  }, [activePlugin, pluginById]);
+    const channels = (pluginById.get(activePlugin)?.channels ?? []).filter(ch =>
+      isChannelEnabled(ch.status),
+    );
+    if (!favoritesEnabledPluginIds.has(activePlugin)) {
+      return channels;
+    }
+    return [createFavoritesChannel(), ...channels];
+  }, [activePlugin, pluginById, favoritesEnabledPluginIds]);
 
   const activePluginMeta = useMemo(
     () => (activePlugin === "all" ? undefined : pluginById.get(activePlugin)),
@@ -712,7 +766,8 @@ export default function App() {
     }
   }, [activeChannel, activePluginChannels, activePlugin, resolvePluginChannel]);
 
-  const showPluginChannelBar = activePluginChannels.length > 1;
+  const showPluginChannelBar = activePluginChannels.length > 1
+    || (isPluginFavoritesEnabled && activePluginChannels.length > 0);
   const isReaderPreviewMode = pluginPreviewMode === "reader";
   const isWaterfallPreviewMode = pluginPreviewMode === "waterfall";
   const isGridPreviewMode = pluginPreviewMode === "grid";
@@ -738,7 +793,9 @@ export default function App() {
   );
   const splitDetailVideoArticle = useMemo(() => null, []);
 
-  const hasFilteredArticles = filteredArticles.length > 0;
+  const hasFilteredArticles = isFavoritesChannelActive
+    ? pluginFavoriteArticles.length > 0
+    : filteredArticles.length > 0;
   const filteredArticlesRef = useRef(filteredArticles);
   filteredArticlesRef.current = filteredArticles;
 
@@ -1730,6 +1787,32 @@ export default function App() {
         prev ? { ...prev, isBookmarked: !prev.isBookmarked } : prev,
       );
     }
+  };
+
+  const handleTogglePluginFavoritesEnabled = (pluginId: string) => {
+    setFavoritesEnabledPluginIds(prev => {
+      const next = new Set(prev);
+      if (next.has(pluginId)) {
+        next.delete(pluginId);
+        if (activePlugin === pluginId && isPluginFavoritesChannel(activeChannel)) {
+          const resolved = resolvePluginChannel(pluginId);
+          setActiveChannel(resolved);
+        }
+      } else {
+        next.add(pluginId);
+      }
+      persistFavoritesEnabledPluginIds(next);
+      return next;
+    });
+  };
+
+  const handleTogglePluginFavorite = (article: Article, event?: { stopPropagation?: () => void }) => {
+    event?.stopPropagation?.();
+    setFavoriteArticlesByPlugin(prev => {
+      const next = toggleFavoriteArticleInMap(prev, article);
+      persistFavoriteArticlesByPlugin(next);
+      return next;
+    });
   };
 
   const handleIgnoreArticle = (id: string) => {
@@ -2931,6 +3014,8 @@ export default function App() {
               onUninstall={handleUninstallPlugin}
               onToggleActive={handleTogglePluginActive}
               onToggleIncludeInAll={handleTogglePluginIncludeInAll}
+              onToggleFavoritesEnabled={handleTogglePluginFavoritesEnabled}
+              favoritesEnabledPluginIds={favoritesEnabledPluginIds}
               onMove={handleMovePlugin}
               onReorder={handleReorderPlugins}
               onImport={handleImportCustomPlugin}
@@ -3082,33 +3167,37 @@ export default function App() {
                   <span>
                     {feedListBusy
                       ? "加载中…"
-                      : isBrowseDynamicPluginActive
-                        ? `共 ${feedTotal || filteredArticles.length} ${feedCountUnit(activePluginMeta)}`
+                      : isFavoritesChannelActive
+                        ? `共 ${listDisplayArticles.length} ${feedCountUnit(activePluginMeta)}`
+                        : isBrowseDynamicPluginActive
+                        ? `共 ${feedTotal || listDisplayArticles.length} ${feedCountUnit(activePluginMeta)}`
                         : isActiveDynamicChannel
                           ? submittedSearch
                             ? `共 ${feedTotal} 条结果`
                             : "实时搜索"
-                          : `共 ${submittedSearch ? feedTotal : filteredArticles.length} ${feedCountUnit(activePluginMeta)}`}
+                          : `共 ${submittedSearch ? feedTotal : listDisplayArticles.length} ${feedCountUnit(activePluginMeta)}`}
                   </span>
                 </div>
               </div>
 
-              {feedLoading ? (
+              {feedLoading && !isFavoritesChannelActive ? (
                 <div className="text-center py-12">
                   <p className="text-sm text-neutral-400">正在拉取 RSS 订阅…</p>
                 </div>
-              ) : feedError ? (
+              ) : feedError && !isFavoritesChannelActive ? (
                 <div className="text-center py-12 px-4">
                   <p className="text-sm text-rose-500">Feed 加载失败：{feedError}</p>
                   <p className="text-xs text-neutral-400 mt-2">请确认 Go runtime 已启动（make dev-go）</p>
                 </div>
-              ) : filteredArticles.length === 0 ? (
+              ) : listDisplayArticles.length === 0 ? (
                 <div className="text-center py-12">
                   <div className="w-12 h-12 rounded-full bg-neutral-50 dark:bg-neutral-800 flex items-center justify-center mx-auto mb-3">
                     <Icon name="search" className="w-6 h-6 text-neutral-400" />
                   </div>
                   <p className="text-sm text-neutral-400">
-                    {feedSearching
+                    {isFavoritesChannelActive
+                      ? "暂无收藏内容，点击爱心即可收藏"
+                      : feedSearching
                       ? "正在搜索…"
                       : isBrowseDynamicPluginActive
                         ? isImageGalleryPlugin(activePluginMeta)
@@ -3124,17 +3213,20 @@ export default function App() {
                   {feedSearching && (
                     <p className="text-center text-xs text-neutral-400 py-1">正在搜索…</p>
                   )}
-                  {filteredArticles.map((item) => {
+                  {listDisplayArticles.map((item) => {
                     const isSelected =
                       (selectedItem && selectedItem.id === item.id)
                       || (chaptersParent != null && chaptersParent.id === item.id);
                     const isUnread = !item.isRead;
                     const pluginMeta = pluginById.get(item.pluginId);
+                    const itemFavoritesEnabled = favoritesEnabledPluginIds.has(item.pluginId);
+                    const itemFavorited = itemFavoritesEnabled
+                      && (favoriteArticlesByPlugin[item.pluginId] ?? []).some(a => a.id === item.id);
                     if (isSocialPlugin(pluginMeta)) {
                       return (
                         <SocialFeedCard
                           key={item.id}
-                          article={item}
+                          article={itemFavoritesEnabled ? { ...item, isBookmarked: itemFavorited } : item}
                           runtimeBase={runtimeBase}
                           isSelected={Boolean(isSelected)}
                           isUnread={isUnread}
@@ -3145,7 +3237,11 @@ export default function App() {
                           }}
                           onBookmark={(e) => {
                             e.stopPropagation();
-                            handleBookmarkToggle(item.id);
+                            if (itemFavoritesEnabled) {
+                              handleTogglePluginFavorite(item, e);
+                            } else {
+                              handleBookmarkToggle(item.id);
+                            }
                           }}
                           failedThumbnail={failedThumbnailIds.has(item.id)}
                           onThumbnailError={() => {
@@ -3241,23 +3337,32 @@ export default function App() {
                             >
                               <Icon name="eye-off" className="w-3 h-3 orbit-feed-card-meta" />
                             </button>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleBookmarkToggle(item.id);
-                              }}
-                              className="p-1 orbit-feed-card-action rounded-full"
-                              title="收藏"
-                            >
-                              <Icon name="bookmark" className="w-3 h-3 orbit-feed-card-meta" active={item.isBookmarked} />
-                            </button>
+                            {itemFavoritesEnabled ? (
+                              <FavoriteHeartButton
+                                favorited={itemFavorited}
+                                onToggle={(e) => handleTogglePluginFavorite(item, e)}
+                                className="p-1 orbit-feed-card-action rounded-full"
+                                iconClassName="w-3 h-3"
+                              />
+                            ) : (
+                              <button 
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleBookmarkToggle(item.id);
+                                }}
+                                className="p-1 orbit-feed-card-action rounded-full"
+                                title="收藏"
+                              >
+                                <Icon name="bookmark" className="w-3 h-3 orbit-feed-card-meta" active={item.isBookmarked} />
+                              </button>
+                            )}
                           </div>
                         </div>
 
                       </div>
                     );
                   })}
-                  {(feedHasMore || (channelCapabilities.canLoadMore && filteredArticles.length > 0)) && (
+                  {!isFavoritesChannelActive && (feedHasMore || (channelCapabilities.canLoadMore && listDisplayArticles.length > 0)) && (
                     <button
                       type="button"
                       onClick={() => {
@@ -3333,8 +3438,8 @@ export default function App() {
                         {isWaterfallPreviewMode && activePlugin !== "all" ? (
                           <span className="text-xs text-neutral-400 truncate">
                             {isActiveImageGalleryPlugin
-                              ? `图片观赏 · 共 ${filteredArticles.length} 张`
-                              : `瀑布流 · 共 ${filteredArticles.filter(item => item.pluginId === activePlugin).length} 条`}
+                              ? `图片观赏 · 共 ${pluginFeedArticles.length} 张`
+                              : `瀑布流 · 共 ${pluginFeedArticles.length} 条`}
                           </span>
                         ) : null}
                         {!isPluginFocusMode && selectedItem && !pageDetailSubtitle ? (
@@ -3344,28 +3449,28 @@ export default function App() {
                         ) : null}
                         {isSocialFeedPreviewMode && activePlugin !== "all" ? (
                           <span className="text-xs text-neutral-400 truncate">
-                            推文展示 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条
+                            推文展示 · 共 {pluginFeedArticles.length} 条
                           </span>
                         ) : null}
                         {isGridPreviewMode && activePlugin !== "all" && !pageDetailSubtitle ? (
                           <span className="text-xs text-neutral-400 truncate">
-                            卡片视图 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条
+                            卡片视图 · 共 {pluginFeedArticles.length} 条
                           </span>
                         ) : null}
                         {isSplitBroadcastMode && activePlugin !== "all" ? (
                           <span className="text-xs text-neutral-400 truncate">
-                            联播分屏 · 卡片 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条 · 视频 {splitWallSessions.length} 路
+                            联播分屏 · 卡片 {pluginFeedArticles.length} 条 · 视频 {splitWallSessions.length} 路
                           </span>
                         ) : null}
                         {isSplitDetailMode && activePlugin !== "all" ? (
                           <span className="text-xs text-neutral-400 truncate">
-                            阅览分屏 · 卡片 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 条
+                            阅览分屏 · 卡片 {pluginFeedArticles.length} 条
                             {splitDetailArticle ? ` · 已选「${splitDetailArticle.title}」` : ""}
                           </span>
                         ) : null}
                         {isAudioFocusPreviewMode && activePlugin !== "all" ? (
                           <span className="text-xs text-neutral-400 truncate">
-                            音频模式 · 共 {filteredArticles.filter(item => item.pluginId === activePlugin).length} 首
+                            音频模式 · 共 {pluginFeedArticles.length} 首
                           </span>
                         ) : null}
                       </div>
@@ -3735,7 +3840,7 @@ export default function App() {
                       theme={theme}
                       runtimeBase={runtimeBase}
                       pluginId={activePlugin}
-                      articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                      articles={pluginFeedArticles}
                       gridColumnCount={gridColumnCount}
                       onGridColumnCountChange={handleGridColumnCountChange}
                       coverAspectRatio={gridCoverAspectRatio}
@@ -3743,16 +3848,19 @@ export default function App() {
                       splitRatio={splitPaneRatio}
                       onSplitRatioChange={handleSplitPaneRatioChange}
                       videoSessions={splitWallSessions}
-                      loading={feedLoading}
-                      loadingMore={feedLoadingMore}
-                      searching={feedSearching}
-                      hasMore={feedHasMore}
+                      loading={feedLoading && !isFavoritesChannelActive}
+                      loadingMore={feedLoadingMore && !isFavoritesChannelActive}
+                      searching={feedSearching && !isFavoritesChannelActive}
+                      hasMore={!isFavoritesChannelActive && feedHasMore}
                       onLoadMore={() => {
                         void loadMore().catch(console.error);
                       }}
                       onItemSelect={openReaderDetailModal}
                       onExpandSession={handleVideoWallExpandSession}
                       onCloseSession={handleVideoWallCloseSession}
+                      showFavorites={isPluginFavoritesEnabled}
+                      favoritedArticleIds={favoritedArticleIds}
+                      onToggleFavorite={handleTogglePluginFavorite}
                     />
                   </div>
                 ) : isSplitDetailMode ? (
@@ -3760,7 +3868,7 @@ export default function App() {
                     <SplitGridDetailView
                       theme={theme}
                       runtimeBase={runtimeBase}
-                      articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                      articles={pluginFeedArticles}
                       selectedArticle={splitDetailArticle}
                       gridColumnCount={gridColumnCount}
                       onGridColumnCountChange={handleGridColumnCountChange}
@@ -3777,12 +3885,15 @@ export default function App() {
                       channelCapabilities={channelCapabilities}
                       storedChannel={getStoredPluginChannel(activePlugin)}
                       experienceMode={experienceMode}
-                      loading={feedLoading}
-                      loadingMore={feedLoadingMore}
-                      searching={feedSearching}
-                      hasMore={feedHasMore}
+                      loading={feedLoading && !isFavoritesChannelActive}
+                      loadingMore={feedLoadingMore && !isFavoritesChannelActive}
+                      searching={feedSearching && !isFavoritesChannelActive}
+                      hasMore={!isFavoritesChannelActive && feedHasMore}
                       onLoadMore={handleSplitDetailLoadMore}
                       onItemSelect={handleSplitDetailSelect}
+                      showFavorites={isPluginFavoritesEnabled}
+                      favoritedArticleIds={favoritedArticleIds}
+                      onToggleFavorite={handleTogglePluginFavorite}
                     />
                   </div>
                 ) : isVideoWallPreviewMode && activePlugin !== "all" ? (
@@ -3800,7 +3911,7 @@ export default function App() {
                     key={`${activePlugin}-${activeChannel}-${gridColumnCount}`}
                     theme={theme}
                     runtimeBase={runtimeBase}
-                    articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                    articles={pluginFeedArticles}
                     activeChannel={activeChannel}
                     pluginMeta={activePluginMeta}
                     columnCount={gridColumnCount}
@@ -3812,7 +3923,8 @@ export default function App() {
                       void loadMore().catch(console.error);
                     }}
                     onImageOpen={(id) => {
-                      const article = filteredArticles.find(item => item.id === id);
+                      const article = pluginFeedArticles.find(item => item.id === id)
+                        ?? filteredArticles.find(item => item.id === id);
                       if (article) {
                         void markArticleRead(article);
                       }
@@ -3832,36 +3944,48 @@ export default function App() {
                       pluginId={activePlugin}
                       channelId={activeChannel}
                       pluginMeta={activePluginMeta}
-                      articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
-                      loading={feedLoading}
-                      loadingMore={feedLoadingMore}
-                      searching={feedSearching}
-                      hasMore={feedHasMore}
+                      articles={pluginFeedArticles}
+                      loading={feedLoading && !isFavoritesChannelActive}
+                      loadingMore={feedLoadingMore && !isFavoritesChannelActive}
+                      searching={feedSearching && !isFavoritesChannelActive}
+                      hasMore={!isFavoritesChannelActive && feedHasMore}
                       onLoadMore={() => {
                         void loadMore().catch(console.error);
                       }}
                       onTrackPlay={(article: Article) => {
                         void markArticleRead(article);
                       }}
+                      showFavorites={isPluginFavoritesEnabled}
+                      favoritedArticleIds={favoritedArticleIds}
+                      onToggleFavorite={handleTogglePluginFavorite}
                     />
                   </div>
                 ) : isSocialFeedPreviewMode && activePlugin !== "all" ? (
                   <SocialFeedFocusView
                     theme={theme}
                     runtimeBase={runtimeBase}
-                    articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                    articles={isPluginFavoritesEnabled
+                      ? pluginFeedArticles.map(item => ({
+                          ...item,
+                          isBookmarked: favoritedArticleIds.has(item.id),
+                        }))
+                      : pluginFeedArticles}
                     feedWidthPercent={socialFeedWidth}
-                    loading={feedLoading}
-                    loadingMore={feedLoadingMore}
-                    searching={feedSearching}
-                    hasMore={feedHasMore}
+                    loading={feedLoading && !isFavoritesChannelActive}
+                    loadingMore={feedLoadingMore && !isFavoritesChannelActive}
+                    searching={feedSearching && !isFavoritesChannelActive}
+                    hasMore={!isFavoritesChannelActive && feedHasMore}
                     onLoadMore={() => {
                       void loadMore().catch(console.error);
                     }}
                     onItemSelect={handleSocialFeedItemSelect}
                     onBookmark={(article, event) => {
                       event.stopPropagation();
-                      handleBookmarkToggle(article.id);
+                      if (isPluginFavoritesEnabled) {
+                        handleTogglePluginFavorite(article, event);
+                      } else {
+                        handleBookmarkToggle(article.id);
+                      }
                     }}
                     onIgnore={(article, event) => {
                       event.stopPropagation();
@@ -3874,18 +3998,21 @@ export default function App() {
                     key={`${activePlugin}-${activeChannel}-${gridColumnCount}-${gridCoverAspectRatio}`}
                     theme={theme}
                     runtimeBase={runtimeBase}
-                    articles={filteredArticles.filter(item => item.pluginId === activePlugin)}
+                    articles={pluginFeedArticles}
                     columnCount={gridColumnCount}
                     coverAspectRatio={gridCoverAspectRatio}
-                    loading={feedLoading}
-                    loadingMore={feedLoadingMore}
-                    searching={feedSearching}
-                    hasMore={feedHasMore}
+                    loading={feedLoading && !isFavoritesChannelActive}
+                    loadingMore={feedLoadingMore && !isFavoritesChannelActive}
+                    searching={feedSearching && !isFavoritesChannelActive}
+                    hasMore={!isFavoritesChannelActive && feedHasMore}
                     onLoadMore={() => {
                       void loadMore().catch(console.error);
                     }}
                     onItemSelect={handleGridItemSelect}
                     scrollRootRef={readerPanelRef}
+                    showFavorites={isPluginFavoritesEnabled}
+                    favoritedArticleIds={favoritedArticleIds}
+                    onToggleFavorite={handleTogglePluginFavorite}
                   />
                 ) : (selectedItem || chapters.isActive) ? (
                 <div className="flex min-h-0 w-full flex-col">

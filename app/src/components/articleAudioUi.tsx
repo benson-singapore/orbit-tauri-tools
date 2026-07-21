@@ -1,4 +1,5 @@
-import { useRef, type ChangeEvent, type PointerEvent } from "react";
+import { useRef, type ChangeEvent, type MouseEvent, type PointerEvent } from "react";
+import { FavoriteHeartButton } from "@/components/FavoriteHeartButton";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { formatPlaybackRate } from "@/lib/audioPlaybackPrefs";
 import { CHANNEL_PLAYBACK_MODES } from "@/lib/channelPlaybackMode";
@@ -395,6 +396,9 @@ interface AudioTrackListProps {
   fillHeight?: boolean;
   runtimeBase: string | null;
   resolvingIndex?: number | null;
+  showFavorites?: boolean;
+  favoritedArticleIds?: Set<string>;
+  onToggleFavorite?: (articleId: string, event: MouseEvent) => void;
 }
 
 export function AudioTrackList({
@@ -412,6 +416,9 @@ export function AudioTrackList({
   fillHeight = false,
   runtimeBase,
   resolvingIndex = null,
+  showFavorites = false,
+  favoritedArticleIds,
+  onToggleFavorite,
 }: AudioTrackListProps) {
   const showPlaybackModes = playbackMode !== undefined && onPlaybackModeChange !== undefined;
 
@@ -439,41 +446,56 @@ export function AudioTrackList({
             const isActive = index === currentIndex;
             const isActivePlaying = isActive && isPlaying;
             const isResolving = resolvingIndex === index;
+            const articleId = track.articleId;
+            const favorited = Boolean(articleId && favoritedArticleIds?.has(articleId));
 
             return (
-              <li key={track.articleId ?? `${track.name}-${index}`}>
-                <button
-                  type="button"
-                  onClick={() => onSelectTrack(index)}
-                  className={`flex w-full items-center gap-3 px-3 py-3 text-left transition-colors sm:px-4 ${
+              <li key={articleId ?? `${track.name}-${index}`}>
+                <div
+                  className={`flex w-full items-center gap-1 px-1 py-1 sm:px-2 ${
                     isActive
                       ? "bg-[color-mix(in_srgb,var(--orbit-accent)_10%,transparent)]"
                       : "hover:bg-[color-mix(in_srgb,var(--orbit-text)_4%,transparent)]"
                   }`}
                 >
-                  <span className={`w-6 shrink-0 text-center text-xs tabular-nums ${
-                    isActive ? "text-[var(--orbit-accent)] font-semibold" : "text-[var(--orbit-text-muted)]"
-                  }`}>
-                    {isResolving ? (
-                      <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--orbit-accent)]/30 border-t-[var(--orbit-accent)]" />
-                    ) : isActivePlaying ? <PlayingBars /> : index + 1}
-                  </span>
-
-                  <TrackCover track={track} size="sm" runtimeBase={runtimeBase} />
-
-                  <span className="min-w-0 flex-1">
-                    <span className={`block truncate text-sm ${
-                      isActive ? "font-semibold text-[var(--orbit-accent)]" : "text-[var(--orbit-text)]"
+                  <button
+                    type="button"
+                    onClick={() => onSelectTrack(index)}
+                    className="flex min-w-0 flex-1 items-center gap-3 px-2 py-2 text-left transition-colors sm:px-2"
+                  >
+                    <span className={`w-6 shrink-0 text-center text-xs tabular-nums ${
+                      isActive ? "text-[var(--orbit-accent)] font-semibold" : "text-[var(--orbit-text-muted)]"
                     }`}>
-                      {track.name}
+                      {isResolving ? (
+                        <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-[var(--orbit-accent)]/30 border-t-[var(--orbit-accent)]" />
+                      ) : isActivePlaying ? <PlayingBars /> : index + 1}
                     </span>
-                    {track.artist ? (
-                      <span className="mt-0.5 block truncate text-xs text-[var(--orbit-text-muted)]">
-                        {track.artist}
+
+                    <TrackCover track={track} size="sm" runtimeBase={runtimeBase} />
+
+                    <span className="min-w-0 flex-1">
+                      <span className={`block truncate text-sm ${
+                        isActive ? "font-semibold text-[var(--orbit-accent)]" : "text-[var(--orbit-text)]"
+                      }`}>
+                        {track.name}
                       </span>
-                    ) : null}
-                  </span>
-                </button>
+                      {track.artist ? (
+                        <span className="mt-0.5 block truncate text-xs text-[var(--orbit-text-muted)]">
+                          {track.artist}
+                        </span>
+                      ) : null}
+                    </span>
+                  </button>
+
+                  {showFavorites && articleId && onToggleFavorite ? (
+                    <FavoriteHeartButton
+                      favorited={favorited}
+                      onToggle={(event) => onToggleFavorite(articleId, event)}
+                      className="shrink-0 rounded-full p-2 text-[var(--orbit-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--orbit-text)_6%,transparent)] hover:text-rose-500"
+                      iconClassName="h-4 w-4"
+                    />
+                  ) : null}
+                </div>
               </li>
             );
           })}

@@ -3,6 +3,7 @@ import "@/styles/orbit-aplayer.css";
 import { AudioPlayerHero, AudioTrackList } from "@/components/articleAudioUi";
 import { useOrbitAudioPlayer } from "@/hooks/useOrbitAudioPlayer";
 import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
+import type { MouseEvent } from "react";
 
 interface ChannelAudioPlaylistProps {
   sessionId: string;
@@ -16,6 +17,9 @@ interface ChannelAudioPlaylistProps {
   onTrackChange?: (index: number) => void;
   resolveTrackUrl?: (index: number, track: ReaderAudioTrack) => Promise<string | null>;
   className?: string;
+  showFavorites?: boolean;
+  favoritedArticleIds?: Set<string>;
+  onToggleFavorite?: (articleId: string, event: MouseEvent) => void;
 }
 
 export function ChannelAudioPlaylist({
@@ -30,6 +34,9 @@ export function ChannelAudioPlaylist({
   onTrackChange,
   resolveTrackUrl,
   className = "",
+  showFavorites = false,
+  favoritedArticleIds,
+  onToggleFavorite,
 }: ChannelAudioPlaylistProps) {
   const storageName = `orbit-aplayer-channel-${sessionId}`;
   const player = useOrbitAudioPlayer({
@@ -90,6 +97,9 @@ export function ChannelAudioPlaylist({
           fillHeight
           runtimeBase={runtimeBase}
           resolvingIndex={player.resolvingIndex}
+          showFavorites={showFavorites}
+          favoritedArticleIds={favoritedArticleIds}
+          onToggleFavorite={onToggleFavorite}
         />
       </section>
     </div>
