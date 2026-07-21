@@ -155,6 +155,12 @@ import {
   readStoredComicPageWidth,
 } from "@/lib/comicPageWidth";
 import {
+  READER_CONTENT_WIDTH_DEFAULT,
+  persistReaderContentWidth,
+  readerContentWidthCssValue,
+  readStoredReaderContentWidth,
+} from "@/lib/readerContentWidth";
+import {
   getStoredSocialFeedWidth,
   persistSocialFeedWidth,
   SOCIAL_FEED_WIDTH_DEFAULT,
@@ -508,6 +514,7 @@ export default function App() {
   const [feedRefreshing, setFeedRefreshing] = useState(false);
   const [readerFontScale, setReaderFontScale] = useState(READER_FONT_SCALE_DEFAULT);
   const [comicPageWidth, setComicPageWidth] = useState(COMIC_PAGE_WIDTH_DEFAULT);
+  const [readerContentWidth, setReaderContentWidth] = useState(READER_CONTENT_WIDTH_DEFAULT);
   const [novelReaderSettings, setNovelReaderSettings] = useState<NovelReaderSettings>(
     readStoredNovelReaderSettings,
   );
@@ -516,6 +523,7 @@ export default function App() {
   useEffect(() => {
     setReaderFontScale(readStoredReaderFontScale());
     setComicPageWidth(readStoredComicPageWidth());
+    setReaderContentWidth(readStoredReaderContentWidth());
     setNovelReaderSettings(readStoredNovelReaderSettings());
   }, []);
 
@@ -527,6 +535,11 @@ export default function App() {
   const handleComicPageWidthChange = useCallback((width: number) => {
     setComicPageWidth(width);
     persistComicPageWidth(width);
+  }, []);
+
+  const handleReaderContentWidthChange = useCallback((width: number) => {
+    setReaderContentWidth(width);
+    persistReaderContentWidth(width);
   }, []);
 
   const handleSocialFeedWidthChange = useCallback((width: number) => {
@@ -3365,6 +3378,17 @@ export default function App() {
                             onChange={handleComicPageWidthChange}
                             className="mx-1"
                           />
+                        ) : isReaderPreviewMode
+                          && Boolean(selectedItem || chapters.isActive)
+                          && !isNovelReading ? (
+                          <ComicPageWidthSlider
+                            theme={theme}
+                            value={readerContentWidth}
+                            onChange={handleReaderContentWidthChange}
+                            className="mx-1"
+                            title="调节阅读宽度"
+                            ariaLabel="阅读宽度"
+                          />
                         ) : null}
                         {isPageDetailView ? (
                           <>
@@ -3745,6 +3769,7 @@ export default function App() {
                       onSplitRatioChange={handleSplitPaneRatioChange}
                       readerFontScale={readerFontScale}
                       comicPageWidth={comicPageWidth}
+                      readerContentWidth={readerContentWidth}
                       novelReaderSettings={novelReaderSettings}
                       hasDetail={splitDetailHasDetail}
                       activeChannel={splitDetailActiveChannel}
@@ -3882,6 +3907,7 @@ export default function App() {
                   style={{
                     "--reader-scale": readerFontScale,
                     "--comic-page-width": comicPageWidthCssValue(comicPageWidth),
+                    "--reader-content-width": readerContentWidthCssValue(readerContentWidth),
                     ...novelReaderStyle,
                   } as React.CSSProperties}
                 >
@@ -4178,6 +4204,8 @@ export default function App() {
           readerFontScale={readerFontScale}
           comicPageWidth={comicPageWidth}
           onComicPageWidthChange={handleComicPageWidthChange}
+          readerContentWidth={readerContentWidth}
+          onReaderContentWidthChange={handleReaderContentWidthChange}
           novelReaderSettings={novelReaderSettings}
           onNovelReaderSettingsChange={handleNovelReaderSettingsChange}
           hasDetail={session.hasDetail}

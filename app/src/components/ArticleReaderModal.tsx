@@ -24,6 +24,7 @@ import {
   prepareMangaIntroDisplayContent,
 } from "@/lib/comicChapterContent";
 import { comicPageWidthCssValue } from "@/lib/comicPageWidth";
+import { readerContentWidthCssValue } from "@/lib/readerContentWidth";
 import { ComicChapterStream } from "@/components/ComicChapterStream";
 import { NovelChapterStream } from "@/components/NovelChapterStream";
 import { ComicPagesView } from "@/components/ComicPagesView";
@@ -84,6 +85,8 @@ interface ArticleReaderModalProps {
   readerFontScale: number;
   comicPageWidth?: number;
   onComicPageWidthChange?: (width: number) => void;
+  readerContentWidth?: number;
+  onReaderContentWidthChange?: (width: number) => void;
   novelReaderSettings?: NovelReaderSettings;
   onNovelReaderSettingsChange?: (settings: NovelReaderSettings) => void;
   hasDetail: boolean;
@@ -115,6 +118,8 @@ export function ArticleReaderModal({
   readerFontScale,
   comicPageWidth = 70,
   onComicPageWidthChange,
+  readerContentWidth = 80,
+  onReaderContentWidthChange,
   novelReaderSettings = readStoredNovelReaderSettings(),
   onNovelReaderSettingsChange,
   hasDetail,
@@ -1003,6 +1008,16 @@ export function ArticleReaderModal({
                   onChange={onComicPageWidthChange}
                 />
               </div>
+            ) : !isNovelReading && onReaderContentWidthChange ? (
+              <div className="rounded-full px-2 py-1 bg-[color-mix(in_srgb,var(--orbit-bg)_55%,transparent)]">
+                <ComicPageWidthSlider
+                  theme={theme}
+                  value={readerContentWidth}
+                  onChange={onReaderContentWidthChange}
+                  title="调节阅读宽度"
+                  ariaLabel="阅读宽度"
+                />
+              </div>
             ) : null}
             {chaptersOpenButton}
             {pageDetailSwitchEnabled ? (
@@ -1052,6 +1067,7 @@ export function ArticleReaderModal({
           style={{
             "--reader-scale": readerFontScale,
             "--comic-page-width": comicPageWidthCssValue(comicPageWidth),
+            "--reader-content-width": readerContentWidthCssValue(readerContentWidth),
             ...novelReaderStyle,
           } as React.CSSProperties}
         >

@@ -2,6 +2,15 @@
 .article-reader {
   --reader-scale: 1;
   --comic-page-width: 70%;
+  --reader-content-width: 80%;
+}
+
+/* Reading mode content width — set --reader-content-width on .article-reader (default 80%) */
+.article-reader:not(.article-reader--comic):not(.article-reader--novel) {
+  width: 100%;
+  max-width: var(--reader-content-width, 80%);
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* Comic page width slider — native range input in reader toolbar */

@@ -23,6 +23,7 @@ interface SplitGridDetailViewProps {
   onSplitRatioChange: (ratio: number) => void;
   readerFontScale: number;
   comicPageWidth?: number;
+  readerContentWidth?: number;
   novelReaderSettings?: NovelReaderSettings;
   hasDetail: boolean;
   activeChannel: string;
@@ -54,6 +55,7 @@ export function SplitGridDetailView({
   onSplitRatioChange,
   readerFontScale,
   comicPageWidth,
+  readerContentWidth,
   novelReaderSettings,
   hasDetail,
   activeChannel,
@@ -148,6 +150,7 @@ export function SplitGridDetailView({
             article={selectedArticle}
             readerFontScale={readerFontScale}
             comicPageWidth={comicPageWidth}
+            readerContentWidth={readerContentWidth}
             novelReaderSettings={novelReaderSettings}
             hasDetail={hasDetail}
             activeChannel={activeChannel}

@@ -26,6 +26,7 @@ import {
   prepareMangaIntroDisplayContent,
 } from "@/lib/comicChapterContent";
 import { comicPageWidthCssValue } from "@/lib/comicPageWidth";
+import { readerContentWidthCssValue } from "@/lib/readerContentWidth";
 import { ComicChapterStream } from "@/components/ComicChapterStream";
 import { NovelChapterStream } from "@/components/NovelChapterStream";
 import { ComicPagesView } from "@/components/ComicPagesView";
@@ -70,6 +71,7 @@ interface ArticleDetailPanelProps {
   article: Article;
   readerFontScale: number;
   comicPageWidth?: number;
+  readerContentWidth?: number;
   novelReaderSettings?: NovelReaderSettings;
   hasDetail: boolean;
   activeChannel: string;
@@ -86,6 +88,7 @@ export function ArticleDetailPanel({
   article: initialArticle,
   readerFontScale,
   comicPageWidth = 70,
+  readerContentWidth = 80,
   novelReaderSettings,
   hasDetail,
   activeChannel,
@@ -783,6 +786,7 @@ export function ArticleDetailPanel({
             style={{
               "--reader-scale": readerFontScale,
               "--comic-page-width": comicPageWidthCssValue(comicPageWidth),
+              "--reader-content-width": readerContentWidthCssValue(readerContentWidth),
               ...novelReaderStyle,
             } as React.CSSProperties}
           >
