@@ -165,7 +165,7 @@ export function RatingFocusView({
                       event.stopPropagation();
                       onToggleFavorite(item, event);
                     }}
-                    className="absolute top-2 right-2 z-10 rounded-full bg-black/55 p-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
+                    className="absolute top-2 right-2 z-[1] rounded-full bg-black/55 p-1.5 text-white backdrop-blur-sm transition-colors hover:bg-black/70"
                     iconClassName="h-3.5 w-3.5"
                   />
                 ) : null}

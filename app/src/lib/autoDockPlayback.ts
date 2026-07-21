@@ -1,7 +1,7 @@
 import { READER_AUDIO_SELECTOR } from "@/components/ReaderAudioPlayer";
 import { resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
 import { collectTimeProgress } from "@/lib/playbackResume";
-import { usesDedicatedSessionVideoPlayer } from "@/lib/readerSessionVideos";
+import { isVideoArticle } from "@/lib/readerSessionVideos";
 import {
   articleSessionKey,
   createReaderSession,
@@ -11,7 +11,6 @@ import {
   getSessionPlaybackSnapshot,
   updateSessionPlaybackSnapshot,
 } from "@/lib/sessionVideoProgress";
-import { resolveYouTubeVideoId } from "@/lib/youtube";
 import type { Article, PlaybackMode, PlaybackResumeIntent } from "@/types";
 
 export interface InlinePlaybackContext {
@@ -22,10 +21,8 @@ export interface InlinePlaybackContext {
 }
 
 export function hasInlinePlayableMedia(article: Article): boolean {
-  if (resolveYouTubeVideoId(article)) return true;
-  if (article.videoUrl?.trim()) return true;
-  if (resolveArticleAudioUrl(article)) return true;
-  return usesDedicatedSessionVideoPlayer(article);
+  if (isVideoArticle(article)) return true;
+  return resolveArticleAudioUrl(article) !== null;
 }
 
 function isDomMediaPlaying(root: ParentNode): boolean {
@@ -78,7 +75,7 @@ export function snapshotInlinePlaybackForDock(
 }
 
 function resolveInlinePlaybackMode(article: Article): PlaybackMode {
-  if (resolveYouTubeVideoId(article) || article.videoUrl?.trim()) return "video";
+  if (isVideoArticle(article)) return "video";
   if (resolveArticleAudioUrl(article)) return "audio";
   return "article";
 }

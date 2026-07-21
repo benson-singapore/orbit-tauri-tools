@@ -3415,7 +3415,7 @@ export default function App() {
               }>
                 {/* Reader toolbar — sticky near top */}
                 <div
-                  className={`${isSplitPaneLayout || isAudioFocusPreviewMode ? "shrink-0" : "sticky top-0"} z-10 -mx-6 px-6 pt-2 pb-2 ${isDarkTheme(theme) ? "bg-transparent" : "bg-[#fafafa]"}`}
+                  className={`${isSplitPaneLayout || isAudioFocusPreviewMode ? "shrink-0" : "sticky top-0"} z-20 -mx-6 px-6 pt-2 pb-2 ${isDarkTheme(theme) ? "bg-transparent" : "bg-[#fafafa]"}`}
                 >
                   <div
                     className={`rounded-xl border transition-all duration-200 ${
@@ -4115,7 +4115,7 @@ export default function App() {
                       </div>
                     )}
 
-                    {selectedAudioUrl ? (
+                    {selectedAudioUrl && selectedItem.type !== "video" ? (
                       <div className="p-4 md:p-6 bg-[var(--orbit-surface)]">
                         <ReaderAudioPlayer
                           sessionId={inlineSessionId ?? `inline-audio:${selectedItem.pluginId}:${selectedItem.id}`}

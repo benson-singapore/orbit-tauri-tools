@@ -1,9 +1,7 @@
-import { extractRycjVideoUrlFromContent } from "@/lib/articleContentPlayer";
-import { extractVideoUrlFromContent } from "@/lib/articleVideoUrl";
 import type { Article } from "@/types";
 
 const BLOB_SRC_RE = /^blob:/i;
-const DIRECT_MEDIA_URL_RE = /\.(mp3|m4a|aac|ogg|wav|flac|opus|m3u8)(\?|$)/i;
+const DIRECT_AUDIO_URL_RE = /\.(mp3|m4a|aac|ogg|wav|flac|opus)(\?|$)/i;
 
 /** Placeholder URL for list items whose audio must be resolved from detail content. */
 export const PENDING_AUDIO_TRACK_URL =
@@ -41,13 +39,12 @@ function resolveRelativeMediaUrl(url: string, baseUrl?: string): string {
   }
 }
 
-export function isDirectMediaUrl(url: string): boolean {
+function isDirectAudioSourceUrl(url: string): boolean {
   const lower = url.toLowerCase();
   return (
-    DIRECT_MEDIA_URL_RE.test(lower)
+    DIRECT_AUDIO_URL_RE.test(lower)
     || lower.includes("/audio/")
     || lower.includes("audio/mpeg")
-    || lower.includes("application/vnd.apple.mpegurl")
   );
 }
 
@@ -85,9 +82,9 @@ export function extractAudioUrlFromContent(
   return null;
 }
 
-/** Prefer explicit `audioUrl`, then URLs embedded in article HTML. */
+/** Prefer explicit `audioUrl`, then `<audio>` tags embedded in article HTML. */
 export function resolveArticleAudioUrl(
-  article: Pick<Article, "audioUrl" | "videoUrl" | "content" | "sourceUrl" | "type">,
+  article: Pick<Article, "audioUrl" | "content" | "sourceUrl">,
 ): string | null {
   const baseUrl = article.sourceUrl?.trim() || undefined;
 
@@ -99,21 +96,10 @@ export function resolveArticleAudioUrl(
   if (article.content?.trim()) {
     const fromContent = extractAudioUrlFromContent(article.content, baseUrl);
     if (fromContent) return fromContent;
-
-    const fromRycj = extractRycjVideoUrlFromContent(article.content);
-    if (fromRycj) return resolveRelativeMediaUrl(fromRycj, baseUrl);
-
-    const fromVideo = extractVideoUrlFromContent(article.content);
-    if (fromVideo) return resolveRelativeMediaUrl(fromVideo, baseUrl);
-  }
-
-  const video = article.videoUrl?.trim();
-  if (video) {
-    return resolveRelativeMediaUrl(video, baseUrl);
   }
 
   const source = article.sourceUrl?.trim();
-  if (source && isDirectMediaUrl(source)) {
+  if (source && isDirectAudioSourceUrl(source)) {
     return resolveRelativeMediaUrl(source, baseUrl);
   }
 
