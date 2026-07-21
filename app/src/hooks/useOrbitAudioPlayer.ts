@@ -87,6 +87,17 @@ export function toAPlayerItem(track: ReaderAudioTrack): APlayerAudioItem {
   };
 }
 
+function trackIdentityKey(track: ReaderAudioTrack): string {
+  return `${track.articleId ?? track.name}\u0000${track.name}\u0000${track.artist ?? ""}`;
+}
+
+/** True when `next` is the same list or a pure append of `prev` (load-more). */
+function isTrackListAppendOrSame(prev: string, next: string): boolean {
+  if (prev === next) return true;
+  if (!prev) return true;
+  return next.startsWith(prev) && next.charAt(prev.length) === "\n";
+}
+
 export function useOrbitAudioPlayer({
   sessionId,
   tracks,
@@ -274,13 +285,28 @@ export function useOrbitAudioPlayer({
   }, []);
 
   const tracksSignature = useMemo(
-    () => tracks.map(track => `${track.articleId ?? track.name}\u0000${track.name}\u0000${track.artist ?? ""}`).join("\n"),
+    () => tracks.map(trackIdentityKey).join("\n"),
     [tracks],
   );
+  const tracksSignatureRef = useRef(tracksSignature);
+  const hasTracks = tracks.length > 0;
+  // Bumped only when the playlist is replaced (not load-more append), so playback
+  // is not torn down while the current track is still playing.
+  const [listEpoch, setListEpoch] = useState(0);
+
+  useEffect(() => {
+    const prev = tracksSignatureRef.current;
+    const next = tracksSignature;
+    if (prev === next) return;
+    tracksSignatureRef.current = next;
+    if (!isTrackListAppendOrSame(prev, next)) {
+      setListEpoch(epoch => epoch + 1);
+    }
+  }, [tracksSignature]);
 
   useEffect(() => {
     const container = engineRef.current;
-    if (!container || tracks.length === 0) return;
+    if (!container || !hasTracks) return;
 
     initialRestoreDoneRef.current = false;
     ensureAPlayerHlsGlobal();
@@ -288,20 +314,22 @@ export function useOrbitAudioPlayer({
     playbackModeRef.current = initialMode;
     setPlaybackMode(initialMode);
 
+    const initialTracks = tracksRef.current;
+    const multi = initialTracks.length > 1;
     const player = new APlayer({
       container,
       theme: readOrbitAccentColor(),
       preload,
       mutex: true,
-      loop: hasMultipleTracks ? defaultLoop : "none",
+      loop: multi ? defaultLoop : "none",
       order: "list",
       listFolded: true,
       listMaxHeight: 0,
       storageName,
-      audio: tracks.map(toAPlayerItem),
+      audio: initialTracks.map(toAPlayerItem),
     });
 
-    if (hasMultipleTracks) {
+    if (multi) {
       applyChannelPlaybackMode(player, initialMode);
     }
 
@@ -397,7 +425,7 @@ export function useOrbitAudioPlayer({
       originalSkipBack();
     };
     playerRef.current = player;
-    syncedTrackCountRef.current = tracks.length;
+    syncedTrackCountRef.current = initialTracks.length;
 
     const onTimeUpdate = () => {
       setCurrentTime(player.audio.currentTime);
@@ -498,8 +526,8 @@ export function useOrbitAudioPlayer({
     storageName,
     preload,
     defaultLoop,
-    tracksSignature,
-    hasMultipleTracks,
+    listEpoch,
+    hasTracks,
     syncPlaybackSnapshot,
     syncTimeline,
     restorePlaybackSnapshot,
@@ -533,10 +561,22 @@ export function useOrbitAudioPlayer({
     const synced = syncedTrackCountRef.current;
     if (tracks.length <= synced) return;
 
+    // Load-more only: refuse to append when the existing prefix was replaced
+    // (search / channel refresh). Remount is handled via listEpoch.
+    const prefixMatches = tracks.slice(0, synced).every((track, index) => {
+      const audio = player.list.audios[index];
+      if (!audio) return false;
+      return track.name === audio.name && (track.artist ?? "") === (audio.artist ?? "");
+    });
+    if (!prefixMatches) return;
+
+    const wasSingle = synced <= 1;
     player.list.add(tracks.slice(synced).map(toAPlayerItem));
     syncedTrackCountRef.current = tracks.length;
 
-    if (playbackModeRef.current === "shuffle") {
+    if (wasSingle && tracks.length > 1) {
+      applyChannelPlaybackMode(player, playbackModeRef.current);
+    } else if (playbackModeRef.current === "shuffle") {
       player.randomOrder = shuffleOrder(player.list.audios.length);
     }
   }, [tracks]);
