@@ -3,6 +3,7 @@ import {
   PENDING_AUDIO_TRACK_URL,
   resolveArticleAudioUrl,
 } from "@/lib/articleAudioUrl";
+import { extractLyricsFromSummary } from "@/lib/audioLyrics";
 import type { Article } from "@/types";
 
 export interface ArticleCoverImageContext {
@@ -45,6 +46,7 @@ export function articleToAudioTrack(
     artist: article.author?.trim() || undefined,
     url,
     cover: resolveArticleCoverImage(article, context),
+    lrc: extractLyricsFromSummary(article.summary),
   };
 }
 
@@ -67,9 +69,11 @@ export function articleToListAudioTrack(
   resolvedUrl?: string | null,
   context?: ArticleCoverImageContext,
   resolvedCover?: string | null,
+  resolvedLyrics?: string | null,
 ): ReaderAudioTrack {
   const url = resolvedUrl ?? resolveArticleAudioUrl(article) ?? PENDING_AUDIO_TRACK_URL;
   const cover = resolvedCover?.trim() || resolveArticleCoverImage(article, context);
+  const lrc = resolvedLyrics?.trim() || extractLyricsFromSummary(article.summary);
 
   return {
     name: article.title,
@@ -77,6 +81,7 @@ export function articleToListAudioTrack(
     url,
     cover,
     articleId: article.id,
+    lrc,
   };
 }
 
@@ -85,6 +90,7 @@ export function articlesToListAudioTracks(
   resolvedUrls?: Record<string, string>,
   context?: ArticleCoverImageContext,
   resolvedCovers?: Record<string, string>,
+  resolvedLyrics?: Record<string, string>,
 ): ReaderAudioTrack[] {
   return articles.map(article =>
     articleToListAudioTrack(
@@ -92,6 +98,7 @@ export function articlesToListAudioTracks(
       resolvedUrls?.[article.id],
       context,
       resolvedCovers?.[article.id],
+      resolvedLyrics?.[article.id],
     ),
   );
 }

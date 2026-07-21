@@ -1,7 +1,14 @@
-import { useRef, type ChangeEvent, type MouseEvent, type PointerEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type MouseEvent, type PointerEvent, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { FavoriteHeartButton } from "@/components/FavoriteHeartButton";
+import { Icon } from "@/components/Icon";
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { formatPlaybackRate } from "@/lib/audioPlaybackPrefs";
+import {
+  getActiveLyricIndex,
+  getLyricsDisplayLines,
+  parseLrcLines,
+} from "@/lib/audioLyrics";
 import { CHANNEL_PLAYBACK_MODES } from "@/lib/channelPlaybackMode";
 import type { ChannelPlaybackMode } from "aplayer";
 import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
@@ -154,7 +161,7 @@ function AudioProgressBar({
   };
 
   return (
-    <div className="mt-4 space-y-2">
+    <div className="mt-3 space-y-1.5">
       <div
         className="cursor-pointer touch-none py-2 -my-2"
         onPointerDown={handlePointerDown}
@@ -207,6 +214,110 @@ function VolumeIcon({ muted }: { muted: boolean }) {
   );
 }
 
+function AudioLyricsPanel({
+  lrc,
+  currentTime,
+  popoverContainerRef,
+}: {
+  lrc: string;
+  currentTime: number;
+  popoverContainerRef: RefObject<HTMLDivElement | null>;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const displayLines = getLyricsDisplayLines(lrc, currentTime, 3);
+  const allLines = parseLrcLines(lrc);
+  const activeIndex = getActiveLyricIndex(lrc, currentTime);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const onDocumentPointerDown = (event: Event) => {
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      setOpen(false);
+    };
+
+    document.addEventListener("mousedown", onDocumentPointerDown);
+    return () => document.removeEventListener("mousedown", onDocumentPointerDown);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || activeIndex < 0 || !panelRef.current) return;
+
+    const activeElement = panelRef.current.querySelector(`[data-lyric-index="${activeIndex}"]`);
+    if (!(activeElement instanceof HTMLElement)) return;
+
+    activeElement.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [open, activeIndex]);
+
+  if (!displayLines || displayLines.length === 0) {
+    return null;
+  }
+
+  const popover = open && popoverContainerRef.current ? createPortal(
+    <div
+      ref={panelRef}
+      role="dialog"
+      aria-label="完整歌词"
+      className="absolute right-0 top-0 z-50 w-[min(24rem,calc(100vw-2rem))] max-h-56 overflow-y-auto overscroll-contain rounded-xl border border-[var(--orbit-border)] bg-[var(--orbit-surface)] p-3 shadow-lg"
+    >
+      <div className="space-y-1.5 text-right">
+        {allLines.map((line, index) => {
+          const isActive = index === activeIndex;
+          return (
+            <p
+              key={`${line.time}-${index}`}
+              data-lyric-index={index}
+              className={`text-sm leading-relaxed transition-colors ${
+                isActive
+                  ? "font-semibold text-[var(--orbit-accent)]"
+                  : "text-[var(--orbit-text-muted)]"
+              } ${line.text ? "" : "min-h-[1.25rem]"}`}
+            >
+              {line.text || "\u00A0"}
+            </p>
+          );
+        })}
+      </div>
+    </div>,
+    popoverContainerRef.current,
+  ) : null;
+
+  return (
+    <>
+      {popover}
+      <div className="relative min-w-0 flex-1 self-start sm:ml-6 sm:border-l sm:border-[var(--orbit-border)] sm:pl-6" ref={rootRef}>
+        <button
+          type="button"
+          onClick={() => setOpen(value => !value)}
+          className="w-full min-w-0 rounded-lg border border-transparent px-1 py-0.5 text-right transition-colors hover:border-[var(--orbit-border)] hover:bg-[color-mix(in_srgb,var(--orbit-text)_3%,transparent)]"
+          aria-expanded={open}
+          aria-haspopup="dialog"
+          title="查看完整歌词"
+        >
+          <div className="space-y-0 text-right">
+            {displayLines.map(line => (
+              <p
+                key={line.index}
+                className={`truncate text-xs leading-5 transition-colors ${
+                  line.isActive
+                    ? "font-semibold text-[var(--orbit-accent)]"
+                    : "text-[var(--orbit-text-muted)]"
+                }`}
+              >
+                {line.text || "\u00A0"}
+              </p>
+            ))}
+          </div>
+        </button>
+      </div>
+    </>
+  );
+}
+
 function AudioPlaybackTuning({
   volume,
   playbackRate,
@@ -226,7 +337,7 @@ function AudioPlaybackTuning({
   };
 
   return (
-    <div className="mt-4 flex flex-col gap-3 border-t border-[var(--orbit-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mt-3 flex flex-col gap-2.5 border-t border-[var(--orbit-border)] pt-3 sm:flex-row sm:items-center sm:justify-between">
       <label className="flex min-w-0 flex-1 items-center gap-2.5">
         <span className="shrink-0 text-[var(--orbit-text-muted)]">
           <VolumeIcon muted={isMuted} />
@@ -296,20 +407,31 @@ export function AudioPlayerHero({
   runtimeBase,
   isResolving = false,
 }: AudioPlayerHeroProps) {
+  const contentRef = useRef<HTMLDivElement>(null);
+
   return (
-    <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+    <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
       <TrackCover track={track} size="lg" runtimeBase={runtimeBase} />
 
-      <div className="min-w-0 flex-1">
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-[var(--orbit-text-muted)]">
-            正在播放 {currentIndex + 1} / {trackCount}
-          </p>
-          <h2 className="mt-1 truncate text-lg font-semibold text-[var(--orbit-text)] sm:text-xl">
-            {track.name}
-          </h2>
-          {track.artist ? (
-            <p className="mt-0.5 truncate text-sm text-[var(--orbit-text-muted)]">{track.artist}</p>
+      <div ref={contentRef} className="relative min-w-0 flex-1">
+        <div className="min-w-0 flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+          <div className="min-w-0 shrink-0 sm:max-w-[42%]">
+            <p className="text-xs font-medium text-[var(--orbit-text-muted)]">
+              正在播放 {currentIndex + 1} / {trackCount}
+            </p>
+            <h2 className="mt-0.5 truncate text-lg font-semibold text-[var(--orbit-text)] sm:text-xl">
+              {track.name}
+            </h2>
+            {track.artist ? (
+              <p className="mt-0.5 truncate text-sm text-[var(--orbit-text-muted)]">{track.artist}</p>
+            ) : null}
+          </div>
+          {track.lrc ? (
+            <AudioLyricsPanel
+              lrc={track.lrc}
+              currentTime={Math.max(0, currentTime - timelineStart)}
+              popoverContainerRef={contentRef}
+            />
           ) : null}
         </div>
 
@@ -320,7 +442,7 @@ export function AudioPlayerHero({
           onProgressSeek={onProgressSeek}
         />
 
-        <div className="mt-4 flex items-center justify-center gap-2">
+        <div className="mt-3 flex items-center justify-center gap-2">
           {showNavControls ? (
             <button
               type="button"
@@ -399,6 +521,7 @@ interface AudioTrackListProps {
   showFavorites?: boolean;
   favoritedArticleIds?: Set<string>;
   onToggleFavorite?: (articleId: string, event: MouseEvent) => void;
+  onDownloadTrack?: (index: number) => Promise<void>;
 }
 
 export function AudioTrackList({
@@ -419,8 +542,24 @@ export function AudioTrackList({
   showFavorites = false,
   favoritedArticleIds,
   onToggleFavorite,
+  onDownloadTrack,
 }: AudioTrackListProps) {
   const showPlaybackModes = playbackMode !== undefined && onPlaybackModeChange !== undefined;
+  const [downloadingIndex, setDownloadingIndex] = useState<number | null>(null);
+
+  const handleDownloadTrack = async (index: number, event: MouseEvent) => {
+    event.stopPropagation();
+    if (!onDownloadTrack || downloadingIndex !== null) return;
+
+    setDownloadingIndex(index);
+    try {
+      await onDownloadTrack(index);
+    } catch (error) {
+      console.error("download audio track failed", error);
+    } finally {
+      setDownloadingIndex(null);
+    }
+  };
 
   return (
     <div className={fillHeight ? "flex min-h-0 flex-1 flex-col overflow-hidden" : undefined}>
@@ -494,6 +633,22 @@ export function AudioTrackList({
                       className="shrink-0 rounded-full p-2 text-[var(--orbit-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--orbit-text)_6%,transparent)] hover:text-rose-500"
                       iconClassName="h-4 w-4"
                     />
+                  ) : null}
+
+                  {onDownloadTrack ? (
+                    <button
+                      type="button"
+                      onClick={(event) => void handleDownloadTrack(index, event)}
+                      disabled={downloadingIndex === index || isResolving}
+                      className="shrink-0 rounded-full p-2 text-[var(--orbit-text-muted)] transition-colors hover:bg-[color-mix(in_srgb,var(--orbit-text)_6%,transparent)] hover:text-[var(--orbit-text)] disabled:cursor-not-allowed disabled:opacity-50"
+                      title="下载音频"
+                      aria-label="下载音频"
+                    >
+                      <Icon
+                        name="download"
+                        className={`h-4 w-4${downloadingIndex === index ? " animate-pulse" : ""}`}
+                      />
+                    </button>
                   ) : null}
                 </div>
               </li>

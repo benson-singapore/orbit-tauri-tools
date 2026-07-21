@@ -25,6 +25,7 @@ import { ComicPageWidthSlider } from "@/components/ComicPageWidthSlider";
 import { ArticleRatingHero, shouldShowArticleRatingHero } from "@/components/ArticleRatingHero";
 import { ExperienceModeUnlockModal } from "@/components/ExperienceModeUnlockModal";
 import { BrowserSessionHost } from "@/components/BrowserSessionHost";
+import { BrowserSessionButton } from "@/components/BrowserSessionButton";
 import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { PlaybackHistoryButton } from "@/components/PlaybackHistoryButton";
 import { PlaybackHistoryPanel } from "@/components/PlaybackHistoryPanel";
@@ -149,6 +150,8 @@ import {
   savePluginBrowseSession,
 } from "@/lib/pluginBrowseSession";
 import { pluginNeedsVariablesConfiguration } from "@/lib/pluginVariablesReady";
+import { inferBrowserSessionForPlugin } from "@/lib/browserSessionError";
+import { tryCompletePluginSession } from "@/lib/pluginSession";
 import {
   getStoredPluginPreviewMode,
   persistPluginPreviewMode,
@@ -853,9 +856,21 @@ export default function App() {
   const handleFeedRefresh = () => {
     if (feedListBusy) return;
     setFeedRefreshing(true);
-    void refreshChannelFeed()
-      .catch(err => console.error("refresh channel feed failed", err))
-      .finally(() => setFeedRefreshing(false));
+    void (async () => {
+      try {
+        const session = activePluginMeta
+          ? inferBrowserSessionForPlugin(activePluginMeta)
+          : null;
+        if (session) {
+          await tryCompletePluginSession(session);
+        }
+        await refreshChannelFeed();
+      } catch (err) {
+        console.error("refresh channel feed failed", err);
+      } finally {
+        setFeedRefreshing(false);
+      }
+    })();
   };
 
   useEffect(() => {
@@ -3710,6 +3725,13 @@ export default function App() {
                             <Icon name="search" className="w-3.5 h-3.5" />
                             <span className="hidden sm:inline">搜索</span>
                           </button>
+                        ) : null}
+
+                        {isPluginFocusMode && activePluginMeta ? (
+                          <BrowserSessionButton
+                            plugin={activePluginMeta}
+                            channelId={activeChannel}
+                          />
                         ) : null}
 
                         {showFocusModeRefreshButton ? (

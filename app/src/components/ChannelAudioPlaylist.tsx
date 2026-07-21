@@ -20,6 +20,7 @@ interface ChannelAudioPlaylistProps {
   showFavorites?: boolean;
   favoritedArticleIds?: Set<string>;
   onToggleFavorite?: (articleId: string, event: MouseEvent) => void;
+  onDownloadTrack?: (index: number) => Promise<void>;
 }
 
 export function ChannelAudioPlaylist({
@@ -37,6 +38,7 @@ export function ChannelAudioPlaylist({
   showFavorites = false,
   favoritedArticleIds,
   onToggleFavorite,
+  onDownloadTrack,
 }: ChannelAudioPlaylistProps) {
   const storageName = `orbit-aplayer-channel-${sessionId}`;
   const player = useOrbitAudioPlayer({
@@ -59,7 +61,7 @@ export function ChannelAudioPlaylist({
     <div className={`orbit-channel-audio flex h-full min-h-0 flex-1 flex-col overflow-hidden w-full ${className}`.trim()}>
       <div ref={player.engineRef} className="orbit-aplayer-engine" aria-hidden="true" />
 
-      <section className="orbit-channel-audio__hero shrink-0 rounded-2xl border border-[var(--orbit-border)] bg-[var(--orbit-surface)] pb-5">
+      <section className="orbit-channel-audio__hero shrink-0 rounded-2xl border border-[var(--orbit-border)] bg-[var(--orbit-surface)]">
         <AudioPlayerHero
           track={currentTrack}
           isPlaying={player.isPlaying}
@@ -100,6 +102,7 @@ export function ChannelAudioPlaylist({
           showFavorites={showFavorites}
           favoritedArticleIds={favoritedArticleIds}
           onToggleFavorite={onToggleFavorite}
+          onDownloadTrack={onDownloadTrack}
         />
       </section>
     </div>

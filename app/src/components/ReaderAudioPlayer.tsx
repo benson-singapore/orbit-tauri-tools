@@ -3,6 +3,7 @@ import "aplayer/dist/APlayer.min.css";
 import "@/styles/orbit-aplayer.css";
 import { AudioPlayerHero } from "@/components/articleAudioUi";
 import { useOrbitAudioPlayer } from "@/hooks/useOrbitAudioPlayer";
+import { extractLyricsFromSummary } from "@/lib/audioLyrics";
 import type { Article } from "@/types";
 
 export const READER_AUDIO_SELECTOR = "audio[data-orbit-reader-audio]";
@@ -52,8 +53,9 @@ export function ReaderAudioPlayer({
       artist: article.author || undefined,
       url: audioUrl,
       cover: coverImage?.trim() || article.image?.trim() || undefined,
+      lrc: extractLyricsFromSummary(article.summary),
     }];
-  }, [article.title, article.author, article.image, audioUrl, coverImage, playlist]);
+  }, [article.title, article.author, article.image, article.summary, audioUrl, coverImage, playlist]);
 
   const storageName = `orbit-aplayer-${sessionId}`;
   const player = useOrbitAudioPlayer({
@@ -74,7 +76,7 @@ export function ReaderAudioPlayer({
     <div className={`orbit-reader-audio w-full ${className}`.trim()}>
       <div ref={player.engineRef} className="orbit-aplayer-engine" aria-hidden="true" />
 
-      <section className="orbit-channel-audio__hero shrink-0 rounded-2xl border border-[var(--orbit-border)] bg-[var(--orbit-surface)] pb-5">
+      <section className="orbit-channel-audio__hero shrink-0 rounded-2xl border border-[var(--orbit-border)] bg-[var(--orbit-surface)]">
         <AudioPlayerHero
           track={currentTrack}
           isPlaying={player.isPlaying}
