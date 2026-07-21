@@ -99,6 +99,7 @@ export function resolveBrowserSessionStartUrl(
 export async function openPluginSessionWindow(
   session: BrowserSessionInfo,
   channel?: Pick<PluginChannel, "params"> | null,
+  options?: { manual?: boolean },
 ): Promise<void> {
   const url = resolveBrowserSessionStartUrl(session, channel);
   if (!url) return;
@@ -111,6 +112,7 @@ export async function openPluginSessionWindow(
   await invoke("open_plugin_session_window", {
     pluginId: session.pluginId,
     url,
+    manual: options?.manual ?? true,
   });
 }
 

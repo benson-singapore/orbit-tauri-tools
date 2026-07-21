@@ -8,7 +8,7 @@ use std::time::Duration;
 use cookie::Cookie;
 use tauri::{
     webview::{NewWindowResponse, WebviewWindowBuilder},
-    AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WindowEvent,
+    AppHandle, Emitter, LogicalSize, Manager, WebviewUrl, WebviewWindow, WindowEvent,
 };
 use tokio::sync::{oneshot, watch};
 use url::Url;
@@ -19,6 +19,8 @@ pub const PLUGIN_SESSION_CLOSED_EVENT: &str = "plugin-session-closed";
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const POLL_MAX_ATTEMPTS: usize = 360;
 const NAV_SETTLE_DELAY: Duration = Duration::from_millis(800);
+const SESSION_WINDOW_WIDTH: f64 = 520.0;
+const SESSION_WINDOW_HEIGHT: f64 = 780.0;
 
 static FETCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -98,6 +100,22 @@ impl PluginSessionRegistry {
 
 fn session_label(plugin_id: &str) -> String {
     format!("plugin-session-{plugin_id}")
+}
+
+fn present_verification_window(window: &WebviewWindow) -> Result<(), String> {
+    window
+        .set_size(LogicalSize::new(SESSION_WINDOW_WIDTH, SESSION_WINDOW_HEIGHT))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_resizable(true)
+        .map_err(|e| e.to_string())?;
+    window
+        .set_title("网站验证")
+        .map_err(|e| e.to_string())?;
+    window.center().map_err(|e| e.to_string())?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 pub struct WebviewFetchResult {
@@ -610,7 +628,8 @@ pub async fn acquire_plugin_session(
     let mut waiter = registry.inner().register_waiter(&plugin_id);
     let cleanup_url = url.clone();
     if let Err(err) =
-        open_plugin_session_window(app.clone(), registry.clone(), plugin_id.clone(), url).await
+        open_plugin_session_window(app.clone(), registry.clone(), plugin_id.clone(), url, None)
+            .await
     {
         registry.inner().clear_waiter(&plugin_id);
         return Err(err);
@@ -656,20 +675,30 @@ pub async fn open_plugin_session_window(
     registry: tauri::State<'_, Arc<PluginSessionRegistry>>,
     plugin_id: String,
     url: String,
+    manual: Option<bool>,
 ) -> Result<(), String> {
+    let manual = manual.unwrap_or(false);
     let label = session_label(&plugin_id);
+    let start_url: Url = url
+        .parse()
+        .map_err(|e| format!("invalid session url: {e}"))?;
+    let origin = origin_base_from_url(&start_url);
+    registry
+        .inner()
+        .remember_origin(&plugin_id, start_url.as_str());
+
     if let Some(existing) = app.get_webview_window(&label) {
-        existing.show().map_err(|e| e.to_string())?;
-        existing.set_focus().map_err(|e| e.to_string())?;
-        let start_url: Url = url
-            .parse()
-            .map_err(|e| format!("invalid session url: {e}"))?;
-        let origin = origin_base_from_url(&start_url);
-        clear_cookies_for_origin(&existing, &origin)?;
+        present_verification_window(&existing)?;
+        if !manual {
+            clear_cookies_for_origin(&existing, &origin)?;
+        }
         existing
             .navigate(start_url.clone())
             .map_err(|e| e.to_string())?;
-        registry.inner().remember_origin(&plugin_id, url.as_str());
+        if manual {
+            registry.inner().finish(&plugin_id);
+            return Ok(());
+        }
         let flag = registry
             .get(&plugin_id)
             .unwrap_or_else(|| registry.begin(&plugin_id));
@@ -684,13 +713,6 @@ pub async fn open_plugin_session_window(
         return Ok(());
     }
 
-    let start_url: Url = url
-        .parse()
-        .map_err(|e| format!("invalid session url: {e}"))?;
-    let origin = origin_base_from_url(&start_url);
-    registry
-        .inner()
-        .remember_origin(&plugin_id, start_url.as_str());
     let completed = registry.begin(&plugin_id);
 
     let app_for_new_window = app.clone();
@@ -703,11 +725,11 @@ pub async fn open_plugin_session_window(
 
     let window = WebviewWindowBuilder::new(&app, &label, WebviewUrl::External(start_url.clone()))
         .title("网站验证")
-        .inner_size(520.0, 780.0)
+        .inner_size(SESSION_WINDOW_WIDTH, SESSION_WINDOW_HEIGHT)
         .center()
         .resizable(true)
         .on_navigation(move |next_url| {
-            if is_on_target_origin(next_url, &origin_for_nav) {
+            if !manual && is_on_target_origin(next_url, &origin_for_nav) {
                 schedule_completion_check(
                     app_for_nav.clone(),
                     registry_for_nav.clone(),
@@ -730,7 +752,9 @@ pub async fn open_plugin_session_window(
         .build()
         .map_err(|e| e.to_string())?;
 
-    clear_cookies_for_origin(&window, &origin)?;
+    if !manual {
+        clear_cookies_for_origin(&window, &origin)?;
+    }
 
     let app_for_close = app.clone();
     let plugin_id_for_close = plugin_id.clone();
@@ -742,22 +766,26 @@ pub async fn open_plugin_session_window(
         }
     });
 
-    spawn_session_poll(
-        app.clone(),
-        registry.inner().clone(),
-        plugin_id.clone(),
-        origin.clone(),
-        completed.clone(),
-    );
+    if !manual {
+        spawn_session_poll(
+            app.clone(),
+            registry.inner().clone(),
+            plugin_id.clone(),
+            origin.clone(),
+            completed.clone(),
+        );
 
-    schedule_completion_check(
-        app,
-        registry.inner().clone(),
-        plugin_id,
-        origin,
-        completed,
-        NAV_SETTLE_DELAY * 2,
-    );
+        schedule_completion_check(
+            app,
+            registry.inner().clone(),
+            plugin_id,
+            origin,
+            completed,
+            NAV_SETTLE_DELAY * 2,
+        );
+    } else {
+        registry.inner().finish(&plugin_id);
+    }
 
     Ok(())
 }
