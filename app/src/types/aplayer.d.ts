@@ -55,6 +55,8 @@ declare module "aplayer" {
     toggle(): void;
     skipBack(): void;
     skipForward(): void;
+    prevIndex(): number;
+    nextIndex(): number;
     destroy(): void;
     on(event: string, handler: (...args: unknown[]) => void): void;
   }

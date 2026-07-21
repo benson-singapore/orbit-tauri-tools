@@ -211,6 +211,11 @@ export function useOrbitAudioPlayer({
     try {
       const url = await resolver(index, track);
       if (!url?.trim()) return false;
+      // Keep tracksRef in sync immediately so listswitch / skip handlers
+      // don't treat this track as still pending before React re-renders.
+      tracksRef.current = tracksRef.current.map((item, itemIndex) => (
+        itemIndex === index ? { ...item, url } : item
+      ));
       applyTrackUrlToPlayer(index, url);
       return true;
     } finally {
@@ -303,8 +308,29 @@ export function useOrbitAudioPlayer({
     player.audio.dataset.orbitReaderAudio = "true";
     player.audio.volume = readStoredAudioVolume();
     player.audio.playbackRate = readStoredPlaybackRate();
+    const originalPlay = player.play.bind(player);
     const originalSkipForward = player.skipForward.bind(player);
     const originalSkipBack = player.skipBack.bind(player);
+    // APlayer's ended handler calls skipForward() then play() immediately.
+    // While the next track URL is still resolving, that play() would restart the
+    // just-finished track — suppress it until the next track is ready.
+    let suppressAutoPlay = false;
+    const trackNeedsResolve = (index: number): boolean => {
+      const track = tracksRef.current[index];
+      if (!track) return false;
+      return !track.url.trim() || isPendingAudioTrackUrl(track.url);
+    };
+    const playWhenAllowed = () => {
+      suppressAutoPlay = false;
+      originalPlay();
+    };
+    player.play = () => {
+      if (suppressAutoPlay) {
+        player.pause();
+        return;
+      }
+      originalPlay();
+    };
     const seekByOffset = (offsetSeconds: number) => {
       const timeline = resolveAudioTimeline(player.audio);
       const span = timelineSpan(timeline);
@@ -318,6 +344,31 @@ export function useOrbitAudioPlayer({
       setCurrentTime(target);
       syncPlaybackSnapshot(player.audio);
     };
+    const resolveAndSwitch = (index: number, { playAfter }: { playAfter: boolean }) => {
+      userNavigatingRef.current = true;
+      suppressAutoPlay = true;
+      void (async () => {
+        player.pause();
+        try {
+          const ready = await ensureTrackReadyRef.current(index);
+          if (!ready) {
+            userNavigatingRef.current = false;
+            return;
+          }
+          player.list.switch(index);
+          applyTrackIndex(index);
+          userNavigatingRef.current = false;
+          if (playAfter) {
+            playWhenAllowed();
+          } else {
+            suppressAutoPlay = false;
+          }
+        } finally {
+          suppressAutoPlay = false;
+          userNavigatingRef.current = false;
+        }
+      })();
+    };
     player.skipForward = () => {
       if (player.list.audios.length <= 1) {
         seekByOffset(AUDIO_SEEK_STEP_SECONDS);
@@ -325,22 +376,9 @@ export function useOrbitAudioPlayer({
       }
       if (player.audio.paused && !userNavigatingRef.current && !player.audio.ended) return;
 
-      const nextIndex = (player.list.index + 1) % player.list.audios.length;
-      const nextTrack = tracksRef.current[nextIndex];
-      if (nextTrack && isPendingAudioTrackUrl(nextTrack.url)) {
-        userNavigatingRef.current = true;
-        void (async () => {
-          player.pause();
-          const ready = await ensureTrackReadyRef.current(nextIndex);
-          if (!ready) {
-            userNavigatingRef.current = false;
-            return;
-          }
-          player.list.switch(nextIndex);
-          applyTrackIndex(nextIndex);
-          userNavigatingRef.current = false;
-          void player.audio.play().catch(() => {});
-        })();
+      const nextIndex = player.nextIndex();
+      if (trackNeedsResolve(nextIndex)) {
+        resolveAndSwitch(nextIndex, { playAfter: true });
         return;
       }
       originalSkipForward();
@@ -351,22 +389,9 @@ export function useOrbitAudioPlayer({
         return;
       }
 
-      const prevIndex = (player.list.index - 1 + player.list.audios.length) % player.list.audios.length;
-      const prevTrack = tracksRef.current[prevIndex];
-      if (prevTrack && isPendingAudioTrackUrl(prevTrack.url)) {
-        userNavigatingRef.current = true;
-        void (async () => {
-          player.pause();
-          const ready = await ensureTrackReadyRef.current(prevIndex);
-          if (!ready) {
-            userNavigatingRef.current = false;
-            return;
-          }
-          player.list.switch(prevIndex);
-          applyTrackIndex(prevIndex);
-          userNavigatingRef.current = false;
-          void player.audio.play().catch(() => {});
-        })();
+      const prevIndex = player.prevIndex();
+      if (trackNeedsResolve(prevIndex)) {
+        resolveAndSwitch(prevIndex, { playAfter: true });
         return;
       }
       originalSkipBack();
@@ -404,15 +429,16 @@ export function useOrbitAudioPlayer({
       if (listSwitchResolving) return;
       const detail = args[0] as { index?: number } | undefined;
       const index = detail?.index ?? player.list.index;
-      const shouldResume = userNavigatingRef.current || !player.audio.paused;
+      const shouldResume = userNavigatingRef.current || !player.audio.paused || suppressAutoPlay;
 
-      const track = tracksRef.current[index];
-      if (track && !isPendingAudioTrackUrl(track.url)) {
+      if (!trackNeedsResolve(index)) {
         applyTrackIndex(index);
         userNavigatingRef.current = false;
         return;
       }
 
+      // APlayer may switch to a pending placeholder then call play() (e.g. loop=none).
+      suppressAutoPlay = true;
       listSwitchResolving = true;
       void (async () => {
         player.pause();
@@ -425,9 +451,12 @@ export function useOrbitAudioPlayer({
           applyTrackIndex(index);
           userNavigatingRef.current = false;
           if (shouldResume) {
-            void player.audio.play().catch(() => {});
+            playWhenAllowed();
+          } else {
+            suppressAutoPlay = false;
           }
         } finally {
+          suppressAutoPlay = false;
           listSwitchResolving = false;
         }
       })();
@@ -482,8 +511,18 @@ export function useOrbitAudioPlayer({
     if (!player) return;
 
     tracks.forEach((track, index) => {
-      if (!track.url.trim() || isPendingAudioTrackUrl(track.url)) return;
-      applyTrackUrlToPlayer(index, track.url);
+      if (index >= player.list.audios.length) return;
+      const audio = player.list.audios[index];
+      if (!audio) return;
+
+      if (track.url.trim() && !isPendingAudioTrackUrl(track.url)) {
+        applyTrackUrlToPlayer(index, track.url);
+      }
+
+      const cover = track.cover?.trim();
+      if (cover && audio.cover !== cover) {
+        audio.cover = cover;
+      }
     });
   }, [tracks, applyTrackUrlToPlayer]);
 

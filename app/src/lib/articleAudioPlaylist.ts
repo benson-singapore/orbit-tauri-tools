@@ -66,14 +66,16 @@ export function articleToListAudioTrack(
   article: Article,
   resolvedUrl?: string | null,
   context?: ArticleCoverImageContext,
+  resolvedCover?: string | null,
 ): ReaderAudioTrack {
   const url = resolvedUrl ?? resolveArticleAudioUrl(article) ?? PENDING_AUDIO_TRACK_URL;
+  const cover = resolvedCover?.trim() || resolveArticleCoverImage(article, context);
 
   return {
     name: article.title,
     artist: article.author?.trim() || undefined,
     url,
-    cover: resolveArticleCoverImage(article, context),
+    cover,
     articleId: article.id,
   };
 }
@@ -82,9 +84,15 @@ export function articlesToListAudioTracks(
   articles: Article[],
   resolvedUrls?: Record<string, string>,
   context?: ArticleCoverImageContext,
+  resolvedCovers?: Record<string, string>,
 ): ReaderAudioTrack[] {
   return articles.map(article =>
-    articleToListAudioTrack(article, resolvedUrls?.[article.id], context),
+    articleToListAudioTrack(
+      article,
+      resolvedUrls?.[article.id],
+      context,
+      resolvedCovers?.[article.id],
+    ),
   );
 }
 

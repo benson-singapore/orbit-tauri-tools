@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChannelAudioPlaylist } from "@/components/ChannelAudioPlaylist";
 import { Icon } from "@/components/Icon";
 import { articlesToListAudioTracks } from "@/lib/articleAudioPlaylist";
@@ -48,10 +48,21 @@ export function AudioFocusView({
 }: AudioFocusViewProps) {
   const isDark = isDarkTheme(theme);
   const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
+  const [resolvedCovers, setResolvedCovers] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    setResolvedUrls({});
+    setResolvedCovers({});
+  }, [pluginId, channelId]);
 
   const tracks = useMemo(
-    () => articlesToListAudioTracks(articles, resolvedUrls, { listArticles: articles }),
-    [articles, resolvedUrls],
+    () => articlesToListAudioTracks(
+      articles,
+      resolvedUrls,
+      { listArticles: articles },
+      resolvedCovers,
+    ),
+    [articles, resolvedUrls, resolvedCovers],
   );
 
   const sessionId = `${pluginId}-${channelId}-audio-playlist`;
@@ -99,7 +110,13 @@ export function AudioFocusView({
         return null;
       }
 
+      const cover = detail.image?.trim();
       setResolvedUrls(prev => ({ ...prev, [article.id]: url }));
+      if (cover) {
+        setResolvedCovers(prev => (
+          prev[article.id] === cover ? prev : { ...prev, [article.id]: cover }
+        ));
+      }
       return url;
     } catch (error) {
       console.error("resolve audio track url failed", error);
