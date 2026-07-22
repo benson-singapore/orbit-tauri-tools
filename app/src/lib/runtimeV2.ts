@@ -179,7 +179,7 @@ export async function assertPluginVariablesReady(
 
 async function runtimePost(
   path: string,
-  body: Record<string, string | Record<string, string> | undefined>,
+  body: Record<string, string | boolean | Record<string, string> | undefined>,
   options?: RuntimeCallOptions,
 ): Promise<RuntimeDispatchResult> {
   const execute = async (): Promise<RuntimeDispatchResult> => {
@@ -278,9 +278,19 @@ export function runtimeOpenDetail(
   pluginId: string,
   channelId: string,
   itemId: string,
-  options?: RuntimeCallOptions,
+  options?: RuntimeCallOptions & { forceRefresh?: boolean },
 ) {
-  return runtimePost("open-detail", { pluginId, channelId, itemId }, options);
+  const { forceRefresh, ...callOptions } = options ?? {};
+  return runtimePost(
+    "open-detail",
+    {
+      pluginId,
+      channelId,
+      itemId,
+      ...(forceRefresh ? { forceRefresh: true } : {}),
+    },
+    callOptions,
+  );
 }
 
 export function runtimeOpenChapters(

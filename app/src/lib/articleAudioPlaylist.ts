@@ -103,6 +103,31 @@ export function articlesToListAudioTracks(
   );
 }
 
+/** Keep playlist order stable when the feed reorders the same items after play/read. */
+export function stabilizePlaylistArticleOrder(
+  order: string[],
+  articles: Article[],
+): { order: string[]; items: Article[] } {
+  const byId = new Map(articles.map(article => [article.id, article]));
+  const incomingIds = articles.map(article => article.id);
+
+  const nextOrder = order.filter(id => byId.has(id));
+  const known = new Set(nextOrder);
+  for (const id of incomingIds) {
+    if (!known.has(id)) {
+      nextOrder.push(id);
+      known.add(id);
+    }
+  }
+
+  const resolvedOrder = nextOrder.length > 0 ? nextOrder : incomingIds;
+  const items = resolvedOrder
+    .map(id => byId.get(id))
+    .filter((article): article is Article => article !== undefined);
+
+  return { order: resolvedOrder, items };
+}
+
 /** Build a channel playlist with the selected article first. */
 export function buildArticleAudioPlaylist(
   articles: Article[],

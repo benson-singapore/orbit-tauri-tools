@@ -155,6 +155,7 @@ type runtimeActionBody struct {
 	ParentItemID  string            `json:"parentItemId,omitempty"`
 	ChapterItemID string            `json:"chapterItemId,omitempty"`
 	Params        map[string]string `json:"params,omitempty"`
+	ForceRefresh  bool              `json:"forceRefresh,omitempty"`
 }
 
 func (s *Server) handleRuntimeRefresh(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +184,13 @@ func (s *Server) handleRuntimeSearch(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRuntimeOpenDetail(w http.ResponseWriter, r *http.Request) {
 	s.handleRuntimeAction(w, r, func(body runtimeActionBody) (plugin.DispatchResult, error) {
-		return s.registry.Dispatcher().OpenDetail(r.Context(), body.PluginID, body.ChannelID, body.ItemID)
+		return s.registry.Dispatcher().OpenDetail(
+			r.Context(),
+			body.PluginID,
+			body.ChannelID,
+			body.ItemID,
+			body.ForceRefresh,
+		)
 	})
 }
 

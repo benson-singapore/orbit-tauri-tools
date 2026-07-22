@@ -31,6 +31,10 @@ import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
 
 const AUDIO_SEEK_STEP_SECONDS = 15;
 
+export interface ResolveTrackUrlOptions {
+  forceRefresh?: boolean;
+}
+
 export interface UseOrbitAudioPlayerOptions {
   sessionId: string;
   tracks: ReaderAudioTrack[];
@@ -38,7 +42,11 @@ export interface UseOrbitAudioPlayerOptions {
   preload?: "none" | "metadata" | "auto";
   defaultLoop?: "all" | "one" | "none";
   onTrackChange?: (index: number) => void;
-  resolveTrackUrl?: (index: number, track: ReaderAudioTrack) => Promise<string | null>;
+  resolveTrackUrl?: (
+    index: number,
+    track: ReaderAudioTrack,
+    options?: ResolveTrackUrlOptions,
+  ) => Promise<string | null>;
 }
 
 export interface UseOrbitAudioPlayerResult {
@@ -208,10 +216,17 @@ export function useOrbitAudioPlayer({
     }
   }, []);
 
-  const ensureTrackReady = useCallback(async (index: number): Promise<boolean> => {
+  const ensureTrackReady = useCallback(async (
+    index: number,
+    options?: ResolveTrackUrlOptions,
+  ): Promise<boolean> => {
     const track = tracksRef.current[index];
     if (!track) return false;
-    if (track.url.trim() && !isPendingAudioTrackUrl(track.url)) {
+    if (
+      !options?.forceRefresh
+      && track.url.trim()
+      && !isPendingAudioTrackUrl(track.url)
+    ) {
       return true;
     }
 
@@ -220,7 +235,7 @@ export function useOrbitAudioPlayer({
 
     setResolvingIndex(index);
     try {
-      const url = await resolver(index, track);
+      const url = await resolver(index, track, options);
       if (!url?.trim()) return false;
       // Keep tracksRef in sync immediately so listswitch / skip handlers
       // don't treat this track as still pending before React re-renders.
@@ -236,6 +251,7 @@ export function useOrbitAudioPlayer({
 
   const ensureTrackReadyRef = useRef(ensureTrackReady);
   ensureTrackReadyRef.current = ensureTrackReady;
+  const refreshAttemptsRef = useRef(new Set<number>());
 
   const switchToIndex = useCallback((index: number) => {
     void (async () => {
@@ -303,6 +319,10 @@ export function useOrbitAudioPlayer({
       setListEpoch(epoch => epoch + 1);
     }
   }, [tracksSignature]);
+
+  useEffect(() => {
+    refreshAttemptsRef.current.clear();
+  }, [listEpoch]);
 
   useEffect(() => {
     const container = engineRef.current;
@@ -452,6 +472,38 @@ export function useOrbitAudioPlayer({
     const onSeeked = () => {
       userSeekingRef.current = false;
     };
+    const onAudioError = () => {
+      if (!resolveTrackUrlRef.current) return;
+
+      const index = player.list.index;
+      if (refreshAttemptsRef.current.has(index)) return;
+      refreshAttemptsRef.current.add(index);
+
+      const failedUrl = player.list.audios[index]?.url?.trim() ?? "";
+      const shouldResume = !player.audio.paused || player.audio.ended;
+      suppressAutoPlay = true;
+      void (async () => {
+        player.pause();
+        try {
+          const ready = await ensureTrackReadyRef.current(index, { forceRefresh: true });
+          if (!ready) return;
+
+          const refreshedUrl = player.list.audios[index]?.url?.trim() ?? "";
+          if (!refreshedUrl || refreshedUrl === failedUrl) return;
+
+          if (player.list.index === index) {
+            player.list.switch(index);
+          }
+          if (shouldResume) {
+            playWhenAllowed();
+          } else {
+            suppressAutoPlay = false;
+          }
+        } finally {
+          suppressAutoPlay = false;
+        }
+      })();
+    };
     let listSwitchResolving = false;
     const onListsSwitch = (...args: unknown[]) => {
       if (listSwitchResolving) return;
@@ -499,6 +551,7 @@ export function useOrbitAudioPlayer({
     player.audio.addEventListener("durationchange", onTimelineChange);
     player.audio.addEventListener("progress", onTimelineChange);
     player.audio.addEventListener("seeked", onSeeked);
+    player.audio.addEventListener("error", onAudioError);
 
     if (player.audio.readyState >= 1) {
       syncTimeline(player.audio);
@@ -512,6 +565,7 @@ export function useOrbitAudioPlayer({
       player.audio.removeEventListener("durationchange", onTimelineChange);
       player.audio.removeEventListener("progress", onTimelineChange);
       player.audio.removeEventListener("seeked", onSeeked);
+      player.audio.removeEventListener("error", onAudioError);
       player.destroy();
       playerRef.current = null;
       syncedTrackCountRef.current = 0;

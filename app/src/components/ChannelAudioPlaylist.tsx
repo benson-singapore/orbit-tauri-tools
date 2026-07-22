@@ -2,7 +2,7 @@ import "aplayer/dist/APlayer.min.css";
 import "@/styles/orbit-aplayer.css";
 import { AudioPlayerHero, AudioTrackList } from "@/components/articleAudioUi";
 import { useOrbitAudioPlayer } from "@/hooks/useOrbitAudioPlayer";
-import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
+import type { ResolveTrackUrlOptions } from "@/hooks/useOrbitAudioPlayer";
 import type { MouseEvent } from "react";
 
 interface ChannelAudioPlaylistProps {
@@ -15,7 +15,11 @@ interface ChannelAudioPlaylistProps {
   loadMoreLabel?: string;
   onLoadMore?: () => void;
   onTrackChange?: (index: number) => void;
-  resolveTrackUrl?: (index: number, track: ReaderAudioTrack) => Promise<string | null>;
+  resolveTrackUrl?: (
+    index: number,
+    track: ReaderAudioTrack,
+    options?: ResolveTrackUrlOptions,
+  ) => Promise<string | null>;
   className?: string;
   showFavorites?: boolean;
   favoritedArticleIds?: Set<string>;

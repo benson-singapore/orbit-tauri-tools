@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { ChannelAudioPlaylist } from "@/components/ChannelAudioPlaylist";
 import { Icon } from "@/components/Icon";
-import { articlesToListAudioTracks } from "@/lib/articleAudioPlaylist";
+import {
+  articlesToListAudioTracks,
+  stabilizePlaylistArticleOrder,
+} from "@/lib/articleAudioPlaylist";
 import { downloadAudioTrack } from "@/lib/articleAudioDownload";
 import { extractLyricsFromSummary } from "@/lib/audioLyrics";
 import { isPendingAudioTrackUrl, resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
@@ -15,6 +18,7 @@ import {
 } from "@/lib/runtimeV2";
 import { isDarkTheme } from "@/lib/themeMode";
 import { isPluginFavoritesChannel } from "@/lib/pluginFavorites";
+import type { ResolveTrackUrlOptions } from "@/hooks/useOrbitAudioPlayer";
 import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
 import type { Article, Plugin, ThemeMode } from "@/types";
 
@@ -59,6 +63,8 @@ export function AudioFocusView({
   const [resolvedUrls, setResolvedUrls] = useState<Record<string, string>>({});
   const [resolvedCovers, setResolvedCovers] = useState<Record<string, string>>({});
   const [resolvedLyrics, setResolvedLyrics] = useState<Record<string, string>>({});
+  const playlistOrderRef = useRef<string[]>([]);
+  const playlistScopeRef = useRef(`${pluginId}-${channelId}`);
 
   useEffect(() => {
     setResolvedUrls({});
@@ -66,15 +72,27 @@ export function AudioFocusView({
     setResolvedLyrics({});
   }, [pluginId, channelId]);
 
+  const playlistArticles = useMemo(() => {
+    const scopeKey = `${pluginId}-${channelId}`;
+    if (playlistScopeRef.current !== scopeKey) {
+      playlistScopeRef.current = scopeKey;
+      playlistOrderRef.current = [];
+    }
+
+    const stabilized = stabilizePlaylistArticleOrder(playlistOrderRef.current, articles);
+    playlistOrderRef.current = stabilized.order;
+    return stabilized.items;
+  }, [articles, pluginId, channelId]);
+
   const tracks = useMemo(
     () => articlesToListAudioTracks(
-      articles,
+      playlistArticles,
       resolvedUrls,
       { listArticles: articles },
       resolvedCovers,
       resolvedLyrics,
     ),
-    [articles, resolvedUrls, resolvedCovers, resolvedLyrics],
+    [playlistArticles, articles, resolvedUrls, resolvedCovers, resolvedLyrics],
   );
 
   const sessionId = `${pluginId}-${channelId}-audio-playlist`;
@@ -82,14 +100,16 @@ export function AudioFocusView({
   const resolveTrackUrl = useCallback(async (
     index: number,
     _track: ReaderAudioTrack,
+    options?: ResolveTrackUrlOptions,
   ): Promise<string | null> => {
-    const article = articles[index];
+    const article = playlistArticles[index];
     if (!article) return null;
 
+    const forceRefresh = options?.forceRefresh === true;
     const cachedUrl = resolvedUrls[article.id] ?? resolveArticleAudioUrl(article);
     const listLyrics = extractLyricsFromSummary(article.summary);
     const lyricsResolved = Boolean(listLyrics || article.id in resolvedLyrics);
-    if (cachedUrl && lyricsResolved) {
+    if (!forceRefresh && cachedUrl && lyricsResolved) {
       return cachedUrl;
     }
 
@@ -104,6 +124,7 @@ export function AudioFocusView({
       if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && detailChannelId !== "all") {
         const result = await runtimeOpenDetail(article.pluginId, detailChannelId, article.id, {
           ...browserSessionOptionsFromPlugin(pluginMeta),
+          forceRefresh,
         });
         if (!result.item) {
           return cachedUrl;
@@ -126,7 +147,7 @@ export function AudioFocusView({
 
       const cover = detail.image?.trim();
       const lyrics = extractLyricsFromSummary(detail.summary);
-      if (url !== cachedUrl) {
+      if (forceRefresh || url !== cachedUrl) {
         setResolvedUrls(prev => ({ ...prev, [article.id]: url }));
       }
       if (cover) {
@@ -134,7 +155,7 @@ export function AudioFocusView({
           prev[article.id] === cover ? prev : { ...prev, [article.id]: cover }
         ));
       }
-      if (!(article.id in resolvedLyrics)) {
+      if (forceRefresh || !(article.id in resolvedLyrics)) {
         setResolvedLyrics(prev => ({ ...prev, [article.id]: lyrics ?? "" }));
       }
       return url;
@@ -142,10 +163,10 @@ export function AudioFocusView({
       console.error("resolve audio track url failed", error);
       return cachedUrl;
     }
-  }, [articles, channelId, pluginId, pluginMeta, resolvedLyrics, resolvedUrls]);
+  }, [playlistArticles, channelId, pluginId, pluginMeta, resolvedLyrics, resolvedUrls]);
 
   const handleTrackChange = (index: number) => {
-    const article = articles[index];
+    const article = playlistArticles[index];
     if (article) {
       onTrackPlay?.(article);
     }

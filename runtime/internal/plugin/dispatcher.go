@@ -234,12 +234,20 @@ func (d *FeatureDispatcher) Search(ctx context.Context, pluginID, channelID, que
 	return d.dispatch(ctx, pluginID, channelID, TriggerSearch, dispatchExtra{Query: query})
 }
 
-func (d *FeatureDispatcher) OpenDetail(ctx context.Context, pluginID, channelID, itemID string) (DispatchResult, error) {
+func (d *FeatureDispatcher) OpenDetail(
+	ctx context.Context,
+	pluginID, channelID, itemID string,
+	forceRefresh bool,
+) (DispatchResult, error) {
 	item, inStore, err := d.loadFeedItemOrStub(ctx, pluginID, channelID, itemID)
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	return d.dispatch(ctx, pluginID, channelID, TriggerOpenDetail, dispatchExtra{Item: item, ItemInStore: inStore})
+	return d.dispatch(ctx, pluginID, channelID, TriggerOpenDetail, dispatchExtra{
+		Item:         item,
+		ItemInStore:  inStore,
+		ForceRefresh: forceRefresh,
+	})
 }
 
 func (d *FeatureDispatcher) OpenChapters(ctx context.Context, pluginID, channelID, itemID string) (DispatchResult, error) {
@@ -296,12 +304,13 @@ func (d *FeatureDispatcher) ScheduledRefresh(ctx context.Context, pluginID, chan
 }
 
 type dispatchExtra struct {
-	Query       string
-	Params      map[string]string
-	Item        FeedItem
-	ItemInStore bool
-	ParentItem  FeedItem
-	ChapterItem FeedItem
+	Query        string
+	Params       map[string]string
+	Item         FeedItem
+	ItemInStore  bool
+	ForceRefresh bool
+	ParentItem   FeedItem
+	ChapterItem  FeedItem
 }
 
 func (d *FeatureDispatcher) dispatch(
@@ -331,7 +340,7 @@ func (d *FeatureDispatcher) dispatch(
 
 	switch trigger {
 	case TriggerOpenDetail:
-		return d.handleOpenDetail(ctx, rec, ch, features, dir, vars, extra.Item, extra.ItemInStore)
+		return d.handleOpenDetail(ctx, rec, ch, features, dir, vars, extra.Item, extra.ItemInStore, extra.ForceRefresh)
 	case TriggerOpenChapters:
 		return d.handleOpenChapters(ctx, rec, ch, features, dir, vars, extra.Item)
 	case TriggerLoadMoreChapters:
@@ -442,11 +451,12 @@ func (d *FeatureDispatcher) handleOpenDetail(
 	vars map[string]string,
 	item FeedItem,
 	itemInStore bool,
+	forceRefresh bool,
 ) (DispatchResult, error) {
 	if features.Detail == nil {
 		return DispatchResult{}, fmt.Errorf("channel has no detail feature")
 	}
-	if strings.TrimSpace(item.Content) != "" {
+	if !forceRefresh && strings.TrimSpace(item.Content) != "" {
 		return DispatchResult{Item: &item}, nil
 	}
 	route, params := ParamsForDetail(features, item)
