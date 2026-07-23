@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import orbitLogoBlack from "@/assets/logo-black.png";
 import orbitLogoWhite from "@/assets/logo-white.png";
 import { Icon } from "@/components/Icon";
@@ -30,6 +31,7 @@ import { PluginManagerModal } from "@/components/PluginManagerModal";
 import { PlaybackHistoryButton } from "@/components/PlaybackHistoryButton";
 import { PlaybackHistoryPanel } from "@/components/PlaybackHistoryPanel";
 import { useArticleChapters, shouldOpenChaptersForArticle } from "@/hooks/useArticleChapters";
+import { useAudioFocusHost } from "@/hooks/useAudioFocusHost";
 import { useComicArticleDisplay } from "@/hooks/useComicArticleDisplay";
 import { useComicChapterStream } from "@/hooks/useComicChapterStream";
 import { useNovelChapterStream } from "@/hooks/useNovelChapterStream";
@@ -69,6 +71,7 @@ import {
 import { ProxiedImage } from "@/components/ProxiedImage";
 import { SocialFeedCard } from "@/components/SocialFeedCard";
 import { SocialFeedFocusView } from "@/components/SocialFeedFocusView";
+import { GlobalAudioFocusPlayer } from "@/components/GlobalAudioFocusPlayer";
 import { AudioFocusView } from "@/components/AudioFocusView";
 import { ReaderAudioPlayer } from "@/components/ReaderAudioPlayer";
 import { buildArticleAudioPlaylist, resolveArticleCoverImage } from "@/lib/articleAudioPlaylist";
@@ -144,7 +147,13 @@ import {
   dockPlayingExpandedSessions,
   hasInlinePlayableMedia,
   isInlineMediaPlaying,
+  getAudioFocusPlaybackSessionId,
+  isAudioFocusPlaylistPlaying,
+  snapshotAudioFocusPlaylistForDock,
 } from "@/lib/autoDockPlayback";
+import { kickDockedAudioFocusAutoplay } from "@/lib/audioDockAutoplay";
+import { getAudioFocusPlaybackCache } from "@/lib/audioFocusPlaybackCache";
+import { pinSessionPlaybackResume } from "@/lib/sessionVideoProgress";
 import {
   getPluginBrowseSession,
   savePluginBrowseSession,
@@ -782,6 +791,15 @@ export default function App() {
   const isSocialFeedPreviewMode = pluginPreviewMode === "socialFeed"
     && isSocialPlugin(activePluginMeta);
   const isAudioFocusPreviewMode = pluginPreviewMode === "audioFocus";
+  const audioFocusHost = useAudioFocusHost({
+    isAudioFocusPreviewMode,
+    activePlugin,
+    activeChannel,
+    pluginFeedArticles,
+    activePluginMeta,
+    readerSessions,
+    pluginById,
+  });
   const isGridPageMode = isGridPreviewMode && gridDetailViewMode === "page";
   const isPageDetailView = isGridPageMode && gridPageDetailOpen;
   const isWallVideoActive = isWallVideoPreviewMode(pluginPreviewMode);
@@ -1984,8 +2002,12 @@ export default function App() {
     });
   };
 
-  const autoDockPlaybackBeforePluginLeave = useCallback((leavingPluginId: string): boolean => {
+  const autoDockPlaybackBeforePluginLeave = useCallback((leavingPluginId: string): {
+    closePageDetail: boolean;
+    audioFocusDocked: boolean;
+  } => {
     let closePageDetail = false;
+    let audioFocusDocked = false;
 
     setReaderSessions(prev => {
       let next = dockPlayingExpandedSessions(prev, leavingPluginId);
@@ -2021,11 +2043,82 @@ export default function App() {
         closePageDetail = docked.closePageDetail;
       }
 
+      if (!closePageDetail && isAudioFocusPreviewMode && leavingPluginId === activePlugin && activeChannel !== "all") {
+        const snapshot = snapshotAudioFocusPlaylistForDock(leavingPluginId, activeChannel);
+        if (snapshot?.playing && pluginFeedArticles.length > 0) {
+          const sessionId = getAudioFocusPlaybackSessionId(leavingPluginId, activeChannel);
+          const cache = getAudioFocusPlaybackCache(sessionId);
+          const playbackResume = {
+            trackIndex: cache?.currentIndex ?? snapshot.trackIndex ?? 0,
+            currentTime: cache?.currentTime ?? snapshot.currentTime,
+            playing: true,
+          };
+          pinSessionPlaybackResume(sessionId, playbackResume);
+          const trackIndex = playbackResume.trackIndex;
+
+          let orderedArticles = pluginFeedArticles;
+          if (cache?.playlistOrder.length) {
+            const byId = new Map(pluginFeedArticles.map(article => [article.id, article]));
+            const ordered = cache.playlistOrder
+              .map(id => byId.get(id))
+              .filter((article): article is Article => article !== undefined);
+            const known = new Set(ordered.map(article => article.id));
+            orderedArticles = [
+              ...ordered,
+              ...pluginFeedArticles.filter(article => !known.has(article.id)),
+            ];
+          }
+
+          const anchorArticle = orderedArticles[trackIndex] ?? orderedArticles[0];
+          const audioFocusDock: ReaderSession["audioFocusDock"] = {
+            pluginId: leavingPluginId,
+            channelId: activeChannel,
+            articles: orderedArticles,
+            playbackResume,
+            resolvedUrls: cache?.resolvedUrls,
+            resolvedCovers: cache?.resolvedCovers,
+            resolvedLyrics: cache?.resolvedLyrics,
+            resolvedSummaries: cache?.resolvedSummaries,
+            playlistOrder: cache?.playlistOrder,
+          };
+
+          const existing = next.find(
+            session => session.audioFocusDock?.pluginId === leavingPluginId
+              && session.audioFocusDock?.channelId === activeChannel,
+          );
+
+          if (existing) {
+            next = next.map(session => (
+              session.id === existing.id
+                ? { ...session, audioFocusDock }
+                : session
+            ));
+          } else if (anchorArticle) {
+            const docked = createReaderSession(anchorArticle, activeChannel, false, undefined, null);
+            next = [
+              ...next,
+              { ...docked, mode: "docked" as const, autoDockOnDismiss: true, audioFocusDock },
+            ];
+          }
+
+          closePageDetail = true;
+          audioFocusDocked = true;
+        }
+      }
+
       return next === prev ? prev : next;
     });
 
-    return closePageDetail;
-  }, [resolveInlineDockTarget, pluginById, channelCapabilities]);
+    return { closePageDetail, audioFocusDocked };
+  }, [
+    resolveInlineDockTarget,
+    pluginById,
+    channelCapabilities,
+    isAudioFocusPreviewMode,
+    activePlugin,
+    activeChannel,
+    pluginFeedArticles,
+  ]);
 
   const selectPlugin = (pluginId: string, groupId?: string) => {
     if (pluginId !== activePlugin) {
@@ -2048,17 +2141,40 @@ export default function App() {
       }
     }
     const isSwitchingPlugin = pluginId !== activePlugin;
-    let closePageDetailAfterDock = false;
+
     if (isSwitchingPlugin && activePlugin !== "all") {
-      closePageDetailAfterDock = autoDockPlaybackBeforePluginLeave(activePlugin);
-      captureCurrentPluginBrowseSession(activePlugin, {
-        closePageDetail: closePageDetailAfterDock,
-      });
+      const leavingPluginId = activePlugin;
+      const leavingChannel = activeChannel;
+      const shouldFlushAudioDock = isAudioFocusPreviewMode
+        && isAudioFocusPlaylistPlaying(leavingPluginId, leavingChannel);
+      let audioFocusDocked = false;
+
+      const runLeaveDock = () => {
+        const dockResult = autoDockPlaybackBeforePluginLeave(leavingPluginId);
+        audioFocusDocked = dockResult.audioFocusDocked;
+        captureCurrentPluginBrowseSession(leavingPluginId, {
+          closePageDetail: dockResult.closePageDetail,
+        });
+        if (dockResult.closePageDetail) {
+          setGridPageDetailOpen(false);
+        }
+        setActivePlugin(pluginId);
+      };
+
+      if (shouldFlushAudioDock) {
+        flushSync(runLeaveDock);
+        if (audioFocusDocked && leavingChannel !== "all") {
+          kickDockedAudioFocusAutoplay(
+            getAudioFocusPlaybackSessionId(leavingPluginId, leavingChannel),
+          );
+        }
+      } else {
+        runLeaveDock();
+      }
+    } else {
+      setActivePlugin(pluginId);
     }
-    if (closePageDetailAfterDock) {
-      setGridPageDetailOpen(false);
-    }
-    setActivePlugin(pluginId);
+
     if (pluginId === "all") {
       setActiveChannel("all");
       if (groupId) {
@@ -2212,6 +2328,8 @@ export default function App() {
   }, []);
 
   const expandReaderSession = useCallback((sessionId: string) => {
+    // Only flip mode — do not rewrite audioFocusDock props. The global player stays
+    // mounted; rewriting resume/urls here used to look like a remount reset to track 0.
     setReaderSessions(prev =>
       prev.map(session => ({
         ...session,
@@ -4343,7 +4461,42 @@ export default function App() {
         />
       ))}
 
-      {readerSessions.map(session => (
+      {audioFocusHost ? (
+        <GlobalAudioFocusPlayer
+          key={audioFocusHost.sessionId}
+          host={audioFocusHost}
+          theme={theme}
+          runtimeBase={runtimeBase}
+          pluginMeta={audioFocusHost.pluginMeta ?? pluginById.get(audioFocusHost.pluginId)}
+          loading={feedLoading && !isFavoritesChannelActive}
+          loadingMore={feedLoadingMore && !isFavoritesChannelActive}
+          searching={feedSearching && !isFavoritesChannelActive}
+          hasMore={!isFavoritesChannelActive && feedHasMore}
+          onLoadMore={() => {
+            void loadMore().catch(console.error);
+          }}
+          onTrackPlay={(article: Article) => {
+            void markArticleRead(article);
+          }}
+          showFavorites={isPluginFavoritesEnabled}
+          favoritedArticleIds={favoritedArticleIds}
+          onToggleFavorite={handleTogglePluginFavorite}
+          onDock={() => {
+            if (audioFocusHost.dockSessionId) {
+              dockReaderSession(audioFocusHost.dockSessionId);
+            }
+          }}
+          onClose={() => {
+            if (audioFocusHost.dockSessionId) {
+              closeReaderSession(audioFocusHost.dockSessionId);
+            }
+          }}
+        />
+      ) : null}
+
+      {readerSessions
+        .filter(session => !session.audioFocusDock)
+        .map(session => (
         <ArticleReaderModal
           key={session.id}
           sessionId={session.id}

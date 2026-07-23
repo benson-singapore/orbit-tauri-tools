@@ -121,11 +121,14 @@ func (d *FeatureDispatcher) ListItems(ctx context.Context, pluginID, channelID s
 	}
 	sess := d.sessions.Get(pluginID, channelID)
 	hasMore := InferPersistedListHasMore(features, sess, offset, len(items), total)
+	var next map[string]string
 	if offset == 0 && features.Pagination != nil {
 		refreshParams := ParamsForRefresh(ch, features)
-		d.sessions.ResetFeedPagination(pluginID, channelID, refreshParams, true)
+		next = d.sessions.ResetFeedPagination(pluginID, channelID, refreshParams, true, features.Pagination)
+	} else if sess != nil && sess.LastResponse != nil && len(sess.LastResponse.Next) > 0 {
+		next = sess.LastResponse.Next
 	}
-	return DispatchResult{Items: items, HasMore: hasMore}, nil
+	return DispatchResult{Items: items, HasMore: hasMore, Next: next}, nil
 }
 
 func listItemsShouldRefresh(features ResolvedFeatures, offset, itemCount int) bool {
@@ -219,7 +222,7 @@ func (d *FeatureDispatcher) ClearAndRefresh(ctx context.Context, pluginID, chann
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	return DispatchResult{Items: items, HasMore: hasMore, Title: result.Title}, nil
+	return DispatchResult{Items: items, HasMore: hasMore, Title: result.Title, Next: result.Next}, nil
 }
 
 func (d *FeatureDispatcher) LoadMore(
@@ -361,7 +364,11 @@ func (d *FeatureDispatcher) dispatch(
 		route = ch.Route
 	case TriggerLoadMore:
 		if len(extra.Params) > 0 {
-			params = ParamsFromClient(ch, extra.Params)
+			var lastNext map[string]string
+			if sess := d.sessions.Get(pluginID, channelID); sess != nil && sess.LastResponse != nil {
+				lastNext = sess.LastResponse.Next
+			}
+			params = ParamsFromClientWithNext(ch, extra.Params, lastNext)
 			route = ch.Route
 			break
 		}
@@ -439,7 +446,7 @@ func (d *FeatureDispatcher) dispatch(
 	if err != nil {
 		return DispatchResult{}, err
 	}
-	return DispatchResult{Items: items, HasMore: hasMore, Title: result.Title}, nil
+	return DispatchResult{Items: items, HasMore: hasMore, Title: result.Title, Next: result.Next}, nil
 }
 
 func (d *FeatureDispatcher) handleOpenDetail(

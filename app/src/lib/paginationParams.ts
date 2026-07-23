@@ -16,7 +16,14 @@ export function mergePaginationNextParams(
 ): Record<string, string> {
   const param = pagination.param?.trim() || defaultPaginationParam(pagination.style);
   const carryKeys = new Set(carryParamKeys(pagination));
-  const params: Record<string, string> = { ...(channelParams ?? {}) };
+  // Start from channel defaults, but drop blank cursor-like values so empty
+  // pageToken/seenIds from the manifest do not override plugin `next`.
+  const params: Record<string, string> = {};
+  for (const [key, value] of Object.entries(channelParams ?? {})) {
+    if (value.trim() || key === param) {
+      params[key] = value;
+    }
+  }
 
   for (const [key, value] of Object.entries(nextParams)) {
     if (carryKeys.has(key)) {
@@ -176,6 +183,15 @@ export function buildFeedLoadMoreParams(options: {
     case "offset": {
       const loadedPages = Math.max(1, Math.floor(articles.length / pageSize));
       params[param] = String(loadedPages + 1);
+      // Prefer plugin-provided next (pageToken etc.) over empty channel defaults.
+      if (nextParams) {
+        for (const [key, value] of Object.entries(nextParams)) {
+          if (key === param) continue;
+          if (value.trim()) {
+            params[key] = value.trim();
+          }
+        }
+      }
       mergeCarryParamsFromNext(params, pagination, nextParams);
       break;
     }

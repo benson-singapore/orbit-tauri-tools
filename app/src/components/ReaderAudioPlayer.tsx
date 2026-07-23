@@ -14,6 +14,7 @@ export interface ReaderAudioTrack {
   url: string;
   cover?: string;
   lrc?: string;
+  summary?: string;
   articleId?: string;
 }
 
@@ -54,6 +55,7 @@ export function ReaderAudioPlayer({
       url: audioUrl,
       cover: coverImage?.trim() || article.image?.trim() || undefined,
       lrc: extractLyricsFromSummary(article.summary),
+      summary: article.summary?.trim() || undefined,
     }];
   }, [article.title, article.author, article.image, article.summary, audioUrl, coverImage, playlist]);
 

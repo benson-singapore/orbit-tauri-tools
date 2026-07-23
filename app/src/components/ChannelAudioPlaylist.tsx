@@ -1,9 +1,12 @@
 import "aplayer/dist/APlayer.min.css";
 import "@/styles/orbit-aplayer.css";
 import { AudioPlayerHero, AudioTrackList } from "@/components/articleAudioUi";
-import { useOrbitAudioPlayer } from "@/hooks/useOrbitAudioPlayer";
+import { mergeAudioFocusPlaybackCache } from "@/lib/audioFocusPlaybackCache";
+import { useOrbitAudioPlayer, type InitialPlaybackResume } from "@/hooks/useOrbitAudioPlayer";
 import type { ResolveTrackUrlOptions } from "@/hooks/useOrbitAudioPlayer";
+import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
 import type { MouseEvent } from "react";
+import { useEffect } from "react";
 
 interface ChannelAudioPlaylistProps {
   sessionId: string;
@@ -25,6 +28,7 @@ interface ChannelAudioPlaylistProps {
   favoritedArticleIds?: Set<string>;
   onToggleFavorite?: (articleId: string, event: MouseEvent) => void;
   onDownloadTrack?: (index: number) => Promise<void>;
+  initialPlaybackResume?: InitialPlaybackResume;
 }
 
 export function ChannelAudioPlaylist({
@@ -43,19 +47,30 @@ export function ChannelAudioPlaylist({
   favoritedArticleIds,
   onToggleFavorite,
   onDownloadTrack,
+  initialPlaybackResume,
 }: ChannelAudioPlaylistProps) {
   const storageName = `orbit-aplayer-channel-${sessionId}`;
   const player = useOrbitAudioPlayer({
     sessionId,
     tracks,
     storageName,
+    aplayerPersistList: false,
     preload: "none",
     defaultLoop: "all",
+    initialPlaybackResume,
     onTrackChange,
     resolveTrackUrl,
   });
 
   const { currentTrack } = player;
+
+  useEffect(() => {
+    mergeAudioFocusPlaybackCache(sessionId, {
+      currentIndex: player.currentIndex,
+      isPlaying: player.isPlaying,
+      currentTime: player.currentTime,
+    });
+  }, [sessionId, player.currentIndex, player.isPlaying, player.currentTime]);
 
   if (tracks.length === 0 || !currentTrack) {
     return null;

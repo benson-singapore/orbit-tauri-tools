@@ -82,6 +82,52 @@ func TestParamsForRefreshResetsPagination(t *testing.T) {
 	}
 }
 
+func TestResetFeedPaginationPreservesHomeNext(t *testing.T) {
+	sessions := NewSessionStore()
+	pag := &PaginationFeature{Style: PaginationStyleOffset, Param: "page", Default: "1"}
+	homeParams := map[string]string{"page": "1", "pageToken": ""}
+	next := map[string]string{"page": "2", "pageToken": "YXJyYXljb25uZWN0aW9uOjExMzc5OQ=="}
+
+	sessions.SetListResponse("awwrated-netflix", "region_kr", FetchResult{Next: next}, true, homeParams)
+	preserved := sessions.ResetFeedPagination(
+		"awwrated-netflix",
+		"region_kr",
+		homeParams,
+		true,
+		pag,
+	)
+	if preserved["pageToken"] != next["pageToken"] {
+		t.Fatalf("preserved pageToken = %q, want %q", preserved["pageToken"], next["pageToken"])
+	}
+	sess := sessions.Get("awwrated-netflix", "region_kr")
+	if sess == nil || sess.LastResponse == nil || sess.LastResponse.Next["pageToken"] != next["pageToken"] {
+		t.Fatalf("session next not preserved: %#v", sess)
+	}
+
+	// After a load-more (non-home lastParams), reset should drop the cursor.
+	sessions.SetListResponse(
+		"awwrated-netflix",
+		"region_kr",
+		FetchResult{Next: map[string]string{"page": "3", "pageToken": "other"}},
+		true,
+		map[string]string{"page": "2", "pageToken": next["pageToken"]},
+	)
+	cleared := sessions.ResetFeedPagination(
+		"awwrated-netflix",
+		"region_kr",
+		homeParams,
+		true,
+		pag,
+	)
+	if cleared != nil {
+		t.Fatalf("expected nil next after non-home reset, got %#v", cleared)
+	}
+	sess = sessions.Get("awwrated-netflix", "region_kr")
+	if sess == nil || sess.LastResponse != nil {
+		t.Fatalf("expected LastResponse cleared, got %#v", sess.LastResponse)
+	}
+}
+
 func TestParamsForLoadMoreJimengSeenIDs(t *testing.T) {
 	ch := &FeedChannel{
 		ID:    "trending",
@@ -173,6 +219,35 @@ func TestInferPersistedListHasMore(t *testing.T) {
 	}
 	if !InferPersistedListHasMore(plain, nil, 0, 10, 30) {
 		t.Fatal("non-paginated feed with more rows in db should hasMore")
+	}
+}
+
+func TestParamsFromClientWithNextFillsPageToken(t *testing.T) {
+	ch := &FeedChannel{
+		Params: map[string]string{
+			"country":   "Korea",
+			"order":     "DESC",
+			"orderby":   "release_date",
+			"page":      "1",
+			"pageToken": "",
+		},
+	}
+	got := ParamsFromClientWithNext(
+		ch,
+		map[string]string{"page": "2", "pageToken": ""},
+		map[string]string{
+			"page":      "2",
+			"pageToken": "YXJyYXljb25uZWN0aW9uOjExMzc5OQ==",
+		},
+	)
+	if got["page"] != "2" {
+		t.Fatalf("page = %q, want 2", got["page"])
+	}
+	if got["pageToken"] != "YXJyYXljb25uZWN0aW9uOjExMzc5OQ==" {
+		t.Fatalf("pageToken = %q, want cursor from next", got["pageToken"])
+	}
+	if got["country"] != "Korea" {
+		t.Fatalf("country = %q", got["country"])
 	}
 }
 

@@ -10,7 +10,9 @@ import {
 import {
   getSessionPlaybackSnapshot,
   updateSessionPlaybackSnapshot,
+  type SessionPlaybackSnapshot,
 } from "@/lib/sessionVideoProgress";
+import { getAudioFocusPlaybackCache } from "@/lib/audioFocusPlaybackCache";
 import type { Article, PlaybackMode, PlaybackResumeIntent } from "@/types";
 
 export interface InlinePlaybackContext {
@@ -41,6 +43,65 @@ function isDomMediaPlaying(root: ParentNode): boolean {
 
 export function isReaderSessionPlaying(sessionId: string): boolean {
   return Boolean(getSessionPlaybackSnapshot(sessionId)?.playing);
+}
+
+export function getAudioFocusPlaybackSessionId(pluginId: string, channelId: string): string {
+  // Must stay in sync with `AudioFocusView` sessionId:
+  // `${pluginId}-${channelId}-audio-playlist`
+  return `${pluginId}-${channelId}-audio-playlist`;
+}
+
+export function isAudioFocusPlaylistPlaying(pluginId: string, channelId: string): boolean {
+  return Boolean(
+    getSessionPlaybackSnapshot(getAudioFocusPlaybackSessionId(pluginId, channelId))?.playing,
+  );
+}
+
+/** Capture audio-focus playlist state from the live DOM before the view unmounts. */
+export function snapshotAudioFocusPlaylistForDock(
+  pluginId: string,
+  channelId: string,
+): SessionPlaybackSnapshot | null {
+  const sessionId = getAudioFocusPlaybackSessionId(pluginId, channelId);
+  const existing = getSessionPlaybackSnapshot(sessionId);
+  const cache = getAudioFocusPlaybackCache(sessionId);
+  const root = document.querySelector(".orbit-channel-audio");
+  const audio = root?.querySelector<HTMLAudioElement>("audio[data-orbit-reader-audio]");
+  const activeTrack = root?.querySelector<HTMLElement>("[data-orbit-audio-track-active='true']");
+  const domTrackIndex = activeTrack
+    ? Number(activeTrack.dataset.orbitAudioTrackIndex)
+    : undefined;
+
+  if (!audio && !existing && !cache) return null;
+
+  const currentTime = audio?.currentTime ?? cache?.currentTime ?? existing?.currentTime ?? 0;
+  const playing = audio
+    ? !audio.paused && !audio.ended
+    : (cache?.isPlaying ?? existing?.playing ?? false);
+  const trackIndex = cache?.currentIndex
+    ?? (Number.isFinite(domTrackIndex) ? domTrackIndex : undefined)
+    ?? existing?.trackIndex
+    ?? 0;
+
+  const snapshot: SessionPlaybackSnapshot = {
+    currentTime,
+    playing,
+    trackIndex,
+  };
+
+  updateSessionPlaybackSnapshot(sessionId, snapshot);
+  return snapshot;
+}
+
+export function buildAudioFocusPlaybackResume(
+  snapshot: SessionPlaybackSnapshot | null,
+): { trackIndex: number; currentTime: number; playing: boolean } | undefined {
+  if (!snapshot) return undefined;
+  return {
+    trackIndex: snapshot.trackIndex ?? 0,
+    currentTime: snapshot.currentTime,
+    playing: snapshot.playing,
+  };
 }
 
 export function isInlineMediaPlaying(ctx: InlinePlaybackContext | null): boolean {

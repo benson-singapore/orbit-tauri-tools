@@ -1,9 +1,17 @@
 export interface SessionPlaybackSnapshot {
   currentTime: number;
   playing: boolean;
+  trackIndex?: number;
+}
+
+export interface PinnedPlaybackResume {
+  trackIndex: number;
+  currentTime: number;
+  playing: boolean;
 }
 
 const snapshots = new Map<string, SessionPlaybackSnapshot>();
+const pinnedResumes = new Map<string, PinnedPlaybackResume>();
 
 export function getSessionPlaybackSnapshot(sessionId: string): SessionPlaybackSnapshot | null {
   return snapshots.get(sessionId) ?? null;
@@ -19,6 +27,25 @@ export function updateSessionPlaybackSnapshot(
 
 export function clearSessionPlaybackSnapshot(sessionId: string): void {
   snapshots.delete(sessionId);
+}
+
+export function pinSessionPlaybackResume(
+  sessionId: string,
+  resume: PinnedPlaybackResume,
+): void {
+  pinnedResumes.set(sessionId, resume);
+}
+
+export function peekPinnedSessionPlaybackResume(sessionId: string): PinnedPlaybackResume | null {
+  return pinnedResumes.get(sessionId) ?? null;
+}
+
+export function consumePinnedSessionPlaybackResume(sessionId: string): PinnedPlaybackResume | null {
+  const resume = pinnedResumes.get(sessionId) ?? null;
+  if (resume) {
+    pinnedResumes.delete(sessionId);
+  }
+  return resume;
 }
 
 export const PLAYBACK_RESUME_EVENT = "orbit:playback-resume";

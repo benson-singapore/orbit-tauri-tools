@@ -175,11 +175,16 @@ func (s *SessionStore) ResetAutoListRefresh(pluginID, channelID string) {
 	sess.ListRefreshPending = false
 }
 
+// ResetFeedPagination resets lastParams to the home-page refresh params while
+// preserving LastResponse.Next when the previous fetch was also a home page.
+// That keeps pageToken / seenIds cursors available for the first load-more.
+// Returns the preserved next map (may be nil) for clients listing the home page.
 func (s *SessionStore) ResetFeedPagination(
 	pluginID, channelID string,
 	params map[string]string,
 	hasMore bool,
-) {
+	pag *PaginationFeature,
+) map[string]string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	k := s.key(pluginID, channelID)
@@ -188,9 +193,19 @@ func (s *SessionStore) ResetFeedPagination(
 		sess = &ChannelSession{}
 		s.sessions[k] = sess
 	}
-	sess.LastResponse = nil
+
+	var preservedNext map[string]string
+	if sess.LastResponse != nil && len(sess.LastResponse.Next) > 0 && IsHomePage(sess.LastParams, pag) {
+		preservedNext = cloneStringMap(sess.LastResponse.Next)
+	}
+	if preservedNext != nil {
+		sess.LastResponse = &FetchResult{Next: preservedNext}
+	} else {
+		sess.LastResponse = nil
+	}
 	sess.LastParams = cloneStringMap(params)
 	sess.HasMore = hasMore
+	return preservedNext
 }
 
 func (s *SessionStore) chapterKey(pluginID, channelID, parentID string) chapterSessionKey {

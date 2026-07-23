@@ -47,6 +47,7 @@ export function articleToAudioTrack(
     url,
     cover: resolveArticleCoverImage(article, context),
     lrc: extractLyricsFromSummary(article.summary),
+    summary: article.summary?.trim() || undefined,
   };
 }
 
@@ -70,10 +71,12 @@ export function articleToListAudioTrack(
   context?: ArticleCoverImageContext,
   resolvedCover?: string | null,
   resolvedLyrics?: string | null,
+  resolvedSummary?: string | null,
 ): ReaderAudioTrack {
   const url = resolvedUrl ?? resolveArticleAudioUrl(article) ?? PENDING_AUDIO_TRACK_URL;
   const cover = resolvedCover?.trim() || resolveArticleCoverImage(article, context);
   const lrc = resolvedLyrics?.trim() || extractLyricsFromSummary(article.summary);
+  const summary = resolvedSummary?.trim() || article.summary?.trim() || undefined;
 
   return {
     name: article.title,
@@ -82,6 +85,7 @@ export function articleToListAudioTrack(
     cover,
     articleId: article.id,
     lrc,
+    summary,
   };
 }
 
@@ -91,6 +95,7 @@ export function articlesToListAudioTracks(
   context?: ArticleCoverImageContext,
   resolvedCovers?: Record<string, string>,
   resolvedLyrics?: Record<string, string>,
+  resolvedSummaries?: Record<string, string>,
 ): ReaderAudioTrack[] {
   return articles.map(article =>
     articleToListAudioTrack(
@@ -99,6 +104,7 @@ export function articlesToListAudioTracks(
       context,
       resolvedCovers?.[article.id],
       resolvedLyrics?.[article.id],
+      resolvedSummaries?.[article.id],
     ),
   );
 }
@@ -108,8 +114,15 @@ export function stabilizePlaylistArticleOrder(
   order: string[],
   articles: Article[],
 ): { order: string[]; items: Article[] } {
-  const byId = new Map(articles.map(article => [article.id, article]));
-  const incomingIds = articles.map(article => article.id);
+  // Prefer first occurrence when the feed returns duplicate ids.
+  const byId = new Map<string, Article>();
+  const incomingIds: string[] = [];
+  for (const article of articles) {
+    if (!byId.has(article.id)) {
+      byId.set(article.id, article);
+      incomingIds.push(article.id);
+    }
+  }
 
   const nextOrder = order.filter(id => byId.has(id));
   const known = new Set(nextOrder);

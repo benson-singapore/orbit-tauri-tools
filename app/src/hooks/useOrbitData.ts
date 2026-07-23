@@ -525,7 +525,6 @@ export function useOrbitData(
         return finishFeedPage(items.length, Boolean(result.pending));
       }
 
-      feedNextParamsRef.current = null;
       feedPaginationExhaustedRef.current = false;
 
       const result = await fetchRuntimeItems({

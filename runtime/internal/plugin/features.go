@@ -540,6 +540,27 @@ func ParamsFromClient(ch *FeedChannel, clientParams map[string]string) map[strin
 	return params
 }
 
+// ParamsFromClientWithNext merges client params, then fills blank keys from the
+// last fetch `next` (e.g. pageToken) so load-more does not drop cursors when the
+// client only increments `page`.
+func ParamsFromClientWithNext(
+	ch *FeedChannel,
+	clientParams map[string]string,
+	lastNext map[string]string,
+) map[string]string {
+	params := ParamsFromClient(ch, clientParams)
+	for k, v := range lastNext {
+		v = strings.TrimSpace(v)
+		if v == "" {
+			continue
+		}
+		if strings.TrimSpace(params[k]) == "" {
+			params[k] = v
+		}
+	}
+	return params
+}
+
 func resetPaginationCarryParams(params map[string]string, ch *FeedChannel, pag *PaginationFeature) {
 	if pag == nil || len(pag.CarryParams) == 0 {
 		return

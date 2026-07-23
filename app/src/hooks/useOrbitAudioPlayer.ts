@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import APlayer from "aplayer";
 import Hls from "hls.js";
 import { isHlsAudioUrl, isPendingAudioTrackUrl } from "@/lib/articleAudioUrl";
@@ -15,7 +15,9 @@ import {
   readStoredChannelPlaybackMode,
   shuffleOrder,
 } from "@/lib/channelPlaybackMode";
+import { tryAutoplayAudio } from "@/lib/audioAutoplay";
 import {
+  consumePinnedSessionPlaybackResume,
   getSessionPlaybackSnapshot,
   PLAYBACK_RESUME_EVENT,
   type PlaybackResumeEventDetail,
@@ -31,16 +33,39 @@ import type { ReaderAudioTrack } from "@/components/ReaderAudioPlayer";
 
 const AUDIO_SEEK_STEP_SECONDS = 15;
 
+function waitForAudioMetadata(audio: HTMLAudioElement): Promise<void> {
+  if (audio.readyState >= 1) {
+    return Promise.resolve();
+  }
+
+  return new Promise(resolve => {
+    const onReady = () => {
+      audio.removeEventListener("loadedmetadata", onReady);
+      resolve();
+    };
+    audio.addEventListener("loadedmetadata", onReady);
+  });
+}
+
 export interface ResolveTrackUrlOptions {
   forceRefresh?: boolean;
+}
+
+export interface InitialPlaybackResume {
+  trackIndex: number;
+  currentTime: number;
+  playing: boolean;
 }
 
 export interface UseOrbitAudioPlayerOptions {
   sessionId: string;
   tracks: ReaderAudioTrack[];
   storageName: string;
+  /** When false, APlayer won't persist list index to localStorage (we manage resume). */
+  aplayerPersistList?: boolean;
   preload?: "none" | "metadata" | "auto";
   defaultLoop?: "all" | "one" | "none";
+  initialPlaybackResume?: InitialPlaybackResume;
   onTrackChange?: (index: number) => void;
   resolveTrackUrl?: (
     index: number,
@@ -110,8 +135,10 @@ export function useOrbitAudioPlayer({
   sessionId,
   tracks,
   storageName,
+  aplayerPersistList = true,
   preload = "metadata",
   defaultLoop = "all",
+  initialPlaybackResume,
   onTrackChange,
   resolveTrackUrl,
 }: UseOrbitAudioPlayerOptions): UseOrbitAudioPlayerResult {
@@ -123,11 +150,17 @@ export function useOrbitAudioPlayer({
   const resolveTrackUrlRef = useRef(resolveTrackUrl);
   const userNavigatingRef = useRef(false);
   const userSeekingRef = useRef(false);
+  const destroyingRef = useRef(false);
   const initialRestoreDoneRef = useRef(false);
   const onTrackChangeRef = useRef(onTrackChange);
   const playbackModeRef = useRef<ChannelPlaybackMode>(
     readStoredChannelPlaybackMode(storageName),
   );
+  const initialPlaybackResumeRef = useRef(initialPlaybackResume);
+  const consumedInitialPlaybackResumeRef = useRef(false);
+  if (initialPlaybackResume && !consumedInitialPlaybackResumeRef.current) {
+    initialPlaybackResumeRef.current = initialPlaybackResume;
+  }
 
   onTrackChangeRef.current = onTrackChange;
   resolveTrackUrlRef.current = resolveTrackUrl;
@@ -151,9 +184,11 @@ export function useOrbitAudioPlayer({
   playbackModeRef.current = playbackMode;
 
   const syncPlaybackSnapshot = useCallback((audio: HTMLAudioElement) => {
+    const player = playerRef.current;
     updateSessionPlaybackSnapshot(sessionId, {
       currentTime: audio.currentTime,
       playing: !audio.paused,
+      trackIndex: player?.list.index,
     });
   }, [sessionId]);
 
@@ -163,23 +198,101 @@ export function useOrbitAudioPlayer({
     setDuration(timeline.end);
   }, []);
 
-  const restorePlaybackSnapshot = useCallback((position?: number) => {
+  const restorePlaybackSnapshot = useCallback((
+    position?: number,
+    options?: { syncPlay?: boolean },
+  ) => {
     const player = playerRef.current;
     if (!player) return;
 
-    const target = position ?? getSessionPlaybackSnapshot(sessionId)?.currentTime ?? 0;
-    if (target <= 0.5) return;
-
-    try {
-      player.seek(target);
-    } catch {
-      // Ignore seek before metadata is ready.
-    }
-
+    const pinned = initialPlaybackResumeRef.current;
     const snapshot = getSessionPlaybackSnapshot(sessionId);
-    if (snapshot?.playing) {
-      void player.audio.play().catch(() => {});
+    const targetIndex = pinned?.trackIndex ?? snapshot?.trackIndex ?? player.list.index;
+    const target = position ?? pinned?.currentTime ?? snapshot?.currentTime ?? 0;
+    const shouldPlay = pinned?.playing ?? snapshot?.playing ?? false;
+
+    if (!pinned && !shouldPlay && target <= 0.5 && targetIndex === player.list.index) {
+      return;
     }
+
+    const track = tracksRef.current[targetIndex];
+    const trackReady = Boolean(
+      track?.url.trim()
+      && !isPendingAudioTrackUrl(track.url),
+    );
+
+    if (options?.syncPlay && shouldPlay && trackReady) {
+      if (targetIndex !== player.list.index) {
+        const audio = player.list.audios[targetIndex];
+        if (audio && audio.url !== track.url) {
+          audio.url = track.url;
+          audio.type = isHlsAudioUrl(track.url) ? "hls" : "auto";
+        }
+        userNavigatingRef.current = true;
+        player.list.switch(targetIndex);
+        applyTrackIndexRef.current(targetIndex, player.list.index);
+        userNavigatingRef.current = false;
+      }
+
+      if (target > 0.5) {
+        try {
+          player.seek(target);
+        } catch {
+          // Ignore seek before metadata is ready.
+        }
+      }
+
+      try {
+        player.play();
+      } catch {
+        void tryAutoplayAudio(player.audio);
+      }
+      setIsPlaying(!player.audio.paused);
+
+      if (pinned) {
+        consumedInitialPlaybackResumeRef.current = true;
+        initialPlaybackResumeRef.current = undefined;
+      }
+      return;
+    }
+
+    void (async () => {
+      if (targetIndex !== player.list.index) {
+        const ready = await ensureTrackReadyRef.current(targetIndex);
+        if (!ready) return;
+        userNavigatingRef.current = true;
+        player.list.switch(targetIndex);
+        applyTrackIndexRef.current(targetIndex, player.list.index);
+        userNavigatingRef.current = false;
+        await waitForAudioMetadata(player.audio);
+      }
+
+      if (target > 0.5) {
+        try {
+          player.seek(target);
+        } catch {
+          // Ignore seek before metadata is ready.
+        }
+      }
+
+      if (shouldPlay) {
+        let started = await tryAutoplayAudio(player.audio);
+        if (!started) {
+          try {
+            player.play();
+            started = !player.audio.paused;
+          } catch {
+            started = false;
+          }
+        }
+        setIsPlaying(started);
+      }
+
+      if (pinned) {
+        consumedInitialPlaybackResumeRef.current = true;
+        initialPlaybackResumeRef.current = undefined;
+      }
+    })();
   }, [sessionId]);
 
   const applyTrackIndex = useCallback((index: number, previousIndex?: number) => {
@@ -199,7 +312,10 @@ export function useOrbitAudioPlayer({
       setDuration(player.audio.duration || 0);
     }
     onTrackChangeRef.current?.(index);
-  }, []);
+    updateSessionPlaybackSnapshot(sessionId, { trackIndex: index });
+  }, [sessionId]);
+  const applyTrackIndexRef = useRef(applyTrackIndex);
+  applyTrackIndexRef.current = applyTrackIndex;
 
   const applyTrackUrlToPlayer = useCallback((index: number, url: string) => {
     const player = playerRef.current;
@@ -324,10 +440,11 @@ export function useOrbitAudioPlayer({
     refreshAttemptsRef.current.clear();
   }, [listEpoch]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const container = engineRef.current;
     if (!container || !hasTracks) return;
 
+    destroyingRef.current = false;
     initialRestoreDoneRef.current = false;
     ensureAPlayerHlsGlobal();
     const initialMode = readStoredChannelPlaybackMode(storageName);
@@ -345,7 +462,7 @@ export function useOrbitAudioPlayer({
       order: "list",
       listFolded: true,
       listMaxHeight: 0,
-      storageName,
+      ...(aplayerPersistList ? { storageName } : {}),
       audio: initialTracks.map(toAPlayerItem),
     });
 
@@ -446,6 +563,7 @@ export function useOrbitAudioPlayer({
     };
     playerRef.current = player;
     syncedTrackCountRef.current = initialTracks.length;
+    setCurrentIndex(player.list.index);
 
     const onTimeUpdate = () => {
       setCurrentTime(player.audio.currentTime);
@@ -457,6 +575,7 @@ export function useOrbitAudioPlayer({
       syncPlaybackSnapshot(player.audio);
     };
     const onPause = () => {
+      if (destroyingRef.current) return;
       setIsPlaying(false);
       syncPlaybackSnapshot(player.audio);
     };
@@ -553,7 +672,16 @@ export function useOrbitAudioPlayer({
     player.audio.addEventListener("seeked", onSeeked);
     player.audio.addEventListener("error", onAudioError);
 
-    if (player.audio.readyState >= 1) {
+    const pinnedFromStore = consumePinnedSessionPlaybackResume(sessionId);
+    if (pinnedFromStore) {
+      initialPlaybackResumeRef.current = pinnedFromStore;
+      consumedInitialPlaybackResumeRef.current = false;
+    }
+
+    if (initialPlaybackResumeRef.current) {
+      restorePlaybackSnapshot(undefined, { syncPlay: true });
+      initialRestoreDoneRef.current = true;
+    } else if (player.audio.readyState >= 1) {
       syncTimeline(player.audio);
       if (!initialRestoreDoneRef.current) {
         restorePlaybackSnapshot();
@@ -562,6 +690,7 @@ export function useOrbitAudioPlayer({
     }
 
     return () => {
+      destroyingRef.current = true;
       player.audio.removeEventListener("durationchange", onTimelineChange);
       player.audio.removeEventListener("progress", onTimelineChange);
       player.audio.removeEventListener("seeked", onSeeked);
@@ -569,11 +698,8 @@ export function useOrbitAudioPlayer({
       player.destroy();
       playerRef.current = null;
       syncedTrackCountRef.current = 0;
-      setCurrentIndex(0);
-      setIsPlaying(false);
-      setCurrentTime(0);
-      setDuration(0);
-      setTimelineStart(0);
+      // Avoid setState(0/paused) on teardown — ChannelAudioPlaylist mirrors state into
+      // the playback cache and would wipe the live track index before a remount resumes.
     };
   }, [
     sessionId,
@@ -582,6 +708,7 @@ export function useOrbitAudioPlayer({
     defaultLoop,
     listEpoch,
     hasTracks,
+    aplayerPersistList,
     syncPlaybackSnapshot,
     syncTimeline,
     restorePlaybackSnapshot,

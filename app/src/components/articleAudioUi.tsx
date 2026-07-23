@@ -318,6 +318,18 @@ function AudioLyricsPanel({
   );
 }
 
+function AudioSummaryPanel({ summary }: { summary: string }) {
+  return (
+    <div className="relative min-w-0 flex-1 self-start sm:ml-6 sm:border-l sm:border-[var(--orbit-border)] sm:pl-6">
+      <div className="rounded-lg px-1 py-0.5 text-right">
+        <p className="line-clamp-3 whitespace-pre-wrap break-words text-xs leading-5 text-[var(--orbit-text-muted)]">
+          {summary}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 function AudioPlaybackTuning({
   volume,
   playbackRate,
@@ -432,6 +444,8 @@ export function AudioPlayerHero({
               currentTime={Math.max(0, currentTime - timelineStart)}
               popoverContainerRef={contentRef}
             />
+          ) : track.summary?.trim() ? (
+            <AudioSummaryPanel summary={track.summary.trim()} />
           ) : null}
         </div>
 
@@ -589,7 +603,11 @@ export function AudioTrackList({
             const favorited = Boolean(articleId && favoritedArticleIds?.has(articleId));
 
             return (
-              <li key={articleId ?? `${track.name}-${index}`}>
+              <li
+                key={`${articleId ?? track.name}-${index}`}
+                data-orbit-audio-track-index={index}
+                data-orbit-audio-track-active={isActive ? "true" : undefined}
+              >
                 <div
                   className={`flex w-full items-center gap-1 px-1 py-1 sm:px-2 ${
                     isActive
