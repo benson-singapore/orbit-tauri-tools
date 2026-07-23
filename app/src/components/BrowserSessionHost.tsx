@@ -1,6 +1,9 @@
 import { useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { registerBrowserSessionHandler } from "@/lib/browserSessionGate";
+import {
+  notifyBrowserSessionReady,
+  registerBrowserSessionHandler,
+} from "@/lib/browserSessionGate";
 import { isTauriRuntime } from "@/lib/appInfo";
 import {
   PLUGIN_SESSION_READY_EVENT,
@@ -28,9 +31,15 @@ export function BrowserSessionHost() {
         origins: [] as string[],
         persist: ["cookie", "userAgent"],
       };
-      void persistPluginSessionCapture(session, capture).catch(err => {
-        console.error("[browser-session] persist ready event failed", capture.pluginId, err);
-      });
+      void persistPluginSessionCapture(session, capture)
+        .then(saved => {
+          if (saved) {
+            notifyBrowserSessionReady(capture.pluginId);
+          }
+        })
+        .catch(err => {
+          console.error("[browser-session] persist ready event failed", capture.pluginId, err);
+        });
     }).then(fn => {
       if (disposed) {
         fn();

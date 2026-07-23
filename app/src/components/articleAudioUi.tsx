@@ -7,6 +7,7 @@ import { formatPlaybackRate } from "@/lib/audioPlaybackPrefs";
 import {
   getActiveLyricIndex,
   getLyricsDisplayLines,
+  isLrcLyrics,
   parseLrcLines,
 } from "@/lib/audioLyrics";
 import { CHANNEL_PLAYBACK_MODES } from "@/lib/channelPlaybackMode";
@@ -420,6 +421,11 @@ export function AudioPlayerHero({
   isResolving = false,
 }: AudioPlayerHeroProps) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const lyricSource = track.lrc?.trim()
+    || (track.summary && isLrcLyrics(track.summary) ? track.summary.trim() : "");
+  const plainSummary = track.summary?.trim() && !isLrcLyrics(track.summary)
+    ? track.summary.trim()
+    : "";
 
   return (
     <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
@@ -438,14 +444,14 @@ export function AudioPlayerHero({
               <p className="mt-0.5 truncate text-sm text-[var(--orbit-text-muted)]">{track.artist}</p>
             ) : null}
           </div>
-          {track.lrc ? (
+          {lyricSource ? (
             <AudioLyricsPanel
-              lrc={track.lrc}
+              lrc={lyricSource}
               currentTime={Math.max(0, currentTime - timelineStart)}
               popoverContainerRef={contentRef}
             />
-          ) : track.summary?.trim() ? (
-            <AudioSummaryPanel summary={track.summary.trim()} />
+          ) : plainSummary ? (
+            <AudioSummaryPanel summary={plainSummary} />
           ) : null}
         </div>
 

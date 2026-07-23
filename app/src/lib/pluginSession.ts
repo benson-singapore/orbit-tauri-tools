@@ -95,7 +95,7 @@ export function resolveBrowserSessionStartUrl(
   return sessionOrigin(session);
 }
 
-/** Open verification webview without blocking; session cookies are captured in the background. */
+/** Open verification webview; CF success auto-captures cookies and dismisses the UI. */
 export async function openPluginSessionWindow(
   session: BrowserSessionInfo,
   channel?: Pick<PluginChannel, "params"> | null,

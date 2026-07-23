@@ -37,7 +37,7 @@ import {
   pluginNeedsBrowserSessionRecovery,
 } from "@/lib/browserSessionError";
 import { isPluginSessionActive } from "@/lib/pluginSession";
-import { requestBrowserSession } from "@/lib/browserSessionGate";
+import { requestBrowserSession, registerBrowserSessionReadyHandler } from "@/lib/browserSessionGate";
 import { savePluginVariables } from "@/lib/runtimeV2";
 import {
   buildFeedLoadMoreParams,
@@ -1217,6 +1217,25 @@ export function useOrbitData(
       throw err;
     }
   }, [loadFeedPage]);
+
+  useEffect(() => {
+    registerBrowserSessionReadyHandler(async (pluginId) => {
+      if (pluginFilterRef.current !== pluginId) return;
+      // Wait for acquire() to finish clearing activeSessions so a concurrent
+      // refresh does not get blocked by withBrowserSessionRetry.
+      for (let i = 0; i < 20 && isPluginSessionActive(pluginId); i += 1) {
+        await new Promise(resolve => window.setTimeout(resolve, 50));
+      }
+      if (pluginFilterRef.current !== pluginId) return;
+      console.info("[browser-session] refreshing feed after session ready", pluginId);
+      try {
+        await refreshChannelFeed();
+      } catch (err) {
+        console.error("[browser-session] post-ready refresh failed", pluginId, err);
+      }
+    });
+    return () => registerBrowserSessionReadyHandler(null);
+  }, [refreshChannelFeed]);
 
   const clearRefreshChannelFeed = useCallback(async () => {
     const pluginId = pluginFilterRef.current;

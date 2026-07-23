@@ -118,6 +118,15 @@ fn present_verification_window(window: &WebviewWindow) -> Result<(), String> {
     Ok(())
 }
 
+/// Collapse the verification UI but keep the webview alive for session HTTP fetches.
+fn retire_verification_window(window: &WebviewWindow) {
+    if let Err(err) = window.hide() {
+        eprintln!("[plugin-session] hide verification window failed: {err}");
+    }
+    let _ = window.set_size(LogicalSize::new(1.0, 1.0));
+    let _ = window.set_resizable(false);
+}
+
 pub struct WebviewFetchResult {
     pub status: u16,
     pub content_type: String,
@@ -142,6 +151,10 @@ fn host_matches_origin(host: &str, origin: &Url) -> bool {
         return true;
     }
     if host.ends_with(".cloudflare.com") || host.ends_with(".challenges.cloudflare.com") {
+        return true;
+    }
+    // Cookie Domain=.gequbao.com must match origin www.gequbao.com
+    if origin_host == host || origin_host.ends_with(&format!(".{host}")) {
         return true;
     }
     host.ends_with(&format!(".{origin_host}"))
@@ -470,8 +483,9 @@ async fn session_is_ready(
 
 #[cfg(test)]
 mod tests {
-    use super::{has_usable_site_session, only_challenge_cookies};
+    use super::{has_usable_site_session, host_matches_origin, only_challenge_cookies};
     use cookie::Cookie;
+    use url::Url;
 
     #[test]
     fn challenge_cookies_do_not_complete_session() {
@@ -489,6 +503,15 @@ mod tests {
         let cookies = vec![Cookie::parse("cf_clearance=token").unwrap()];
 
         assert!(has_usable_site_session(&cookies, "cf_clearance=token"));
+    }
+
+    #[test]
+    fn cookie_parent_domain_matches_www_origin() {
+        let origin = Url::parse("https://www.gequbao.com/").unwrap();
+        assert!(host_matches_origin("gequbao.com", &origin));
+        assert!(host_matches_origin(".gequbao.com", &origin));
+        assert!(host_matches_origin("www.gequbao.com", &origin));
+        assert!(!host_matches_origin("evil.com", &origin));
     }
 }
 
@@ -535,6 +558,8 @@ async fn try_complete_session(
     plugin_id: &str,
     origin: &Url,
     force: bool,
+    // When false (manual browser open), capture cookies but leave the window visible.
+    retire_window: bool,
 ) -> Result<Option<PluginSessionReadyPayload>, String> {
     let label = session_label(plugin_id);
     let Some(window) = app.get_webview_window(&label) else {
@@ -555,9 +580,13 @@ async fn try_complete_session(
     }
 
     let payload = capture_session_from_window(&window, plugin_id, origin).await?;
-    eprintln!("[plugin-session] complete plugin={plugin_id} hiding webview for fetch");
     registry.notify_waiter(plugin_id, payload.clone());
-    let _ = window.hide();
+    if retire_window {
+        eprintln!("[plugin-session] complete plugin={plugin_id} retiring verification window");
+        retire_verification_window(&window);
+    } else {
+        eprintln!("[plugin-session] complete plugin={plugin_id} keeping manual browser open");
+    }
     registry.finish(plugin_id);
     app.emit(PLUGIN_SESSION_READY_EVENT, payload.clone())
         .map_err(|e| e.to_string())?;
@@ -571,6 +600,7 @@ fn schedule_completion_check(
     origin: Url,
     completed: Arc<AtomicBool>,
     delay: Duration,
+    retire_window: bool,
 ) {
     tauri::async_runtime::spawn(async move {
         if completed.load(Ordering::Relaxed) {
@@ -580,7 +610,8 @@ fn schedule_completion_check(
         if completed.load(Ordering::Relaxed) {
             return;
         }
-        if let Ok(Some(_)) = try_complete_session(&app, &registry, &plugin_id, &origin, false).await
+        if let Ok(Some(_)) =
+            try_complete_session(&app, &registry, &plugin_id, &origin, false, retire_window).await
         {
             completed.store(true, Ordering::SeqCst);
         }
@@ -593,6 +624,7 @@ fn spawn_session_poll(
     plugin_id: String,
     origin: Url,
     completed: Arc<AtomicBool>,
+    retire_window: bool,
 ) {
     tauri::async_runtime::spawn(async move {
         let label = session_label(&plugin_id);
@@ -609,7 +641,8 @@ fn spawn_session_poll(
                 return;
             }
             if let Ok(Some(_)) =
-                try_complete_session(&app, &registry, &plugin_id, &origin, false).await
+                try_complete_session(&app, &registry, &plugin_id, &origin, false, retire_window)
+                    .await
             {
                 completed.store(true, Ordering::SeqCst);
                 return;
@@ -687,6 +720,9 @@ pub async fn open_plugin_session_window(
         .inner()
         .remember_origin(&plugin_id, start_url.as_str());
 
+    // Auto recovery hides the window after capture; manual open keeps it visible.
+    let retire_window = !manual;
+
     if let Some(existing) = app.get_webview_window(&label) {
         present_verification_window(&existing)?;
         if !manual {
@@ -695,20 +731,27 @@ pub async fn open_plugin_session_window(
         existing
             .navigate(start_url.clone())
             .map_err(|e| e.to_string())?;
-        if manual {
-            registry.inner().finish(&plugin_id);
-            return Ok(());
-        }
+        // Always poll: reusing the hidden fetch webview used to only schedule a
+        // one-shot check, so CF success after settle never dismissed the window.
         let flag = registry
             .get(&plugin_id)
             .unwrap_or_else(|| registry.begin(&plugin_id));
-        schedule_completion_check(
+        spawn_session_poll(
             app.clone(),
             registry.inner().clone(),
             plugin_id.clone(),
+            origin.clone(),
+            flag.clone(),
+            retire_window,
+        );
+        schedule_completion_check(
+            app,
+            registry.inner().clone(),
+            plugin_id,
             origin,
             flag,
             NAV_SETTLE_DELAY,
+            retire_window,
         );
         return Ok(());
     }
@@ -729,7 +772,7 @@ pub async fn open_plugin_session_window(
         .center()
         .resizable(true)
         .on_navigation(move |next_url| {
-            if !manual && is_on_target_origin(next_url, &origin_for_nav) {
+            if is_on_target_origin(next_url, &origin_for_nav) {
                 schedule_completion_check(
                     app_for_nav.clone(),
                     registry_for_nav.clone(),
@@ -737,6 +780,7 @@ pub async fn open_plugin_session_window(
                     origin_for_nav.clone(),
                     completed_for_nav.clone(),
                     NAV_SETTLE_DELAY,
+                    retire_window,
                 );
             }
             true
@@ -766,26 +810,26 @@ pub async fn open_plugin_session_window(
         }
     });
 
-    if !manual {
-        spawn_session_poll(
-            app.clone(),
-            registry.inner().clone(),
-            plugin_id.clone(),
-            origin.clone(),
-            completed.clone(),
-        );
+    // Capture session cookies for both auto and manual opens; only auto recovery
+    // retires (hides) the window after success.
+    spawn_session_poll(
+        app.clone(),
+        registry.inner().clone(),
+        plugin_id.clone(),
+        origin.clone(),
+        completed.clone(),
+        retire_window,
+    );
 
-        schedule_completion_check(
-            app,
-            registry.inner().clone(),
-            plugin_id,
-            origin,
-            completed,
-            NAV_SETTLE_DELAY * 2,
-        );
-    } else {
-        registry.inner().finish(&plugin_id);
-    }
+    schedule_completion_check(
+        app,
+        registry.inner().clone(),
+        plugin_id,
+        origin,
+        completed,
+        NAV_SETTLE_DELAY * 2,
+        retire_window,
+    );
 
     Ok(())
 }
@@ -804,7 +848,16 @@ pub async fn complete_plugin_session_window(
     let origin = origin_base_from_url(&origin);
 
     let force_complete = force.unwrap_or(false);
-    match try_complete_session(&app, registry.inner(), &plugin_id, &origin, force_complete).await? {
+    match try_complete_session(
+        &app,
+        registry.inner(),
+        &plugin_id,
+        &origin,
+        force_complete,
+        true,
+    )
+    .await?
+    {
         Some(payload) => Ok(payload),
         None if app.get_webview_window(&session_label(&plugin_id)).is_none() => {
             Err("验证窗口未打开".into())

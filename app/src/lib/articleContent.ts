@@ -346,8 +346,13 @@ export function mergeArticleListWithDetail(
   listItem: Article,
   detail: Article,
 ): Article {
+  const detailSummary = detail.summary?.trim();
+  const detailSourceUrl = detail.sourceUrl?.trim();
   return {
     ...listItem,
+    // Detail often carries the real blurb / LRC lyrics; list may only have a teaser.
+    summary: detailSummary || listItem.summary,
+    sourceUrl: detailSourceUrl || listItem.sourceUrl,
     image: listItem.image?.trim() || detail.image?.trim() || listItem.image,
     content: detail.content,
     galleryImages: detail.galleryImages,

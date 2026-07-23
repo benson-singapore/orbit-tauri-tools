@@ -3,7 +3,7 @@ import {
   PENDING_AUDIO_TRACK_URL,
   resolveArticleAudioUrl,
 } from "@/lib/articleAudioUrl";
-import { extractLyricsFromSummary } from "@/lib/audioLyrics";
+import { extractLyricsFromSummary, decodeResolvedLyrics, hasResolvedLyricsCache } from "@/lib/audioLyrics";
 import type { Article } from "@/types";
 
 export interface ArticleCoverImageContext {
@@ -75,7 +75,8 @@ export function articleToListAudioTrack(
 ): ReaderAudioTrack {
   const url = resolvedUrl ?? resolveArticleAudioUrl(article) ?? PENDING_AUDIO_TRACK_URL;
   const cover = resolvedCover?.trim() || resolveArticleCoverImage(article, context);
-  const lrc = resolvedLyrics?.trim() || extractLyricsFromSummary(article.summary);
+  const listLyrics = extractLyricsFromSummary(article.summary);
+  const lrc = decodeResolvedLyrics(resolvedLyrics) || listLyrics;
   const summary = resolvedSummary?.trim() || article.summary?.trim() || undefined;
 
   return {
@@ -86,6 +87,7 @@ export function articleToListAudioTrack(
     articleId: article.id,
     lrc,
     summary,
+    lyricsResolved: Boolean(listLyrics || hasResolvedLyricsCache(resolvedLyrics)),
   };
 }
 

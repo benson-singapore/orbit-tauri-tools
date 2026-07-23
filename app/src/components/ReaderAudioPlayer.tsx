@@ -16,6 +16,8 @@ export interface ReaderAudioTrack {
   lrc?: string;
   summary?: string;
   articleId?: string;
+  /** Detail lyrics fetch completed (LRC present or confirmed absent). */
+  lyricsResolved?: boolean;
 }
 
 interface ReaderAudioPlayerProps {

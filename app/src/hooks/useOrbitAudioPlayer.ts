@@ -121,7 +121,14 @@ export function toAPlayerItem(track: ReaderAudioTrack): APlayerAudioItem {
 }
 
 function trackIdentityKey(track: ReaderAudioTrack): string {
-  return `${track.articleId ?? track.name}\u0000${track.name}\u0000${track.artist ?? ""}`;
+  // Identity is article id only — feed title/artist refreshes must not remount
+  // APlayer (which would jump back to track 0).
+  return track.articleId ?? `${track.name}\u0000${track.artist ?? ""}`;
+}
+
+/** Cover present and lyrics fetch settled — no detail fetch needed for metadata. */
+function trackMetadataComplete(track: ReaderAudioTrack): boolean {
+  return Boolean(track.cover?.trim()) && Boolean(track.lrc?.trim() || track.lyricsResolved);
 }
 
 /** True when `next` is the same list or a pure append of `prev` (load-more). */
@@ -317,7 +324,10 @@ export function useOrbitAudioPlayer({
   const applyTrackIndexRef = useRef(applyTrackIndex);
   applyTrackIndexRef.current = applyTrackIndex;
 
-  const applyTrackUrlToPlayer = useCallback((index: number, url: string) => {
+  const applyTrackUrlToPlayer = useCallback((index: number, url: string, options?: {
+    /** Reload even when the current track is already playing (error recovery). */
+    forceReload?: boolean;
+  }) => {
     const player = playerRef.current;
     if (!player || index < 0 || index >= player.list.audios.length) return;
 
@@ -327,10 +337,18 @@ export function useOrbitAudioPlayer({
     audio.url = url;
     audio.type = isHlsAudioUrl(url) ? "hls" : "auto";
 
-    if (player.list.index === index) {
-      player.list.switch(index);
+    if (player.list.index !== index) return;
+    // Don't interrupt an in-progress stream just because metadata resolve
+    // returned a different CDN URL for the same track.
+    if (!options?.forceReload && !player.audio.paused && !player.audio.ended) {
+      return;
     }
+    player.list.switch(index);
   }, []);
+
+  const refreshAttemptsRef = useRef(new Set<number>());
+  /** Tracks whose detail metadata (cover/lyrics) was already requested this list epoch. */
+  const metadataResolvedRef = useRef(new Set<string>());
 
   const ensureTrackReady = useCallback(async (
     index: number,
@@ -338,36 +356,50 @@ export function useOrbitAudioPlayer({
   ): Promise<boolean> => {
     const track = tracksRef.current[index];
     if (!track) return false;
-    if (
-      !options?.forceRefresh
-      && track.url.trim()
-      && !isPendingAudioTrackUrl(track.url)
-    ) {
+
+    const hasPlayableUrl = Boolean(track.url.trim()) && !isPendingAudioTrackUrl(track.url);
+    const trackKey = track.articleId ?? `${track.name}\u0000${track.artist ?? ""}`;
+    const resolver = resolveTrackUrlRef.current;
+
+    // Fully hydrated — nothing to resolve.
+    if (!options?.forceRefresh && hasPlayableUrl && trackMetadataComplete(track)) {
       return true;
     }
 
-    const resolver = resolveTrackUrlRef.current;
-    if (!resolver) return false;
+    if (!resolver) return hasPlayableUrl;
 
-    setResolvingIndex(index);
+    // Already attempted metadata resolve this epoch — keep the playable URL.
+    if (!options?.forceRefresh && hasPlayableUrl && metadataResolvedRef.current.has(trackKey)) {
+      return true;
+    }
+
+    const showResolving = !hasPlayableUrl || options?.forceRefresh === true;
+    if (showResolving) {
+      setResolvingIndex(index);
+    }
     try {
       const url = await resolver(index, track, options);
-      if (!url?.trim()) return false;
+      metadataResolvedRef.current.add(trackKey);
+      if (!url?.trim()) return hasPlayableUrl;
       // Keep tracksRef in sync immediately so listswitch / skip handlers
       // don't treat this track as still pending before React re-renders.
       tracksRef.current = tracksRef.current.map((item, itemIndex) => (
         itemIndex === index ? { ...item, url } : item
       ));
-      applyTrackUrlToPlayer(index, url);
+      // Metadata-only hydration must not reload a playable stream mid-song.
+      if (!hasPlayableUrl || options?.forceRefresh) {
+        applyTrackUrlToPlayer(index, url, { forceReload: options?.forceRefresh === true });
+      }
       return true;
     } finally {
-      setResolvingIndex(current => (current === index ? null : current));
+      if (showResolving) {
+        setResolvingIndex(current => (current === index ? null : current));
+      }
     }
   }, [applyTrackUrlToPlayer]);
 
   const ensureTrackReadyRef = useRef(ensureTrackReady);
   ensureTrackReadyRef.current = ensureTrackReady;
-  const refreshAttemptsRef = useRef(new Set<number>());
 
   const switchToIndex = useCallback((index: number) => {
     void (async () => {
@@ -438,6 +470,7 @@ export function useOrbitAudioPlayer({
 
   useEffect(() => {
     refreshAttemptsRef.current.clear();
+    metadataResolvedRef.current.clear();
   }, [listEpoch]);
 
   useLayoutEffect(() => {
@@ -483,7 +516,15 @@ export function useOrbitAudioPlayer({
     const trackNeedsResolve = (index: number): boolean => {
       const track = tracksRef.current[index];
       if (!track) return false;
+      // Only block playback for missing/pending audio URL. Cover/lyrics hydrate
+      // in the background — pausing for metadata was interrupting mid-song.
       return !track.url.trim() || isPendingAudioTrackUrl(track.url);
+    };
+    const hydrateTrackMetadata = (index: number) => {
+      const track = tracksRef.current[index];
+      if (!track || !resolveTrackUrlRef.current) return;
+      if (trackMetadataComplete(track)) return;
+      void ensureTrackReadyRef.current(index);
     };
     const playWhenAllowed = () => {
       suppressAutoPlay = false;
@@ -633,6 +674,7 @@ export function useOrbitAudioPlayer({
       if (!trackNeedsResolve(index)) {
         applyTrackIndex(index);
         userNavigatingRef.current = false;
+        hydrateTrackMetadata(index);
         return;
       }
 
@@ -728,9 +770,18 @@ export function useOrbitAudioPlayer({
         applyTrackUrlToPlayer(index, track.url);
       }
 
+      if (audio.name !== track.name) {
+        audio.name = track.name;
+      }
+      if ((audio.artist ?? "") !== (track.artist ?? "")) {
+        audio.artist = track.artist;
+      }
       const cover = track.cover?.trim();
       if (cover && audio.cover !== cover) {
         audio.cover = cover;
+      }
+      if (track.lrc && audio.lrc !== track.lrc) {
+        audio.lrc = track.lrc;
       }
     });
   }, [tracks, applyTrackUrlToPlayer]);
@@ -742,14 +793,9 @@ export function useOrbitAudioPlayer({
     const synced = syncedTrackCountRef.current;
     if (tracks.length <= synced) return;
 
-    // Load-more only: refuse to append when the existing prefix was replaced
-    // (search / channel refresh). Remount is handled via listEpoch.
-    const prefixMatches = tracks.slice(0, synced).every((track, index) => {
-      const audio = player.list.audios[index];
-      if (!audio) return false;
-      return track.name === audio.name && (track.artist ?? "") === (audio.artist ?? "");
-    });
-    if (!prefixMatches) return;
+    // Load-more only. listEpoch remounts when article-id prefix changes, so once
+    // the player is live we only need the synced slot count to still match.
+    if (player.list.audios.length !== synced) return;
 
     const wasSingle = synced <= 1;
     player.list.add(tracks.slice(synced).map(toAPlayerItem));

@@ -6,7 +6,7 @@ import {
   stabilizePlaylistArticleOrder,
 } from "@/lib/articleAudioPlaylist";
 import { downloadAudioTrack } from "@/lib/articleAudioDownload";
-import { extractLyricsFromSummary } from "@/lib/audioLyrics";
+import { extractLyricsFromSummary, encodeResolvedLyrics, hasResolvedLyricsCache } from "@/lib/audioLyrics";
 import { isPendingAudioTrackUrl, resolveArticleAudioUrl } from "@/lib/articleAudioUrl";
 import { mergeArticleListWithDetail } from "@/lib/articleContent";
 import { resolveArticleDetailChannel } from "@/lib/browseDynamicFeed";
@@ -92,6 +92,10 @@ export function AudioFocusView({
   const playlistOrderRef = useRef<string[]>(initialPlaylistOrder ?? []);
   const playlistScopeRef = useRef(`${pluginId}-${channelId}`);
 
+  // Only reseed when the playlist scope changes. Depending on initial* object
+  // identities re-ran this after mark-as-read / cache merges and wiped covers
+  // that were just resolved — APlayer kept playing the applied URL, so audio
+  // worked while TrackCover fell back to the placeholder until a second click.
   useEffect(() => {
     setResolvedUrls(initialResolvedUrls ?? {});
     setResolvedCovers(initialResolvedCovers ?? {});
@@ -100,7 +104,8 @@ export function AudioFocusView({
     if (initialPlaylistOrder?.length) {
       playlistOrderRef.current = initialPlaylistOrder;
     }
-  }, [pluginId, channelId, initialResolvedUrls, initialResolvedCovers, initialResolvedLyrics, initialResolvedSummaries, initialPlaylistOrder]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: scope-only reset
+  }, [pluginId, channelId]);
 
   const playlistArticles = useMemo(() => {
     const scopeKey = `${pluginId}-${channelId}`;
@@ -150,9 +155,15 @@ export function AudioFocusView({
     const cachedUrl = resolvedUrls[article.id] ?? resolveArticleAudioUrl(article);
     const listSummary = article.summary?.trim();
     const listLyrics = extractLyricsFromSummary(article.summary);
-    const summaryResolved = Boolean(listSummary || article.id in resolvedSummaries);
-    const lyricsResolved = Boolean(listLyrics || article.id in resolvedLyrics);
-    if (!forceRefresh && cachedUrl && summaryResolved && lyricsResolved) {
+    const listCover = article.image?.trim();
+    const cachedLyricsRaw = resolvedLyrics[article.id];
+    const cachedSummary = resolvedSummaries[article.id]?.trim() ?? "";
+    // List teasers (artist names) are not LRC. Only skip when we have real LRC
+    // from the list, or a trusted cache entry (LRC or confirmed-absent marker).
+    const summaryResolved = Boolean(listSummary || cachedSummary || article.id in resolvedSummaries);
+    const lyricsResolved = Boolean(listLyrics || hasResolvedLyricsCache(cachedLyricsRaw));
+    const coverResolved = Boolean(listCover || article.id in resolvedCovers);
+    if (!forceRefresh && cachedUrl && summaryResolved && lyricsResolved && coverResolved) {
       return cachedUrl;
     }
 
@@ -162,7 +173,7 @@ export function AudioFocusView({
         pluginMeta,
         channelId,
       );
-      let detail: Article;
+      let detailItem: Article;
 
       if (shouldUseRuntimeV2(article.pluginId, pluginMeta) && detailChannelId !== "all") {
         const result = await runtimeOpenDetail(article.pluginId, detailChannelId, article.id, {
@@ -172,38 +183,50 @@ export function AudioFocusView({
         if (!result.item) {
           return cachedUrl;
         }
-        detail = mergeArticleListWithDetail(article, result.item);
+        detailItem = result.item;
       } else {
-        detail = mergeArticleListWithDetail(
-          article,
-          await fetchFeedItem(article.id, {
-            pluginId,
-            channelId: detailChannelId,
-          }),
-        );
+        detailItem = await fetchFeedItem(article.id, {
+          pluginId,
+          channelId: detailChannelId,
+        });
       }
 
-      const url = resolveArticleAudioUrl(detail) ?? cachedUrl;
+      const detail = mergeArticleListWithDetail(article, detailItem);
+      // Keep an already-playable URL stable unless force-refreshing — detail
+      // responses often return a rotated CDN link that would restart playback.
+      const detailUrl = resolveArticleAudioUrl(detail) ?? cachedUrl;
+      const url = (!forceRefresh && cachedUrl) ? cachedUrl : detailUrl;
       if (!url) {
         return null;
       }
 
-      const cover = detail.image?.trim();
-      const summary = detail.summary?.trim();
-      const lyrics = extractLyricsFromSummary(detail.summary);
-      if (forceRefresh || url !== cachedUrl) {
-        setResolvedUrls(prev => ({ ...prev, [article.id]: url }));
+      const cover = detail.image?.trim() ?? "";
+      // Read summary/lyrics from the raw detail payload — list teasers must not win.
+      const summary = detailItem.summary?.trim() || detail.summary?.trim() || "";
+      const lyrics = encodeResolvedLyrics(
+        extractLyricsFromSummary(detailItem.summary) ?? extractLyricsFromSummary(detail.summary),
+      );
+      if (!cachedUrl || forceRefresh) {
+        setResolvedUrls(prev => (
+          prev[article.id] === url ? prev : { ...prev, [article.id]: url }
+        ));
       }
-      if (cover) {
+      // Always record the attempt (including empty) so we don't re-fetch forever
+      // for tracks that genuinely have no artwork.
+      if (forceRefresh || !(article.id in resolvedCovers) || (cover && resolvedCovers[article.id] !== cover)) {
         setResolvedCovers(prev => (
           prev[article.id] === cover ? prev : { ...prev, [article.id]: cover }
         ));
       }
-      if (forceRefresh || !(article.id in resolvedLyrics)) {
-        setResolvedLyrics(prev => ({ ...prev, [article.id]: lyrics ?? "" }));
+      if (forceRefresh || resolvedLyrics[article.id] !== lyrics) {
+        setResolvedLyrics(prev => (
+          prev[article.id] === lyrics ? prev : { ...prev, [article.id]: lyrics }
+        ));
       }
-      if (forceRefresh || !(article.id in resolvedSummaries)) {
-        setResolvedSummaries(prev => ({ ...prev, [article.id]: summary ?? "" }));
+      if (forceRefresh || resolvedSummaries[article.id] !== summary) {
+        setResolvedSummaries(prev => (
+          prev[article.id] === summary ? prev : { ...prev, [article.id]: summary }
+        ));
       }
       return url;
     } catch (error) {
@@ -215,6 +238,7 @@ export function AudioFocusView({
     channelId,
     pluginId,
     pluginMeta,
+    resolvedCovers,
     resolvedLyrics,
     resolvedSummaries,
     resolvedUrls,
@@ -259,7 +283,7 @@ export function AudioFocusView({
     );
   }
 
-  if (loading || searching) {
+  if ((loading || searching) && tracks.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center py-24">
         <div className="flex items-center gap-2 text-sm text-neutral-400">
@@ -270,7 +294,7 @@ export function AudioFocusView({
     );
   }
 
-  if (articles.length === 0) {
+  if (!loading && !searching && articles.length === 0) {
     return (
       <div className="flex flex-1 items-center justify-center py-24 px-6 text-center">
         <div>

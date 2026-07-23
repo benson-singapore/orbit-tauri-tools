@@ -1,5 +1,8 @@
 const LRC_TIMESTAMP_PATTERN = /\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]/;
 
+/** Persisted marker: detail was fetched and contained no LRC lyrics. */
+export const AUDIO_LYRICS_ABSENT = "__orbit_no_lrc__";
+
 export interface ParsedLrcLine {
   time: number;
   text: string;
@@ -15,6 +18,29 @@ export function extractLyricsFromSummary(summary?: string | null): string | unde
     return undefined;
   }
   return trimmed;
+}
+
+/** Store either real LRC text or a confirmed-absent marker (never bare ""). */
+export function encodeResolvedLyrics(lyrics?: string | null): string {
+  const trimmed = lyrics?.trim();
+  return trimmed && trimmed !== AUDIO_LYRICS_ABSENT ? trimmed : AUDIO_LYRICS_ABSENT;
+}
+
+/** Read cached lyrics for playback; ignores absent marker and legacy empty values. */
+export function decodeResolvedLyrics(cached?: string | null): string | undefined {
+  const trimmed = cached?.trim();
+  if (!trimmed || trimmed === AUDIO_LYRICS_ABSENT) {
+    return undefined;
+  }
+  return trimmed;
+}
+
+/** True when detail lyrics were already resolved (LRC or confirmed absent). */
+export function hasResolvedLyricsCache(cached?: string | null): boolean {
+  if (cached == null) return false;
+  // Legacy poison: empty string was written when merge dropped detail.summary.
+  if (cached === "") return false;
+  return true;
 }
 
 export function parseLrcLines(lrc: string): ParsedLrcLine[] {
@@ -55,7 +81,10 @@ function isMeaningfulLyricLine(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed) return false;
   if (/^(男|女|合)[：:]$/.test(trimmed)) return false;
-  if (/^(词|曲|编曲|制作人|监制|混音|母带|出品)[：:]/.test(trimmed)) return false;
+  if (/^(作词|作曲|词|曲|编曲|制作人|监制|混音|母带|出品人?|和声|宣发|统筹|OP|SP)[：:]/i.test(trimmed)) {
+    return false;
+  }
+  if (/^[「『].+[」』]$/.test(trimmed)) return false;
   if (/^.+\s[-–—]\s.+$/.test(trimmed) && trimmed.length <= 48) return false;
   return true;
 }
