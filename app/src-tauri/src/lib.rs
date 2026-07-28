@@ -322,9 +322,7 @@ fn spawn_runtime(app: &tauri::AppHandle) -> Result<(), String> {
         sidecar = sidecar.env("ORBIT_WEBVIEW_HTTP_ADDR", state.addr.clone());
     }
 
-    let (rx, child) = sidecar
-        .spawn()
-        .map_err(|e| format!("sidecar spawn: {e}"))?;
+    let (rx, child) = sidecar.spawn().map_err(|e| format!("sidecar spawn: {e}"))?;
 
     if let Some(state) = app.try_state::<RuntimeState>() {
         if let Ok(mut guard) = state.sidecar.lock() {

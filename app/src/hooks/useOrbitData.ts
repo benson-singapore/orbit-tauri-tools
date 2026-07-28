@@ -36,8 +36,12 @@ import {
   inferBrowserSessionForPlugin,
   pluginNeedsBrowserSessionRecovery,
 } from "@/lib/browserSessionError";
-import { isPluginSessionActive } from "@/lib/pluginSession";
-import { requestBrowserSession, registerBrowserSessionReadyHandler } from "@/lib/browserSessionGate";
+import {
+  beginAutomaticSessionAttempt,
+  finishAutomaticSessionAttempt,
+  isPluginSessionActive,
+} from "@/lib/pluginSession";
+import { requestBrowserSession } from "@/lib/browserSessionGate";
 import { savePluginVariables } from "@/lib/runtimeV2";
 import {
   buildFeedLoadMoreParams,
@@ -550,18 +554,6 @@ export function useOrbitData(
         setUnreadTotal(items.filter(item => !item.isRead).length);
       }
       const itemCount = finishFeedPage(items.length, Boolean(result.pending));
-      if (
-        !append
-        && items.length === 0
-        && !result.pending
-        && pluginId !== "all"
-      ) {
-        void recoverBrowserSessionRef.current(pluginId, { allowEmptyFeed: true }).then(recovered => {
-          if (recovered) {
-            void loadFeedPage({ offset: 0, append: false });
-          }
-        });
-      }
       return itemCount;
     }
 
@@ -637,10 +629,12 @@ export function useOrbitData(
 
     const remote = await loadPlugins();
     const plugin = remote.find(item => item.id === pluginId);
+    if (pluginId === "gequbao" && options?.allowEmptyFeed) return false;
     if (!pluginNeedsBrowserSessionRecovery(plugin, options)) return false;
 
     const session = inferBrowserSessionForPlugin(plugin!);
     if (!session) return false;
+    if (!beginAutomaticSessionAttempt(pluginId)) return false;
 
     browserSessionRecoveryAttemptedRef.current = pluginId;
     const feedChannel = resolveFeedChannelId(
@@ -656,7 +650,6 @@ export function useOrbitData(
       await savePluginVariables(session.pluginId, { cookie: "", userAgent: "" });
       const values = await requestBrowserSession(sessionWithUrl);
       if (!values) {
-        browserSessionRecoveryAttemptedRef.current = null;
         return false;
       }
       console.info("[browser-session] saving variables", {
@@ -673,11 +666,10 @@ export function useOrbitData(
       }
       await loadPlugins();
       await loadFeedPage({ offset: 0, append: false });
-      browserSessionRecoveryAttemptedRef.current = null;
+      finishAutomaticSessionAttempt(pluginId);
       return true;
     } catch (err) {
       console.error("browser session recovery failed", err);
-      browserSessionRecoveryAttemptedRef.current = null;
       return false;
     }
   }, [loadPlugins, loadFeedPage]);
@@ -716,7 +708,7 @@ export function useOrbitData(
           const recovered = await recoverBrowserSessionIfNeeded(context.pluginId, {
             allowEmptyFeed: true,
           });
-          if (recovered) continue;
+          if (recovered) return;
           return;
         }
       }
@@ -1217,25 +1209,6 @@ export function useOrbitData(
       throw err;
     }
   }, [loadFeedPage]);
-
-  useEffect(() => {
-    registerBrowserSessionReadyHandler(async (pluginId) => {
-      if (pluginFilterRef.current !== pluginId) return;
-      // Wait for acquire() to finish clearing activeSessions so a concurrent
-      // refresh does not get blocked by withBrowserSessionRetry.
-      for (let i = 0; i < 20 && isPluginSessionActive(pluginId); i += 1) {
-        await new Promise(resolve => window.setTimeout(resolve, 50));
-      }
-      if (pluginFilterRef.current !== pluginId) return;
-      console.info("[browser-session] refreshing feed after session ready", pluginId);
-      try {
-        await refreshChannelFeed();
-      } catch (err) {
-        console.error("[browser-session] post-ready refresh failed", pluginId, err);
-      }
-    });
-    return () => registerBrowserSessionReadyHandler(null);
-  }, [refreshChannelFeed]);
 
   const clearRefreshChannelFeed = useCallback(async () => {
     const pluginId = pluginFilterRef.current;

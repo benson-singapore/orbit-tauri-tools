@@ -53,25 +53,27 @@ pub fn open_youtube_login_window(app: AppHandle) -> Result<(), String> {
     }
 
     let app_handle = app.clone();
-    let login_url: Url = "https://www.youtube.com/signin?action_handle_signin=true&app=desktop&hl=zh-CN"
-        .parse()
-        .map_err(|e| format!("invalid login url: {e}"))?;
+    let login_url: Url =
+        "https://www.youtube.com/signin?action_handle_signin=true&app=desktop&hl=zh-CN"
+            .parse()
+            .map_err(|e| format!("invalid login url: {e}"))?;
 
-    let window = WebviewWindowBuilder::new(&app, YOUTUBE_LOGIN_LABEL, WebviewUrl::External(login_url))
-        .title("登录 YouTube")
-        .inner_size(520.0, 780.0)
-        .center()
-        .resizable(true)
-        .on_new_window(move |url, _features| {
-            if should_keep_in_login_window(&url) {
-                if let Some(window) = app_handle.get_webview_window(YOUTUBE_LOGIN_LABEL) {
-                    let _ = window.navigate(url);
+    let window =
+        WebviewWindowBuilder::new(&app, YOUTUBE_LOGIN_LABEL, WebviewUrl::External(login_url))
+            .title("登录 YouTube")
+            .inner_size(520.0, 780.0)
+            .center()
+            .resizable(true)
+            .on_new_window(move |url, _features| {
+                if should_keep_in_login_window(&url) {
+                    if let Some(window) = app_handle.get_webview_window(YOUTUBE_LOGIN_LABEL) {
+                        let _ = window.navigate(url);
+                    }
                 }
-            }
-            NewWindowResponse::Deny
-        })
-        .build()
-        .map_err(|e| e.to_string())?;
+                NewWindowResponse::Deny
+            })
+            .build()
+            .map_err(|e| e.to_string())?;
 
     let app_for_close = app.clone();
     window.on_window_event(move |event| {

@@ -14,6 +14,17 @@ export interface PluginSessionCapture {
 }
 
 const activeSessions = new Set<string>();
+const automaticSessionAttempts = new Set<string>();
+
+export function beginAutomaticSessionAttempt(pluginId: string): boolean {
+  if (automaticSessionAttempts.has(pluginId)) return false;
+  automaticSessionAttempts.add(pluginId);
+  return true;
+}
+
+export function finishAutomaticSessionAttempt(pluginId: string): void {
+  automaticSessionAttempts.delete(pluginId);
+}
 
 export function isPluginSessionActive(pluginId: string): boolean {
   return activeSessions.has(pluginId);

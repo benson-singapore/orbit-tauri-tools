@@ -7,7 +7,11 @@ import {
   inferBrowserSessionForPlugin,
 } from "@/lib/browserSessionError";
 import { requestBrowserSession } from "@/lib/browserSessionGate";
-import { isPluginSessionActive } from "@/lib/pluginSession";
+import {
+  beginAutomaticSessionAttempt,
+  finishAutomaticSessionAttempt,
+  isPluginSessionActive,
+} from "@/lib/pluginSession";
 
 export async function withBrowserSessionRetry<T>(
   plugin: BrowserSessionPluginContext | null | undefined,
@@ -19,6 +23,9 @@ export async function withBrowserSessionRetry<T>(
   } catch (error) {
     let session = resolveBrowserSessionRequest(error, plugin);
     if (!session || isPluginSessionActive(session.pluginId)) {
+      throw error;
+    }
+    if (!beginAutomaticSessionAttempt(session.pluginId)) {
       throw error;
     }
     if (options?.channelId && plugin?.channels) {
@@ -34,7 +41,9 @@ export async function withBrowserSessionRetry<T>(
       throw error;
     }
     await savePluginVariables(session.pluginId, values);
-    return await action();
+    const result = await action();
+    finishAutomaticSessionAttempt(session.pluginId);
+    return result;
   }
 }
 

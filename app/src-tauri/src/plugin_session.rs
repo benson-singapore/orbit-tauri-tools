@@ -19,6 +19,7 @@ pub const PLUGIN_SESSION_CLOSED_EVENT: &str = "plugin-session-closed";
 const POLL_INTERVAL: Duration = Duration::from_millis(500);
 const POLL_MAX_ATTEMPTS: usize = 360;
 const NAV_SETTLE_DELAY: Duration = Duration::from_millis(800);
+const SESSION_READY_CONFIRM_DELAY: Duration = Duration::from_millis(800);
 const SESSION_WINDOW_WIDTH: f64 = 520.0;
 const SESSION_WINDOW_HEIGHT: f64 = 780.0;
 
@@ -104,27 +105,24 @@ fn session_label(plugin_id: &str) -> String {
 
 fn present_verification_window(window: &WebviewWindow) -> Result<(), String> {
     window
-        .set_size(LogicalSize::new(SESSION_WINDOW_WIDTH, SESSION_WINDOW_HEIGHT))
+        .set_size(LogicalSize::new(
+            SESSION_WINDOW_WIDTH,
+            SESSION_WINDOW_HEIGHT,
+        ))
         .map_err(|e| e.to_string())?;
-    window
-        .set_resizable(true)
-        .map_err(|e| e.to_string())?;
-    window
-        .set_title("网站验证")
-        .map_err(|e| e.to_string())?;
+    window.set_resizable(true).map_err(|e| e.to_string())?;
+    window.set_title("网站验证").map_err(|e| e.to_string())?;
     window.center().map_err(|e| e.to_string())?;
     window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }
 
-/// Collapse the verification UI but keep the webview alive for session HTTP fetches.
+/// Close verification UI after session capture.
 fn retire_verification_window(window: &WebviewWindow) {
-    if let Err(err) = window.hide() {
-        eprintln!("[plugin-session] hide verification window failed: {err}");
+    if let Err(err) = window.close() {
+        eprintln!("[plugin-session] close verification window failed: {err}");
     }
-    let _ = window.set_size(LogicalSize::new(1.0, 1.0));
-    let _ = window.set_resizable(false);
 }
 
 pub struct WebviewFetchResult {
@@ -374,10 +372,15 @@ async fn page_past_cloudflare(window: &WebviewWindow) -> bool {
     let js = r#"
         (function () {
           const title = document.title || '';
-          if (/just a moment|checking your browser|attention required|请稍候|正在验证/i.test(title)) {
+          const url = window.location.href || '';
+          const body = document.body ? document.body.innerText || '' : '';
+          if (/just a moment|checking your browser|attention required|verify you are human|performing security verification|请稍候|正在验证/i.test(title + ' ' + body)) {
             return false;
           }
-          if (document.querySelector('#challenge-form, .cf-browser-verification, #cf-challenge-running')) {
+          if (/\/cdn-cgi\/challenge|__cf_chl_|challenges\.cloudflare\.com/i.test(url)) {
+            return false;
+          }
+          if (document.querySelector('#challenge-form, .cf-browser-verification, #cf-challenge-running, [data-cf-challenge], iframe[src*="challenges.cloudflare.com"], input[name="cf-turnstile-response"]')) {
             return false;
           }
           return document.readyState === 'complete';
@@ -405,26 +408,17 @@ async fn session_is_ready(
     origin: &Url,
     force: bool,
 ) -> Result<bool, String> {
+    let plugin_id = plugin_id_from_window(window);
+    let requires_cf_clearance = plugin_id == "gequbao";
     let store_cookies = collect_cookies_for_origin(window, origin)?;
     let store_cookie = cookie_header(&store_cookies);
     let document_cookie = read_document_cookies(window).await;
     let cookie = merge_cookie_headers(&store_cookie, &document_cookie);
     let current_url = read_webview_url(window).await;
 
-    if has_cf_clearance(&store_cookies, &cookie) {
-        log_session_state(
-            plugin_id_from_window(window),
-            "ready-cf-clearance",
-            current_url.as_ref(),
-            &cookie,
-            true,
-        );
-        return Ok(true);
-    }
-
     if force && has_usable_site_session(&store_cookies, &cookie) {
         log_session_state(
-            plugin_id_from_window(window),
+            plugin_id,
             "ready-force",
             current_url.as_ref(),
             &cookie,
@@ -439,20 +433,30 @@ async fn session_is_ready(
         .unwrap_or(false);
 
     if !on_target {
-        log_session_state(
-            plugin_id_from_window(window),
-            "wait-url",
-            current_url.as_ref(),
-            &cookie,
-            false,
-        );
+        log_session_state(plugin_id, "wait-url", current_url.as_ref(), &cookie, false);
         return Ok(false);
     }
 
     if !page_past_cloudflare(window).await {
+        log_session_state(plugin_id, "wait-page", current_url.as_ref(), &cookie, false);
+        return Ok(false);
+    }
+
+    if has_cf_clearance(&store_cookies, &cookie) {
         log_session_state(
-            plugin_id_from_window(window),
-            "wait-page",
+            plugin_id,
+            "ready-cf-clearance",
+            current_url.as_ref(),
+            &cookie,
+            true,
+        );
+        return Ok(true);
+    }
+
+    if requires_cf_clearance {
+        log_session_state(
+            plugin_id,
+            "wait-cf-clearance",
             current_url.as_ref(),
             &cookie,
             false,
@@ -462,7 +466,7 @@ async fn session_is_ready(
 
     if has_usable_site_session(&store_cookies, &cookie) {
         log_session_state(
-            plugin_id_from_window(window),
+            plugin_id,
             "ready-session",
             current_url.as_ref(),
             &cookie,
@@ -481,6 +485,18 @@ async fn session_is_ready(
     Ok(false)
 }
 
+async fn session_is_stably_ready(
+    window: &WebviewWindow,
+    origin: &Url,
+    force: bool,
+) -> Result<bool, String> {
+    if !session_is_ready(window, origin, force).await? {
+        return Ok(false);
+    }
+    tokio::time::sleep(SESSION_READY_CONFIRM_DELAY).await;
+    session_is_ready(window, origin, force).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::{has_usable_site_session, host_matches_origin, only_challenge_cookies};
@@ -495,7 +511,10 @@ mod tests {
         ];
 
         assert!(only_challenge_cookies(&cookies));
-        assert!(!has_usable_site_session(&cookies, "cf_chl_rc_ni=1; cf_chl_prog=s"));
+        assert!(!has_usable_site_session(
+            &cookies,
+            "cf_chl_rc_ni=1; cf_chl_prog=s"
+        ));
     }
 
     #[test]
@@ -566,7 +585,7 @@ async fn try_complete_session(
         return Ok(None);
     };
 
-    if !session_is_ready(&window, origin, force).await? {
+    if !session_is_stably_ready(&window, origin, force).await? {
         return Ok(None);
     }
 
