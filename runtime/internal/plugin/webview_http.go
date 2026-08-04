@@ -49,23 +49,14 @@ func webviewHTTPAddr() string {
 	return strings.TrimSpace(string(data))
 }
 
-func shouldUseWebviewHTTP(rec *PluginRecord, vars map[string]string) bool {
-	if !webviewHTTPAvailable() {
+// shouldUseWebviewHTTP routes through the Tauri webview fetch bridge only for
+ // plugins with an explicit browser session config (CF / captcha sites).
+ // Cookie-only plugins (e.g. Unsplash) use direct HTTP with Cookie injected.
+func shouldUseWebviewHTTP(rec *PluginRecord, _ map[string]string) bool {
+	if !webviewHTTPAvailable() || rec == nil {
 		return false
 	}
-	if rec == nil {
-		return false
-	}
-	if rec.Config.Browser.HasSessionConfig() {
-		return true
-	}
-	if _, ok := rec.Config.Variables["cookie"]; ok {
-		return true
-	}
-	if vars != nil && strings.TrimSpace(vars["cookie"]) != "" {
-		return true
-	}
-	return false
+	return rec.Config.Browser.HasSessionConfig()
 }
 
 func webviewHTTPAvailable() bool {
