@@ -14,21 +14,38 @@ const PROXY_IMAGE_HOST_SUFFIXES = [
   "mh.online",
 ];
 
+/** Hosts that must go through runtime proxy for server-side decryption/normalization. */
+const FORCE_PROXY_IMAGE_HOST_SUFFIXES = [
+  "lbupup.cn",
+  "uforxk.cn",
+  "ssyxpo.cn",
+  "bgezuw.cn",
+];
+
 export function isHttpImageUrl(url: string): boolean {
   const trimmed = url.trim();
   return trimmed.startsWith("http://") || trimmed.startsWith("https://");
 }
 
-export function imageNeedsProxy(url: string): boolean {
-  if (!isHttpImageUrl(url)) return false;
+function hostMatchesSuffixes(url: string, suffixes: string[]): boolean {
   try {
     const host = new URL(url.trim()).hostname.toLowerCase();
-    return PROXY_IMAGE_HOST_SUFFIXES.some(
+    return suffixes.some(
       suffix => host === suffix || host.endsWith("." + suffix),
     );
   } catch {
     return false;
   }
+}
+
+export function imageNeedsProxy(url: string): boolean {
+  if (!isHttpImageUrl(url)) return false;
+  return hostMatchesSuffixes(url, PROXY_IMAGE_HOST_SUFFIXES);
+}
+
+function imageRequiresForceProxy(url: string): boolean {
+  if (!isHttpImageUrl(url)) return false;
+  return hostMatchesSuffixes(url, FORCE_PROXY_IMAGE_HOST_SUFFIXES);
 }
 
 /** @deprecated use imageNeedsProxy */
@@ -39,6 +56,18 @@ export function imageNeedsRefererProxy(url: string): boolean {
 export function buildImageProxyUrl(runtimeBase: string, imageUrl: string): string {
   const base = runtimeBase.replace(/\/$/, "");
   return `${base}/v1/images/proxy?url=${encodeURIComponent(imageUrl.trim())}`;
+}
+
+function canUseRuntimeImageProxy(runtimeBase: string | null | undefined): boolean {
+  const base = runtimeBase?.trim();
+  if (!base) return false;
+  if (typeof window === "undefined") return true;
+  if (isTauriRuntime()) return true;
+  // In secure browser contexts, block downgrading image src to local HTTP proxy.
+  if (window.location.protocol === "https:" && base.startsWith("http://")) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -52,7 +81,10 @@ export function comicPageImageUrl(
   const trimmed = imageUrl.trim();
   const base = runtimeBase ?? getCachedRuntimeBaseUrl();
   if (!trimmed || !base || !isHttpImageUrl(trimmed)) return trimmed;
-  if (isTauriRuntime() || imageNeedsProxy(trimmed)) {
+  if (!canUseRuntimeImageProxy(base)) return trimmed;
+  // Default to direct URL; retry logic will fallback to proxy on load failure.
+  // Only force proxy for domains that require server-side image decryption.
+  if (imageRequiresForceProxy(trimmed)) {
     return buildImageProxyUrl(base, trimmed);
   }
   return trimmed;
@@ -74,7 +106,12 @@ export function displayImageUrl(
   imageUrl: string,
 ): string {
   const trimmed = imageUrl.trim();
-  if (!trimmed || !runtimeBase || !imageNeedsProxy(trimmed)) {
+  if (
+    !trimmed
+    || !runtimeBase
+    || !canUseRuntimeImageProxy(runtimeBase)
+    || !imageRequiresForceProxy(trimmed)
+  ) {
     return trimmed;
   }
   return buildImageProxyUrl(runtimeBase, trimmed);
@@ -84,7 +121,12 @@ export function rewriteHtmlImageUrls(
   html: string,
   runtimeBase: string | null | undefined,
 ): string {
-  if (!html.trim() || !runtimeBase || typeof DOMParser === "undefined") {
+  if (
+    !html.trim()
+    || !runtimeBase
+    || !canUseRuntimeImageProxy(runtimeBase)
+    || typeof DOMParser === "undefined"
+  ) {
     return html;
   }
 
@@ -94,7 +136,7 @@ export function rewriteHtmlImageUrls(
   for (const img of doc.querySelectorAll("img")) {
     for (const attr of ["src", "data-src", "data-original"]) {
       const raw = img.getAttribute(attr);
-      if (!raw || !imageNeedsProxy(raw)) continue;
+      if (!raw || !imageRequiresForceProxy(raw)) continue;
       img.setAttribute(attr, buildImageProxyUrl(runtimeBase, raw));
       changed = true;
     }

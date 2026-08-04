@@ -629,7 +629,6 @@ export function useOrbitData(
 
     const remote = await loadPlugins();
     const plugin = remote.find(item => item.id === pluginId);
-    if (pluginId === "gequbao" && options?.allowEmptyFeed) return false;
     if (!pluginNeedsBrowserSessionRecovery(plugin, options)) return false;
 
     const session = inferBrowserSessionForPlugin(plugin!);
